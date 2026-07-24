@@ -78,11 +78,50 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 ## 4. 2026-07-24 작업 기록
 
-### 목표
+### 2026-07-24 — 개발 기준선 완료
+
+#### 목표
+
+- 이후 기능 구현에서 기존 UI가 깨지는지 빠르게 확인할 수 있는 로컬 품질 기준선을 만든다.
+
+#### 변경
+
+- React 렌더 중 ref 접근, effect 내 동기 상태 갱신, 전역 변수 변경으로 발생하던 ESLint 오류 7개를 제거했다.
+- Playwright와 Chromium 기반 로컬 E2E 검사를 추가했다.
+- 홈, 프로젝트 목록, 7개 process URL, 보고서까지 총 10개 URL 직접 진입을 검사한다.
+- 홈의 새 프로젝트 생성과 프로젝트 목록의 이어하기를 실제 클릭해 URL 이동을 검사한다.
+- 프로젝트 목록, PER 밸류에이션, 보고서 3개 대표 화면의 스크린샷 기준선을 저장했다.
+- 브라우저 검사 중 발견한 보고서 표의 중복 React key 콘솔 오류를 수정했다.
+- `npm run check`로 린트, 타입, 기존 테스트, 빌드, E2E를 한 번에 실행할 수 있게 했다.
+
+#### 검증
+
+- `npm run lint`: 오류 0개, 기존 경고 20개
+- `npm run typecheck`: 통과
+- `npm test`: 4개 통과
+- `npm run build`: 통과
+- `npm run test:e2e:update`: 15개 통과
+- E2E는 로컬에서 4개 worker로 병렬 실행하며 약 18초가 걸렸다.
+
+#### 남은 작업
+
+- 경고 20개는 사용되지 않는 레거시 프로토타입 코드, `<img>` 최적화, 접근성 속성 문제다.
+- 실제 API, 인증, DB, 파일 처리, SpreadJS 연결은 아직 구현되지 않았다.
+- 다음 작업은 문서 기준의 URL별 화면·버튼·데이터·API 명세 확정이다.
+
+#### Git
+
+- React 린트 오류 제거: `43da66e`
+- 브라우저에서 발견한 중복 key 수정: `63f7261`
+- Playwright 기준선 추가: `4892525`
+
+### 2026-07-24 — UI 기술 스택 정리
+
+#### 목표
 
 디자이너 UI는 보존하면서 생성 템플릿에 붙어 있던 불필요한 기술 스택을 제거하고, 표준 Next.js에서 실행되게 만든다.
 
-### 결정
+#### 결정
 
 - Vinext는 실험적 호환 계층이므로 제거했다.
 - Cloudflare Workers, Wrangler, D1, OpenAI Sites 설정은 UI에 필요하지 않아 제거했다.
@@ -90,7 +129,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - D1은 SQLite 기반이며 REFLO 문서의 PostgreSQL 결정과 맞지 않는다.
 - Cloudflare R2는 향후 S3 호환 객체 저장소 후보가 될 수 있지만 현재 UI 프로젝트에는 포함하지 않는다.
 
-### 제거한 항목
+#### 제거한 항목
 
 - Vinext와 Vite 관련 패키지·설정
 - Cloudflare Vite 플러그인, Workers 타입, Wrangler, Worker 진입점
@@ -101,7 +140,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - Sites 전용 설치·빌드·검증 스크립트
 - 사용되지 않던 ChatGPT 호스팅 인증 helper
 
-### 보존한 항목
+#### 보존한 항목
 
 - `source-react/app/`의 React UI
 - 전체 CSS와 시각 디자인
@@ -110,7 +149,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - 서비스 문서와 디자인 시스템
 - 분리된 URL 구조
 
-### Git 기록
+#### Git 기록
 
 | 목적 | 커밋·태그 |
 |---|---|
@@ -125,7 +164,7 @@ cd D:\Reflo_fin
 git revert 7c78d7c
 ```
 
-### 검증 결과
+#### 검증 결과
 
 - `npm run typecheck`: 통과
 - `npm test`: 4개 테스트 통과
@@ -135,9 +174,9 @@ git revert 7c78d7c
 - 브라우저 콘솔 오류 없음
 - Vinext·Cloudflare·Wrangler·Drizzle 런타임 참조 없음
 
-### 알려진 문제
+#### 당시 알려진 문제
 
-- 기존 하드코딩 UI에는 ESLint 오류 7개와 경고가 남아 있다.
+- 기존 하드코딩 UI에는 ESLint 오류 7개와 경고가 남아 있었다. 오류 7개는 위 개발 기준선 작업에서 해결했다.
 - 타입검사와 프로덕션 빌드는 통과하므로 현재 실행에는 영향을 주지 않는다.
 - 아직 실제 API, 인증, DB, 파일 업로드, 작업 진행 상태, SpreadJS가 연결되지 않았다.
 - 대형 단일 컴포넌트를 단계별 컴포넌트로 나누기 전에는 기능 추가 시 충돌 위험이 높다.
@@ -155,9 +194,11 @@ npm run dev
 프로덕션 빌드 확인:
 
 ```powershell
+npm run lint
 npm run typecheck
 npm test
 npm run build
+npm run test:e2e
 npm run start
 ```
 
