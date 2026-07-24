@@ -20,7 +20,7 @@
 | 현재 route 파일 | `source-react/app/projects/[projectId]/process/hypothesis/page.tsx` |
 | 현재 실제 렌더링 경로 | route 재-export → `source-react/app/page.tsx` → `PlannedProcessPage` → `HypothesisSetup` |
 | 현재 디자인 파일 | `source-react/app/process.tsx`, `source-react/app/globals.css` |
-| 관련 기술 결정 | TD-011의 Temporal·LLM 격리 워커·PostgreSQL 작업 projection |
+| 관련 기술 결정 | TD-011의 Temporal·LLM 격리 워커·PostgreSQL 작업 projection, TD-014, TD-016, TD-017 |
 | 현재 구현 상태 | 하드코딩·브라우저 로컬 상태 기반 프로토타입, 인증·저장·PydanticAI·승인 미연결 |
 
 ## 2. 화면 목적과 책임
@@ -578,7 +578,7 @@ rating 또는 thesis를 자동 저장한다.
 
 ### 13.4 `GET /api/projects/{projectId}/hypothesis/generations/{generationId}`
 
-`operationStatus`는 `queued`, `running`, `succeeded`, `failed`, `cancel_requested`, `cancelled` 중 하나를 반환한다. `validity`는 `current` 또는 `obsolete`다. 화면은 짧은 polling으로 상태를 갱신할 수 있으며 background 작업은 화면 연결과 무관하게 Temporal에서 계속된다.
+`operationStatus`는 `queued`, `running`, `succeeded`, `failed`, `cancel_requested`, `cancelled` 중 하나를 반환한다. `validity`는 `current` 또는 `obsolete`다. 화면은 TD-016의 3초 visibility-aware polling으로 상태를 갱신하며 background 작업은 화면 연결과 무관하게 Temporal에서 계속된다.
 
 성공 결과는 Pydantic schema 검증을 통과한 question-set ID만 반환한다. 원시 model text를 검증 전 UI에 노출하지 않는다.
 
@@ -919,10 +919,9 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 이 화면 계약은 확정할 수 있지만 다음 선택은 기준 문서에 아직 없다.
 
 1. Google OAuth·세션 구현 라이브러리와 CSRF 구체 방식
-2. Hypothesis Agent가 사용할 model provider·model version·temperature·비용 한도
-3. generation polling을 공통 job event stream으로 통합할지 여부
-4. Agent 원시 prompt·응답의 보존기간과 운영자 열람 범위
-5. 사용자 질문의 300자 상한을 다른 화면과 공통 상수로 확정할지 여부
-6. `optionalContext`에 사용자가 별도 배경 정보를 입력하는 기능을 후속 제공할지 여부
+2. Hypothesis Agent가 사용할 정확한 GPT model ID·model settings·비용 한도
+3. Agent 원시 prompt·응답의 보존기간과 운영자 열람 범위
+4. 사용자 질문의 300자 상한을 다른 화면과 공통 상수로 확정할지 여부
+5. `optionalContext`에 사용자가 별도 배경 정보를 입력하는 기능을 후속 제공할지 여부
 
-이 선택이 남아 있어도 필수 rating, 500자 thesis, PydanticAI 질문 3~5개, 반증 질문, 질문 CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.
+Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로, 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 선택이 남아 있어도 필수 rating, 500자 thesis, PydanticAI 질문 3~5개, 반증 질문, 질문 CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.

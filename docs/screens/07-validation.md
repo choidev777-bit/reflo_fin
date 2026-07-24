@@ -22,7 +22,7 @@
 | 현재 스타일 | `source-react/app/globals.css`의 `rv-*` 계열 |
 | 현재 주요 컴포넌트 | `Home`, `PlannedProcessPage`, `ResearchValidation`, `ScreenHead` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 4장, 5장, 11장, 12장, 16장, 17장, 19장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010, TD-011, TD-012, 필요 시 TD-013 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-017 |
 | 구현 상태 | 고정 샘플 데이터와 가짜 뷰어만 존재, 실제 인증·API·검증·결정 저장·SpreadJS 미구현 |
 
 ### 7.2 화면 목적과 책임
@@ -711,7 +711,7 @@ Idempotency-Key: 8b6d...
 
 #### 작업 상태 갱신
 
-TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 포함한다. 초기 구현은 처리 중일 때 backoff polling을 사용할 수 있다. SSE 등 실시간 전송을 도입해도 같은 job ID·상태·진행률 계약을 유지하며 transport 선택은 별도 기술 결정으로 남긴다.
+TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 포함한다. TD-016에 따라 처리 중에는 3초 visibility-aware polling을 사용하고 오류 시 최대 30초까지 backoff한다.
 
 #### 공통 오류
 
@@ -1033,12 +1033,11 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 두 기준 문서로 화면 동작 대부분을 확정할 수 있지만 다음 항목은 구현 전에 추가 결정이 필요하다.
 
 1. 인증·세션·CSRF의 구체 구현은 홈 명세와 같은 미확정 기술 결정을 따른다.
-2. one-way job 갱신을 polling, SSE 또는 다른 transport 중 무엇으로 구현할지 결정해야 한다.
-3. 질문별 `sufficient`, `qualified`, `insufficient` 자동 판정 기준과 사용자 override 허용 여부가 필요하다.
-4. 선택값·반려·재조사 사유의 최소 5자 규칙을 제품 공통 규칙으로 확정할지 결정해야 한다.
-5. validation 승인 뒤 후속 단계가 진행된 상태에서 결정을 바꿀 때 보여줄 하위 무효화 확인 문구가 필요하다.
-6. 뉴스·유료 자료의 snapshot 보존·표시·삭제 범위는 TD-012 확정 전환 조건에 남아 있다.
-7. SpreadJS 상용·SaaS 배포 라이선스와 실제 workbook 회귀검사는 TD-010 확정 전환 조건에 남아 있다.
-8. Aspose.Cells, Temporal, PDF viewer와 Evidence 저장의 production 운영 한도는 TD-004·011·012 조건부 확정 항목을 통과해야 한다.
+2. 질문별 `sufficient`, `qualified`, `insufficient` 자동 판정 기준과 사용자 override 허용 여부가 필요하다.
+3. 선택값·반려·재조사 사유의 최소 5자 규칙을 제품 공통 규칙으로 확정할지 결정해야 한다.
+4. validation 승인 뒤 후속 단계가 진행된 상태에서 결정을 바꿀 때 보여줄 하위 무효화 확인 문구가 필요하다.
+5. 뉴스·유료 자료의 snapshot 보존·표시·삭제 범위는 TD-012 확정 전환 조건에 남아 있다.
+6. SpreadJS 상용·SaaS 배포 라이선스와 실제 workbook 회귀검사는 TD-010 확정 전환 조건에 남아 있다.
+7. Aspose.Cells, Temporal, PDF viewer와 Evidence 저장의 production 운영 한도는 TD-004·011·012 조건부 확정 항목을 통과해야 한다.
 
-이 미확정 항목은 현재 화면의 레이아웃, 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동 계약을 바꾸지 않는다.
+job 상태 전달은 TD-016의 polling으로 확정됐다. 나머지 미확정 항목은 현재 화면의 레이아웃, 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동 계약을 바꾸지 않는다.

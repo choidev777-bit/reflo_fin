@@ -20,7 +20,7 @@
 | 현재 실제 화면 파일 | `source-react/app/page.tsx`, `source-react/app/process.tsx`, `source-react/app/globals.css` |
 | 현재 주요 컴포넌트 | `Home`, `PlannedProcessPage`, `FinalDecision`, `ScreenHead`, `EvidenceDrawer` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 14장, 15장, 16장, 19장 |
-| 관련 기술 결정 | TD-001, TD-002, TD-005, TD-006, TD-007, TD-008, TD-011, TD-012 |
+| 관련 기술 결정 | TD-001, TD-002, TD-005~TD-008, TD-011, TD-012, TD-014~TD-017 |
 | 구현 상태 | route만 분리되어 있고 화면·데이터·저장은 공용 Client Component의 하드코딩 프로토타입 |
 
 ### 1.2 판단 우선순위
@@ -929,12 +929,11 @@ PostgreSQL에 최소 다음 논리 entity를 저장한다.
 1. Report Outline Agent의 canonical prompt와 Pydantic output schema
 2. 제목·본문 방향의 Template IR slot별 최대 글자 수 계산 방식
 3. outline 구성 미리보기 artifact 형식과 갱신 SLA
-4. 초안 생성 진행 상태의 polling, SSE 또는 WebSocket 선택
-5. 빈 텍스트 구조 생성 mode를 MVP에 추가할지 여부
-6. optional·repeatable block과 사용자 구조 변경을 향후 지원할지 여부
-7. 인증·세션·CSRF 구현 기술
+4. 빈 텍스트 구조 생성 mode를 MVP에 추가할지 여부
+5. optional·repeatable block과 사용자 구조 변경을 향후 지원할지 여부
+6. 인증·세션·CSRF 구현 기술
 
-이 항목이 미확정이어도 페이지 수·구조 불변, 검증 데이터만 사용, page 확인·전체 승인, version 고정과 초안 생성 계약은 유지한다.
+초안 생성 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 항목이 미확정이어도 페이지 수·구조 불변, 검증 데이터만 사용, page 확인·전체 승인, version 고정과 초안 생성 계약은 유지한다.
 
 ## 27. 구현 순서
 

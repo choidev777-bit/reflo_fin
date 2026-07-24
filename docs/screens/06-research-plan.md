@@ -24,7 +24,7 @@
 | 현재 실제 UI 위치 | `source-react/app/process.tsx`의 `ResearchPlan`, `PlannedProcessPage` |
 | 현재 주요 스타일 | `source-react/app/globals.css`의 `.rf-purpose-*`, `.rf-plan-*`, `.rf-source-*`, `.rf-dialog-*` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 4장, 5장, 11장, 16장, 17장, 19장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010, TD-011, TD-012, TD-013 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-017 |
 | 구현 상태 | 하드코딩 plan과 브라우저 메모리 상태만 존재, 실제 저장·업로드·수집·작업 API 미구현 |
 
 ### 6.2 화면 목적과 책임

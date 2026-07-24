@@ -143,8 +143,7 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
 ```
 
 - `targetPeriod`는 API와 저장 계약에서 `{ year, quarter }` 객체다. `2Q26`, `2026Q2`, `2026 2Q`는 화면 표시용 label일 뿐 저장값이 아니다.
-- 사용자가 입력하는 값은 date-only `cutoffDate`다. 자료 수집에 사용하는 `cutoffAt`은 서버가 timezone 정책으로 파생하며 클라이언트가 권위값으로 보내지 않는다.
-- `cutoffDate`를 `cutoffAt`으로 바꾸는 timezone·day-end 규칙은 setup 명세의 미확정 기술 결정으로 유지한다. 확정 전 화면별로 다른 변환을 구현하지 않는다.
+- 사용자가 입력하는 값은 date-only `cutoffDate`다. TD-015에 따라 서버가 `Asia/Seoul` 날짜의 마지막 시각을 권위 `cutoffAt`으로 파생하며 클라이언트가 `cutoffAt`을 권위값으로 보내지 않는다.
 - API enum은 `EARNINGS_REVIEW`, `IT_MANUFACTURING`, `PER`처럼 명세의 대문자 값을 사용하고 화면에서 한글 label로 변환한다.
 - opaque identity는 `...Id`로 표기한다. immutable version은 opaque `...VersionId` 또는 `{ resourceId, version }` 쌍으로 참조한다. 숫자 `version` 또는 `revision`은 해당 프로젝트·resource 범위의 낙관적 동시성 값이며 단독 전역 식별자로 사용하지 않는다.
 
@@ -179,7 +178,7 @@ queued → running → succeeded | failed
 - 각 화면은 domain ID인 `inspectionId`, `generationId`, `jobId`, `taskId`, `exportId`를 유지할 수 있지만 `operationStatus`, `phase`, `progressPercent`, `heartbeatAt`, `retryable`, 사용자용 error code의 의미는 같아야 한다.
 - 진행률은 완료 unit이나 versioned stage weight로 서버가 계산한다. 시간 경과로 임의 증가시키지 않는다.
 - 화면 이탈·새로고침·worker 재시작 후에도 같은 projection에서 상태를 복원한다.
-- 초기 구현은 visibility-aware polling을 사용한다. SSE·WebSocket은 별도 기술 결정 전 필수 계약이 아니다.
+- TD-016에 따라 초기 구현은 active job을 3초 간격으로 확인하는 visibility-aware polling을 사용한다. hidden 상태와 terminal 상태에서는 중단하고 일시적 오류는 최대 30초까지 backoff한다.
 
 ## 8. 단계 간 version·무효화 계약
 
@@ -207,16 +206,23 @@ queued → running → succeeded | failed
 
 SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀 편집용이다. 두 화면 모두 계산 권위는 Aspose.Cells이며 최종 XLSX를 브라우저에서 만들지 않는다.
 
-## 10. 교차 검수 결과와 남은 결정
+## 10. 확정된 MVP 구현 기본값
+
+- 인증은 Google 로그인만 제공하고 PostgreSQL 기반 불투명 server session을 사용한다. 세부 계약은 TD-014를 따른다.
+- 보고서 기준일은 `Asia/Seoul`의 date-only 입력과 KST 일말 `cutoffAt`을 사용한다. 세부 계약은 TD-015를 따른다.
+- 작업 진행 상태는 3초 visibility-aware polling으로 조회한다. SSE·WebSocket은 초기 구현 범위가 아니다.
+- SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀만 편집 가능하게 사용한다.
+- Agent는 PydanticAI와 OpenAI GPT provider를 사용한다. 정확한 GPT model ID와 비용 한도는 Agent별 평가 후 server configuration으로 고정한다.
+
+## 11. 교차 검수 결과와 남은 결정
 
 2026-07-24에 10개 URL 명세를 함께 검수해 단계명, stage key, route 전이, path parameter, 소유권 오류, 비동기 취소 상태와 기술 위치를 이 문서의 공통 계약으로 통일했다.
 
 구현 전에 별도 제품·기술 결정으로 확정해야 하는 주요 항목:
 
-1. Google OAuth/OIDC 라이브러리, session 저장소·만료·회전과 CSRF 정책
-2. `cutoffDate`를 `cutoffAt`으로 변환하는 timezone·day-end 규칙
-3. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
-4. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
-5. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
-6. Agent model·provider·비용 한도·prompt/schema version·원시 응답 보존 정책
-7. 실시간 상태 transport를 polling에서 SSE·WebSocket으로 바꿀 기준
+1. TD-014 계약을 구현할 Google OAuth/OIDC package와 정확한 package version
+2. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
+3. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
+4. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
+5. Agent별 GPT model ID·비용 한도·prompt/schema version과 원시 prompt·응답 보존 정책
+6. polling 부하 또는 사용자 지연이 실제로 문제가 되었을 때 SSE·WebSocket으로 전환할 측정 기준

@@ -19,7 +19,7 @@
 | 이전 화면 | `/projects/:projectId/process/report-outline` |
 | 현재 구현 route | `source-react/app/projects/[projectId]/report/page.tsx` |
 | 현재 실제 UI | `source-react/app/page.tsx`의 `ReportPage`와 하위 컴포넌트 |
-| 관련 기술 결정 | TD-001, TD-002, TD-004, TD-005, TD-006, TD-007, TD-008, TD-011, TD-012 |
+| 관련 기술 결정 | TD-001, TD-002, TD-004~TD-008, TD-011, TD-012, TD-014~TD-017 |
 | 구현 상태 | 5페이지 디자인·편집 프로토타입만 존재, 실제 저장·버전·검증·작업·다운로드 미구현 |
 
 ### 10.2 기준 우선순위와 범위
@@ -847,7 +847,7 @@ API 경로는 애플리케이션 계약이다. 실제 backend framework는 별�
 | `POST` | `/api/projects/{projectId}/report/exports/{exportId}/cancel` | 미완료 작업 취소 |
 | `POST` | `/api/projects/{projectId}/artifacts/{artifactId}/download` | 권한 확인 후 download URL 발급 |
 
-긴 작업의 최소 구현은 status API polling이다. SSE·WebSocket 등 push transport는 확정 전 선택 사항이며 PostgreSQL 작업 projection이 사용자 표시의 권위 상태다.
+긴 작업은 TD-016의 3초 visibility-aware status API polling으로 확인한다. PostgreSQL 작업 projection이 사용자 표시의 권위 상태다.
 
 ### 10.31 공통 API 오류 계약
 
@@ -1196,14 +1196,13 @@ features/report/
 1. Google 인증·세션 구현 라이브러리와 만료 정책
 2. 구조화 report text editor 라이브러리와 저장 schema
 3. edit session lease TTL·heartbeat·편집권 takeover 상세 정책
-4. job 상태 갱신의 polling·SSE·WebSocket 선택
-5. PDF preview viewer·thumbnail 생성 방식
-6. AI proposal에 사용할 model, timeout, 비용 한도와 사용자별 rate limit
-7. 빈 텍스트 영역 생성 mode의 MVP 포함 여부
-8. report table·chart 첨부 파일별 최대 크기와 이미지 OCR 지원 범위
-9. 원본 PDF page가 매우 많을 때 page resource virtualization 기준
-10. report version·preview·diff·실패 export artifact의 보존기간
-11. 승인 warning 중 사용자가 확인만으로 통과할 수 있는 code 목록
-12. 파일명 규칙의 한글·영문 표준과 조직별 표기
+4. PDF preview viewer·thumbnail 생성 방식
+5. AI proposal에 사용할 정확한 GPT model ID, timeout, 비용 한도와 사용자별 rate limit
+6. 빈 텍스트 영역 생성 mode의 MVP 포함 여부
+7. report table·chart 첨부 파일별 최대 크기와 이미지 OCR 지원 범위
+8. 원본 PDF page가 매우 많을 때 page resource virtualization 기준
+9. report version·preview·diff·실패 export artifact의 보존기간
+10. 승인 warning 중 사용자가 확인만으로 통과할 수 있는 code 목록
+11. 파일명 규칙의 한글·영문 표준과 조직별 표기
 
-TD-001, TD-004, TD-007, TD-008, TD-011과 TD-012의 조건부 확정 항목은 해당 문서의 확정 전환 검증을 완료해야 production 품질 기준으로 사용할 수 있다. 이 불확정 사항이 남아 있어도 이 문서의 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙은 변경하지 않는다.
+job 상태 전달은 TD-016의 polling으로, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로 확정됐다. TD-001, TD-004, TD-007, TD-008, TD-011과 TD-012의 조건부 확정 항목은 해당 문서의 확정 전환 검증을 완료해야 production 품질 기준으로 사용할 수 있다. 이 불확정 사항이 남아 있어도 이 문서의 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙은 변경하지 않는다.

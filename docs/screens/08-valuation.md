@@ -22,7 +22,7 @@
 | 현재 공용 구현 파일 | `source-react/app/page.tsx`, `source-react/app/process.tsx`, `source-react/app/globals.css` |
 | 현재 주요 컴포넌트 | `PlannedProcessPage`, `Valuation`, `ScreenHead` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 13장, 15장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010, TD-011, TD-012 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-012, TD-014~TD-016 |
 | 구현 상태 | 하드코딩 React 프로토타입만 존재, SpreadJS·API·Aspose.Cells·저장·권한 미구현 |
 
 ### 8.2 목적과 책임

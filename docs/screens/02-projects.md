@@ -23,7 +23,7 @@
 | 현재 실제 UI 위치 | `source-react/app/page.tsx`의 `ProjectsPage` |
 | 현재 주요 표시 컴포넌트 | `ProjectsPage`, `AppHeader`, `Status`, `CreateProjectDialog` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 7장, 19장 |
-| 관련 기술 결정 | TD-011의 PostgreSQL 상태 projection·Temporal 작업 상태·소유권 검증 원칙 |
+| 관련 기술 결정 | TD-011의 PostgreSQL 상태 projection·Temporal 작업 상태·소유권 검증 원칙, TD-014 인증·세션, TD-016 polling |
 | 구현 상태 | 하드코딩 목록과 로컬 검색·정렬만 존재, 인증·실제 프로젝트·작업 상태 API 미구현 |
 
 ### 2.2 목적과 책임

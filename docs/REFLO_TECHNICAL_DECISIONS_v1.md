@@ -31,6 +31,10 @@
 | TD-011 | 파일·작업 실행 환경 | S3 호환 불변 객체 저장소, PostgreSQL 메타데이터, Temporal과 사전 가동 격리 워커 조합 채택 | 조건부 확정 | 2026-07-23 |
 | TD-012 | Evidence 저장 | 원문 객체 저장소와 PostgreSQL 불변 Evidence·locator·provenance 분리 저장 방식 채택 | 조건부 확정 | 2026-07-23 |
 | TD-013 | 컨센서스 공급자 | FnGuide JSON 기반 격리 공급자, 불변 스냅샷과 기준시점 선택 규칙 채택 | 조건부 확정 | 2026-07-23 |
+| TD-014 | 인증·세션 | Google 로그인과 PostgreSQL 기반 불투명 server session 채택 | 확정 | 2026-07-24 |
+| TD-015 | 보고서 기준일 | 사용자 입력 date-only와 Asia/Seoul 일말 기준 권위 시각 채택 | 확정 | 2026-07-24 |
+| TD-016 | 작업 상태 전달 | visibility-aware polling을 MVP 기본 transport로 채택 | 확정 | 2026-07-24 |
+| TD-017 | AI Agent | PydanticAI와 OpenAI GPT provider 조합 채택 | 조건부 확정 | 2026-07-24 |
 
 ---
 
@@ -1997,6 +2001,93 @@ FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산�
 
 ---
 
+## TD-014. Google 인증과 서버 세션
+
+### 상태
+
+`확정`
+
+### 결정
+
+MVP 인증은 **Google OAuth/OIDC 로그인만 제공하고, 로그인 결과로 PostgreSQL 기반의 불투명 server session을 발급**한다.
+
+1. 사용자 식별자는 email 문자열이 아니라 검증된 Google issuer와 subject 조합을 기준으로 한다.
+2. 브라우저 cookie에는 예측 불가능한 session token만 저장하고 사용자 ID, Google access token과 refresh token을 넣지 않는다.
+3. session token 원문은 PostgreSQL에 저장하지 않고 hash, 사용자, 생성·최근 사용·만료·폐기 시각을 저장한다.
+4. cookie는 production에서 `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`를 적용한다.
+5. 기본 만료는 7일 idle timeout과 30일 absolute timeout이며 로그아웃·계정 연결 해제 시 즉시 폐기한다.
+6. 상태 변경 요청은 same-origin 검증과 선택한 인증 라이브러리의 CSRF 보호를 적용한다.
+7. 모든 project·artifact 권한은 요청 body의 사용자 ID가 아니라 검증된 session 사용자로 다시 확인한다.
+
+구체적인 Next.js 인증 package는 구현 시작 시 현재 지원 버전과 database session 지원을 확인해 고정한다. package 선택은 위 session·소유권 계약을 바꿀 수 없다.
+
+## TD-015. 보고서 기준일의 권위 시각
+
+### 상태
+
+`확정`
+
+### 결정
+
+MVP의 대상 기업과 자료 기준 시간대는 **`Asia/Seoul`**로 고정한다.
+
+1. 사용자는 화면과 API에서 date-only `cutoffDate`를 `YYYY-MM-DD`로 입력한다.
+2. 서버는 해당 날짜의 KST 마지막 시각을 `cutoffAt`으로 파생하고 UTC `timestamptz`로 저장한다.
+3. 예를 들어 `2026-07-17`은 `2026-07-17T23:59:59.999999+09:00`, 즉 `2026-07-17T14:59:59.999999Z`까지를 포함한다.
+4. 조회·Evidence 선택·Agent 입력과 보고서 snapshot은 서버가 계산한 `cutoffAt` 이하만 허용한다.
+5. 클라이언트가 보낸 `cutoffAt`은 권위값으로 사용하지 않는다.
+6. 해외 시장을 지원할 때는 project별 market timezone을 추가하고 별도 결정으로 확장한다.
+
+## TD-016. 장시간 작업 상태 전달
+
+### 상태
+
+`확정`
+
+### 결정
+
+MVP는 **PostgreSQL 작업 projection을 3초 간격으로 조회하는 visibility-aware polling**을 사용한다.
+
+1. `queued`, `running`, `cancel_requested`일 때만 polling한다.
+2. document가 hidden이면 polling을 중단하고 다시 visible이 되거나 window focus를 얻을 때 즉시 한 번 조회한다.
+3. `succeeded`, `failed`, `cancelled`에 도달하면 자동 polling을 중단한다.
+4. 일시적 실패는 마지막 정상 상태를 유지하고 최대 30초까지 지수 backoff한다.
+5. 가능하면 `ETag`와 `If-None-Match`로 변경 없는 응답 비용을 줄인다.
+6. SSE·WebSocket은 동시 작업량과 요청 부하 또는 사용자 체감 지연이 실제 문제로 측정될 때 별도 결정으로 도입한다.
+
+transport를 바꾸더라도 job ID, `operationStatus`, phase, progress, heartbeat와 오류 계약은 유지한다.
+
+## TD-017. PydanticAI와 OpenAI GPT 연결
+
+### 상태
+
+`조건부 확정`
+
+Agent framework와 provider는 확정했다. Agent별 정확한 GPT model ID, model settings와 비용 한도는 평가 후 확정한다.
+
+### 결정
+
+REFLO의 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft Agent는 **PydanticAI를 공통 Agent framework로 사용하고 OpenAI의 GPT 모델을 server-side provider로 연결**한다.
+
+1. OpenAI 연결은 PydanticAI의 공식 OpenAI provider와 Responses model adapter를 사용한다.
+2. `OPENAI_API_KEY`와 provider credential은 `llm` worker의 secret으로만 주입하며 브라우저, Next.js client bundle, API 응답과 로그에 노출하지 않는다.
+3. model ID는 Agent별 server configuration으로 주입한다. 화면 코드와 prompt에 특정 model 문자열을 직접 고정하지 않는다.
+4. Agent 결과는 가능한 경우 Pydantic `output_type`으로 구조화하고 저장 전에 schema·도메인 검증을 통과시킨다.
+5. prompt, output schema, tool과 model configuration은 version을 저장해 같은 산출물의 생성 조건을 추적할 수 있게 한다.
+6. output validation retry, HTTP retry와 `UsageLimits`는 서로 분리해 제한한다. 무제한 재시도와 무제한 tool call을 허용하지 않는다.
+7. 모델의 원시 reasoning은 사용자에게 표시하거나 권위 Evidence로 저장하지 않는다. 검증된 결과, 사용 모델·설정 version, token usage, latency와 사용자용 오류를 실행 기록에 남긴다.
+8. Agent 출력은 제안 또는 구조화 초안이며 Evidence, 권위 계산, 사용자 승인과 server validation을 우회할 수 없다.
+
+### 확정 전환 조건
+
+1. Agent별 후보 GPT 모델을 고정 평가 세트로 비교해 정확도, schema 통과율, latency와 비용을 기록한다.
+2. Agent별 request·response token, tool call, timeout, retry와 일·사용자별 비용 한도를 정한다.
+3. prompt·응답의 보존기간, 암호화, 운영자 열람과 개인정보 제거 정책을 확정한다.
+4. 검증을 통과한 PydanticAI와 OpenAI SDK의 정확한 version을 lock file에 고정한다.
+5. provider 장애, rate limit, malformed output, timeout과 stale input version 회귀검사를 통과한다.
+
+---
+
 ## 3. 변경 이력
 
 | 날짜 | 변경 내용 |
@@ -2014,3 +2105,7 @@ FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산�
 | 2026-07-23 | TD-011 조건부 확정. S3 호환 불변 객체 저장소, PostgreSQL 파일 메타데이터, Temporal workflow와 사전 가동 격리 워커를 채택하고 queue·timeout·retry·취소 정책 명시 |
 | 2026-07-23 | TD-012 조건부 확정. 원문·대형 파생물은 객체 저장소, Evidence·locator·validation·provenance는 PostgreSQL에 append-only로 보존하는 구조 채택 |
 | 2026-07-23 | TD-013 조건부 확정. FnGuide JSON 공급자 격리, 명시적 연결·별도 기준, 불변 원본·정규화 snapshot, look-ahead 방지와 보고서 snapshot 고정 규칙을 채택하고 리노공업 live smoke test 통과 |
+| 2026-07-24 | TD-014 확정. Google 로그인과 PostgreSQL 불투명 server session, cookie·소유권·CSRF 기준 채택 |
+| 2026-07-24 | TD-015 확정. `Asia/Seoul` date-only 기준일과 KST 일말 `cutoffAt` 파생 규칙 채택 |
+| 2026-07-24 | TD-016 확정. 3초 visibility-aware polling과 terminal stop·error backoff를 MVP 상태 전달 방식으로 채택 |
+| 2026-07-24 | TD-017 조건부 확정. PydanticAI와 OpenAI GPT provider 조합을 채택하고 정확한 model·비용 한도는 평가 후 고정 |

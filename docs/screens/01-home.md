@@ -18,7 +18,7 @@
 | 현재 구현 파일 | `source-react/app/page.tsx` |
 | 현재 주요 컴포넌트 | `HomePage`, `AppHeader`, `Logo`, `Aurora`, `ShinyText`, `CreateProjectDialog` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 6장, 19장 |
-| 관련 기술 결정 | TD-011의 PostgreSQL 소유권·파일 격리 원칙 |
+| 관련 기술 결정 | TD-011의 PostgreSQL 소유권·파일 격리 원칙, TD-014 인증·세션 |
 | 구현 상태 | 디자인 프로토타입만 존재, 인증·실제 프로젝트 생성 미구현 |
 
 ### 1.2 목적과 책임

@@ -20,7 +20,7 @@
 | 현재 실질 구현 | route가 `source-react/app/page.tsx`를 다시 내보내고 `PlannedProcessPage`의 `FileUpload`를 표시 |
 | 현재 주요 컴포넌트 | `PlannedProcessPage`, `FileUpload`, `UploadBox`, `PdfReportAnalysisBody`, `ReportPageCarousel` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 9장, 19장 |
-| 관련 기술 결정 | TD-001~TD-008, TD-010~TD-012 |
+| 관련 기술 결정 | TD-001~TD-008, TD-010~TD-012, TD-014, TD-016 |
 | 구현 상태 | 시각 프로토타입만 존재, 실제 업로드·저장·파일 검사·작업 복구·Excel 분석·매핑 미구현 |
 
 ### 1.2 화면 목적과 책임
@@ -606,7 +606,7 @@ If-Match: "project-version-7"
 
 ### 13.6 `GET /api/projects/{projectId}/file-inspections/{inspectionId}`
 
-stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capability를 조회한다. 초기 구현은 visibility-aware polling을 사용할 수 있다. SSE·WebSocket 도입 여부는 별도 기술 결정 전까지 제품 계약이 아니다.
+stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capability를 조회한다. TD-016에 따라 active inspection은 3초 visibility-aware polling으로 확인하고 hidden·terminal 상태에서는 중단한다.
 
 ### 13.7 `POST /api/projects/{projectId}/file-inspections/{inspectionId}/retry`
 
@@ -960,8 +960,7 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 3. 전자서명 PDF, PDF portfolio·첨부 파일과 특수 annotation 지원 범위
 4. 암호화 Excel과 `.xlsm`·`.xls` 입력의 명시적 지원·거절 정책
 5. 자동 매핑이 불가능한 slot의 사용자 범위 선택 UX와 운영자 지원 경계
-6. inspection 진행 전달을 polling으로 유지할지 SSE로 전환할지
-7. 사용자가 장시간 inspection을 직접 취소할 수 있는지와 취소 후 재개 정책
-8. 실제 표본군에서 PDF·Excel별 운영 크기·시간·메모리 한도
+6. 사용자가 장시간 inspection을 직접 취소할 수 있는지와 취소 후 재개 정책
+7. 실제 표본군에서 PDF·Excel별 운영 크기·시간·메모리 한도
 
-이 항목은 구현 전에 새 기술 결정 또는 운영 설정으로 확정한다. 미확정 값을 React 상수나 사용자 문구로 먼저 고정하지 않는다.
+inspection 진행 전달은 TD-016의 polling으로 확정됐다. 나머지 항목은 구현 전에 새 기술 결정 또는 운영 설정으로 확정한다. 미확정 값을 React 상수나 사용자 문구로 먼저 고정하지 않는다.
