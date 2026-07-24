@@ -35,6 +35,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - 서비스 단계 수는 문서 기준의 7단계로 통일한다.
 - Excel형 UI는 밸류에이션 화면에 SpreadJS React를 연결할 예정이다.
 - SpreadJS는 표시·입력 UI만 담당하고, 권위 계산과 최종 XLSX 저장은 Aspose.Cells for .NET이 담당한다.
+- Agent는 PydanticAI로 구현하고 OpenAI GPT 모델은 server-side 설정으로 연결한다.
 
 ## 3. 현재 구현 상태
 
@@ -81,6 +82,39 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 백엔드 기술은 UI 디자인 코드와 분리한다.
 
 ## 4. 2026-07-24 작업 기록
+
+### 2026-07-24 — MVP 플랫폼 기본값과 PydanticAI·OpenAI 결정
+
+#### 결과
+
+- TD-014로 Google 로그인과 PostgreSQL 기반 불투명 server session을 확정했다.
+- TD-015로 사용자의 `cutoffDate`를 `Asia/Seoul` 일말의 권위 `cutoffAt`으로 변환하는 규칙을 확정했다.
+- TD-016으로 active job의 3초 visibility-aware polling, hidden·terminal 중단과 오류 backoff를 확정했다.
+- TD-017로 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft Agent를 PydanticAI로 구현하고 OpenAI GPT provider를 연결하기로 했다.
+- OpenAI API key는 `llm` worker secret으로 제한하고, 정확한 GPT model ID는 Agent별 server configuration과 평가 결과로 고정하도록 했다.
+- validation의 SpreadJS 읽기 전용, valuation의 허용 셀 편집 원칙을 유지했다.
+- 로컬 `docs/pydantic_ai_guide.md`와 현재 PydanticAI 공식 OpenAI provider·structured output·retry·usage limit 문서를 대조했다.
+
+#### 검증
+
+- 추적 중인 Markdown 14개 내부 링크, code fence와 JSON 예시 검사: 통과
+- 기존 timezone·transport·provider 미확정 표현의 잔존 여부와 `git diff --check`: 통과
+- 문서만 변경했으므로 애플리케이션 build와 브라우저 검사는 생략했다.
+
+#### 남은 결정
+
+- TD-014 계약을 구현할 Google OAuth/OIDC package와 정확한 version
+- SpreadJS 상용·SaaS 라이선스, package version과 배포 hostname
+- Agent별 정확한 GPT model ID, 비용·token·timeout 한도와 prompt·응답 보존 정책
+- Temporal·PDF·Excel worker의 production resource·동시성 한도
+
+#### 다음 작업
+
+- 인증 package를 확정하고 프로젝트·session·workflow 데이터 모델과 API 구현 계획을 작성한다.
+
+#### Git
+
+- MVP 플랫폼 기본값과 Agent 결정: `4d3305f`
 
 ### 2026-07-24 — 03~10 화면 명세 통합 및 전체 교차 검수
 
@@ -287,7 +321,7 @@ npm run start
 
 ## 6. 다음 우선 작업
 
-1. 인증/session, `cutoffDate` 변환, SpreadJS 라이선스와 worker 운영 한도를 기술 결정 문서에 확정한다.
+1. TD-014를 구현할 Google OAuth/OIDC package와 정확한 version을 확정하고 SpreadJS 라이선스를 확인한다.
 2. 화면 명세를 기준으로 프로젝트·파일·작업·Evidence·밸류에이션·보고서 데이터 모델과 API 모듈을 설계한다.
 3. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
 4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
