@@ -44,7 +44,7 @@ MVP는 다음 구조를 사용한다.
 - **Next.js 웹/API 모듈러 모놀리스:** 화면 렌더링, 인증, 동기 API, 도메인 규칙과 장시간 작업 시작
 - **PostgreSQL:** 사용자, session, 프로젝트, workflow 상태, version, Evidence와 작업 projection
 - **S3 호환 객체 저장소:** 원본과 파생 PDF·XLSX, 원문 snapshot, page image와 최종 artifact
-- **Temporal:** 장시간·다단계 작업의 실행 이력, 재시도, 취소와 복구
+- **Temporal + Workflow Control Worker:** 장시간·다단계 작업의 workflow 실행, replay, 재시도, 취소와 복구
 - **격리 worker:** PDF Python, Excel .NET, Research/Validation Python, PydanticAI Agent
 - **SpreadJS React:** validation 읽기 전용 workbook과 valuation 허용 셀 편집
 
@@ -92,15 +92,19 @@ flowchart LR
     OpenAI["OpenAI GPT API"]
     Sources["외부 자료원<br/>DART·IR·KRX·ECOS·FnGuide·뉴스"]
     Reflo["REFLO Backend Boundary"]
-    Storage["PostgreSQL·S3"]
-    Workers["Temporal·격리 Worker"]
+    Database[("PostgreSQL")]
+    ObjectStore[("S3 호환 객체 저장소")]
+    Workers["Temporal·Workflow Control·격리 Worker"]
 
     User --> Browser
     Browser --> Google
     Browser --> Reflo
-    Reflo --> Storage
+    Browser -->|"presigned upload"| ObjectStore
+    Reflo --> Database
+    Reflo --> ObjectStore
     Reflo --> Workers
-    Workers --> Storage
+    Workers --> Reflo
+    Workers --> ObjectStore
     Workers --> OpenAI
     Workers --> Sources
 ```
@@ -123,6 +127,7 @@ flowchart TB
         Next["Next.js Node Runtime"]
         Auth["Auth·Session"]
         API["Route Handlers·Application Services"]
+        InternalAPI["Internal Worker API"]
         Dispatcher["Outbox Dispatcher"]
     end
 
@@ -133,6 +138,7 @@ flowchart TB
 
     subgraph Orchestration["장시간 작업"]
         Temporal["Temporal"]
+        Control["Workflow Control Worker"]
         FileScan["File Scan Worker"]
         Pdf["Python PDF Worker"]
         Excel[".NET Excel Worker"]
@@ -142,14 +148,18 @@ flowchart TB
     end
 
     UI --> Next
+    UI -->|"presigned upload"| S3
     Next --> Auth
     Next --> API
+    Next --> InternalAPI
     Auth --> PG
     API --> PG
-    API --> S3
+    API -->|"URL 발급·완료 검증"| S3
     API --> Dispatcher
     Dispatcher --> PG
     Dispatcher --> Temporal
+    Temporal <--> Control
+    Control -->|"service-auth command"| InternalAPI
     Temporal --> FileScan
     Temporal --> Pdf
     Temporal --> Excel
@@ -162,34 +172,38 @@ flowchart TB
     Research --> S3
     Agent --> S3
     Publish --> S3
-    FileScan --> PG
-    Pdf --> PG
-    Excel --> PG
-    Research --> PG
-    Agent --> PG
-    Publish --> PG
+    FileScan -->|"progress·typed result"| InternalAPI
+    Pdf -->|"progress·typed result"| InternalAPI
+    Excel -->|"progress·typed result"| InternalAPI
+    Research -->|"progress·typed result"| InternalAPI
+    Agent -->|"progress·typed result"| InternalAPI
+    Publish -->|"progress·typed result"| InternalAPI
+    InternalAPI --> PG
 ```
 
 `Outbox Dispatcher`는 DB transaction에 기록된 작업 시작 명령을 Temporal로 전달하는 구성요소다. 요청 도중 process가 종료돼도 명령이 사라지지 않게 하며, 같은 명령을 다시 전달해도 deterministic workflow ID와 idempotency key로 한 번만 적용한다.
+
+`Workflow Control Worker`는 Temporal Workflow 정의를 등록하고 workflow task를 polling한다. 단계 순서, activity 호출, compensation, cancellation, replay와 workflow versioning을 소유한다. Dispatcher는 workflow를 시작할 뿐 Workflow 코드를 실행하지 않는다.
 
 ## 6. 실행 단위와 책임
 
 | 실행 단위 | 주요 책임 | 소유 데이터 | 금지 |
 |---|---|---|---|
 | Browser UI | 입력, 화면 상태, polling, Evidence 탐색, SpreadJS 표시·편집 | 저장 전 draft와 UI state | DB·S3·Temporal·OpenAI 직접 접근 |
-| Next.js server | 인증, 소유권, 입력 검증, domain command/query, 작업 시작, presigned URL | HTTP session과 request context | 무거운 파일 parser·장시간 Agent 실행 |
+| Next.js server | 인증, 소유권, 외부 API, 내부 service command, domain transaction, presigned URL | HTTP session과 domain write boundary | 무거운 파일 parser·Workflow·장시간 Agent 실행 |
 | PostgreSQL | 구조화 domain 상태, version, Evidence, 작업 projection, audit metadata | row·transaction | 대형 PDF·XLSX·page image 저장 |
 | S3 호환 저장소 | 원본·파생·최종 artifact byte | immutable object | 사용자 권한과 workflow 상태 판정 |
 | Temporal | workflow 실행 이력, timer, retry, cancellation | workflow history | 사용자 화면 조회의 직접 권위 |
-| File Scan worker | magic byte, 크기, 암호화, 악성·지원 범위 검사 | 검사 결과 artifact | 외부 internet |
-| PDF worker | Template IR, 구조 분석, patch, render, 시각 검증 | PDF 파생 artifact | project 승인 판단 |
-| Excel worker | workbook 분석, 재계산, 검증, 최종 XLSX 저장 | workbook 파생 artifact | 브라우저 계산값 신뢰 |
-| Research worker | 허용 출처 수집, 원문 snapshot, 후보 추출 | source artifact·candidate | unrestricted network |
-| Validation worker | 원문 재확인, 값·문맥 검증, Evidence 생성 | validation result·Evidence | Research 추론을 사실로 신뢰 |
-| Agent worker | PydanticAI structured output 생성 | 검증 전 Agent result | 권위 계산·최종 사용자 판단 |
-| Publish worker | 승인 version 고정, 다운로드 artifact 게시 | final artifact metadata | 검증 실패 결과 게시 |
+| Workflow Control worker | Workflow 정의, activity 순서, replay·versioning, reconciliation | workflow code와 execution policy | 사용자 API·domain table 직접 변경 |
+| File Scan worker | magic byte, 크기, 암호화, 악성·지원 범위 검사 | 검사 결과 artifact | 외부 internet·PostgreSQL 직접 접근 |
+| PDF worker | Template IR, 구조 분석, patch, render, 시각 검증 | PDF 파생 artifact | project 승인 판단·PostgreSQL 직접 접근 |
+| Excel worker | workbook 분석, 재계산, 검증, 최종 XLSX 저장 | workbook 파생 artifact | 브라우저 계산값 신뢰·PostgreSQL 직접 접근 |
+| Research worker | 허용 출처 수집, 원문 snapshot, 후보 추출 | source artifact·candidate | unrestricted network·PostgreSQL 직접 접근 |
+| Validation worker | 원문 재확인, 값·문맥 검증, Evidence 생성 | validation result·Evidence | Research 추론 신뢰·PostgreSQL 직접 접근 |
+| Agent worker | PydanticAI structured output 생성 | 검증 전 Agent result | 권위 계산·최종 판단·PostgreSQL 직접 접근 |
+| Publish worker | 검증된 artifact의 publish 준비 | final artifact candidate | 검증 실패 결과 게시·PostgreSQL 직접 접근 |
 
-worker의 DB 권한은 자신의 job 진행률, typed result와 artifact metadata에 필요한 범위로 제한한다. 단계 완료, 사용자 승인과 project 소유권 변경은 Next.js application service만 수행한다.
+activity worker는 PostgreSQL credential을 갖지 않는다. 진행률과 typed result는 service identity로 Internal Worker API에 제출한다. 이 API가 job·project·input version·artifact hash를 다시 검증하고 application transaction으로 반영한다. 단계 완료, 사용자 승인, project 소유권 변경과 최종 publish 판정도 같은 domain write boundary만 통과한다.
 
 ## 7. Web/Application 내부 구조
 
@@ -218,6 +232,25 @@ server/infrastructure/
 - `domain/`은 Next.js, PostgreSQL client, S3 SDK와 Temporal SDK를 import하지 않는다.
 - `infrastructure/`는 domain interface를 구현한다.
 - worker와 공유하는 계약은 TypeScript class가 아니라 version이 있는 JSON Schema·OpenAPI schema로 교환한다.
+
+### 7.1 계약의 단일 원본과 호환성
+
+- 외부·내부 HTTP 계약의 단일 원본은 `contracts/openapi/reflo-v1.yaml`이다.
+- activity input·output, artifact descriptor와 worker 오류의 단일 원본은 `contracts/schemas/`의 versioned JSON Schema다.
+- TypeScript, Python과 C# type은 계약 파일에서 생성한다. 생성된 type을 직접 수정하지 않는다.
+- 모든 worker message와 artifact descriptor는 `schemaVersion`을 포함한다.
+- 호환 변경은 기존 field 의미를 바꾸지 않고 optional field만 추가한다.
+- breaking change는 새 major schema를 만들고, 기존 major를 사용하는 active workflow가 모두 끝날 때까지 이전 handler를 유지한다.
+- CI는 schema validation, 생성 코드 diff와 TypeScript·Python·C# contract fixture의 상호 호환을 검사한다.
+
+### 7.2 Internal Worker API
+
+- activity worker와 Workflow Control Worker만 service identity로 호출할 수 있다.
+- browser session cookie와 사용자 입력 service ID는 내부 인증으로 인정하지 않는다.
+- progress command는 job ID, input version, monotonic sequence와 idempotency key를 요구한다.
+- result command는 temporary artifact descriptor, hash, byte size, schema version과 도구 version을 요구한다.
+- API는 job이 해당 project·input version에 속하는지 확인하고 허용된 상태 전이만 transaction으로 적용한다.
+- worker credential은 workload별로 분리하고 짧은 수명, TLS, rotation과 최소 권한을 적용한다. production 방식은 hosting provider 결정과 함께 고정한다.
 
 ## 8. 동기 요청 흐름
 
@@ -257,29 +290,77 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant D as Outbox Dispatcher
     participant T as Temporal
+    participant C as Workflow Control Worker
     participant W as 격리 Worker
     participant S3 as Object Storage
+    participant I as Internal Worker API
 
     User->>UI: 검사 시작
     UI->>API: POST command + Idempotency-Key
     API->>DB: job·input version·outbox를 한 transaction에 저장
     API-->>UI: 202 + jobId + queued
     D->>DB: 미전송 outbox 조회
-    D->>T: deterministic workflow 시작
-    T->>W: version이 고정된 activity 실행
-    W->>S3: 임시·결과 artifact 저장
-    W->>DB: phase·progress·result projection 갱신
+    D->>T: workflowId=reflo:{jobId} 시작
+    T->>C: workflow task
+    C->>T: version이 고정된 activity 예약
+    T->>W: activity 실행
+    W->>S3: deterministic temporary key에 결과 저장
+    W->>I: service-auth progress·typed result
+    I->>DB: version 검증 후 projection 갱신
+    W-->>T: artifact descriptor·typed result
+    T-->>C: activity 완료
+    C->>I: terminal result commit command
+    I->>DB: job·output version transaction
     loop active job
         UI->>API: 3초 polling
         API->>DB: projection 조회
         API-->>UI: operationStatus·progress
     end
-    W->>DB: succeeded 또는 failed와 output version 저장
     UI->>API: 최종 상태 조회
     API-->>UI: 결과·다음 가능 동작
 ```
 
-DB commit은 됐지만 Temporal 시작이 실패한 경우 dispatcher가 재전송한다. Temporal 시작은 됐지만 응답 전 연결이 끊긴 경우 같은 idempotency key가 기존 job을 반환한다.
+DB commit은 됐지만 Temporal 시작이 실패한 경우 dispatcher가 재전송한다. `workflowId`는 `reflo:{jobId}`로 고정하고 같은 job ID의 중복 시작을 거부한다. 사용자가 새로 실행한 작업은 항상 새 job ID를 사용한다. Temporal 시작은 됐지만 응답 전 연결이 끊긴 경우 같은 idempotency key가 기존 job을 반환한다.
+
+### 9.1 Outbox 상태
+
+outbox row는 최소 다음 상태를 가진다.
+
+```text
+pending → dispatching → dispatched
+                    ↘ failed → pending
+```
+
+- `commandId`와 `jobId`에는 unique constraint를 적용한다.
+- dispatcher는 짧은 lease로 row를 claim하고 lease 만료 뒤 다른 instance가 재처리할 수 있게 한다.
+- Temporal의 이미 시작됨 응답은 같은 job ID면 성공으로 처리한다.
+- 재시도 횟수와 다음 시각을 기록하고 제한을 넘으면 운영 경고와 수동 재처리 대상으로 전환한다.
+- `dispatched`는 Temporal execution 존재를 확인한 뒤에만 기록한다.
+
+### 9.2 Projection reconciliation
+
+PostgreSQL projection과 Temporal history는 한 transaction으로 묶을 수 없으므로 주기적으로 대조한다.
+
+1. Workflow Control Worker가 1분마다 Internal Worker API의 reconciliation query로 active job 목록을 받는다.
+2. 각 job의 내부 workflow ID로 Temporal execution 존재와 terminal 상태를 확인한다.
+3. Temporal은 terminal인데 projection이 active면 terminal result command를 다시 제출한다.
+4. projection은 active인데 execution이 없으면 미전송 outbox를 재처리하거나 `reconciliation_required`로 전환한다.
+5. heartbeat가 제한시간을 넘은 job은 사용자에게 `상태 확인 중`으로 표시하고 즉시 실패로 단정하지 않는다.
+6. reconciliation 변경도 idempotency key와 audit record를 남긴다.
+
+### 9.3 Artifact commit과 orphan 정리
+
+S3와 PostgreSQL은 하나의 transaction을 공유하지 않으므로 다음 publish protocol을 사용한다.
+
+1. worker가 `temporary/{jobId}/{activityType}/{inputHash}`처럼 deterministic key에 업로드한다.
+2. worker가 hash, byte size, media type, tool version과 schema version을 Internal Worker API에 제출한다.
+3. API가 object metadata와 checksum을 다시 확인한다.
+4. PostgreSQL transaction이 artifact metadata, output version과 job result를 연결한다.
+5. publish worker는 연결·검증된 artifact만 immutable final key 또는 final retention class로 승격한다.
+6. 재시도는 같은 temporary key와 content hash를 재사용하며 다른 byte면 충돌로 중단한다.
+7. DB에 연결되지 않은 temporary object와 중단된 multipart upload는 TTL cleanup이 제거한다.
+
+reconciliation은 terminal job의 output artifact가 실제로 존재하는지, final artifact가 정확한 DB version에 연결됐는지 함께 검사한다.
 
 ## 10. 파일 수명주기
 
@@ -305,6 +386,8 @@ ready → superseded
 
 - 원본과 승인 artifact는 같은 object key로 덮어쓰지 않는다.
 - 임시 object는 최종 결과에 직접 연결할 수 없다.
+- browser는 API가 발급한 단일 object용 presigned URL로 S3에 직접 업로드한다. bucket CORS는 허용된 REFLO origin·method·header만 허용한다.
+- API는 업로드 완료 command에서 실제 object size, checksum, media type과 upload session 만료를 다시 검증한다.
 - 다운로드 URL은 매 요청마다 session과 project 소유권을 확인한 뒤 짧게 발급한다.
 - 사용자에게 object key, bucket 이름과 storage credential을 노출하지 않는다.
 
@@ -405,6 +488,14 @@ flowchart LR
 - 원시 reasoning은 화면, Evidence와 일반 로그에 저장하지 않는다.
 - model, prompt, schema, tool version과 token usage는 실행 metadata로 남긴다.
 
+### 13.5 Service-to-service 인증
+
+- activity worker와 Workflow Control Worker는 사용자 session이 아니라 workload identity로 Internal Worker API를 호출한다.
+- workload마다 별도 identity와 권한을 사용하며 모든 worker가 공유하는 장기 고정 token을 두지 않는다.
+- production 통신은 TLS를 사용하고 가능하면 hosting platform의 workload identity 또는 mTLS를 사용한다.
+- credential 발급·rotation·폐기와 실패 감사 로그를 secret manager 운영 정책에 포함한다.
+- Internal Worker API는 public route와 URL namespace·middleware·rate limit를 분리하고 public internet 노출을 기본값으로 두지 않는다.
+
 ## 14. 신뢰성·재시도·취소
 
 - API command는 `Idempotency-Key`를 사용한다. 같은 요청의 재전송은 기존 job 또는 결과를 반환한다.
@@ -414,6 +505,7 @@ flowchart LR
 - 장시간 activity는 phase, 처리 개수와 최근 진전 시각을 heartbeat로 보낸다.
 - 취소는 `cancel_requested`를 거쳐 자식 process를 종료하고 `cancelled`로 확정한다.
 - partial artifact는 `temporary` 상태로 격리하며 publish worker만 최종 artifact를 게시한다.
+- projection·Temporal·artifact 불일치는 reconciliation이 복구하고 자동 복구할 수 없는 상태만 `reconciliation_required`로 사용자와 운영자에게 노출한다.
 
 초기 timeout과 retry 수치는 TD-011을 따르며 실제 표본 p95와 peak resource 측정 후 조정한다.
 
@@ -447,6 +539,8 @@ flowchart LR
 - API latency·error rate
 - DB connection·slow query·version conflict
 - outbox backlog와 dispatch latency
+- reconciliation mismatch·repair·manual intervention 수
+- orphan object·multipart upload 수와 cleanup 지연
 - Temporal queue wait·workflow duration·retry·cancellation
 - worker별 p50·p95, CPU, peak RSS와 temporary disk
 - source provider latency·rate limit·format change
@@ -469,16 +563,17 @@ flowchart LR
 ### 17.1 배포 단위
 
 1. `web`: Next.js Node.js runtime
-2. `workflow-dispatcher`: outbox 전달과 짧은 orchestration support
-3. `worker-file-scan`
-4. `worker-pdf`
-5. `worker-excel`
-6. `worker-research-validation`
-7. `worker-agent`
-8. `worker-publish`
-9. PostgreSQL
-10. S3 호환 객체 저장소
-11. Temporal
+2. `workflow-dispatcher`: outbox 전달과 Temporal workflow 시작
+3. `workflow-control-worker`: Workflow 정의·replay·versioning·reconciliation
+4. `worker-file-scan`
+5. `worker-pdf`
+6. `worker-excel`
+7. `worker-research-validation`
+8. `worker-agent`
+9. `worker-publish`
+10. PostgreSQL
+11. S3 호환 객체 저장소
+12. Temporal
 
 web과 worker는 같은 release version을 공유할 수 있지만 독립적으로 배포·확장한다. Next.js Edge runtime에는 DB·Temporal·파일 처리 책임을 넣지 않는다.
 
@@ -505,6 +600,32 @@ web과 worker는 같은 release version을 공유할 수 있지만 독립적으�
 
 어떤 provider를 선택해도 이 문서의 service·data·trust boundary는 유지해야 한다.
 
+### 17.4 Backup·복구 목표
+
+MVP production provider는 최소 다음 목표를 만족해야 한다.
+
+| 대상 | 목표 RPO | 목표 RTO | 복구 방법 |
+|---|---:|---:|---|
+| PostgreSQL metadata | 5분 이하 | 60분 이하 | point-in-time recovery와 transaction log |
+| committed final artifact | 0 | 4시간 이하 | versioning·cross-zone 내구성과 삭제 보호 |
+| temporary·재생성 가능 artifact | 허용 | 24시간 이하 | input version으로 workflow 재실행 |
+| Temporal active workflow | 5분 이하 | 60분 이하 | Temporal persistence 복구 후 replay |
+| 서비스 전체 | 5분 이하 | 4시간 이하 | 아래 순서의 통합 복구 |
+
+RPO는 장애 시 허용할 수 있는 데이터 손실 구간이고, RTO는 서비스를 다시 사용할 수 있게 만드는 목표 시간이다. 수치는 실제 provider 계약과 부하 시험에서 검증한 뒤 낮출 수 있다.
+
+통합 복구 순서:
+
+1. secret·service identity와 network policy 복구
+2. PostgreSQL을 지정 시점으로 복구하고 migration version 확인
+3. S3 bucket versioning·object hash와 DB artifact 연결 검사
+4. Temporal persistence·namespace와 worker version 복구
+5. outbox·active job·workflow·artifact reconciliation 실행
+6. Internal Worker API와 web을 열고 read-only smoke test 수행
+7. 사용자 command를 다시 허용
+
+production 도입 전 staging에서 전체 복구 훈련을 통과해야 하며 이후 분기마다 restore test를 실행한다. backup 성공 알림만으로 복구 가능성을 판단하지 않는다.
+
 ## 18. 목표 repository 구조
 
 실제 directory 생성은 구현 계획에 따라 순차 진행한다.
@@ -523,7 +644,11 @@ Reflo_fin/
   contracts/
     openapi/                   # 외부 HTTP 계약
     schemas/                   # worker·artifact JSON Schema
+    generated/                 # CI가 생성한 TS·Python·C# type
+  services/
+    workflow-dispatcher/       # outbox claim·Temporal start
   workers/
+    workflow-control/          # Workflow 정의·versioning·reconciliation
     file-scan/
     pdf/
     research-validation/
@@ -543,8 +668,8 @@ Reflo_fin/
 ### Phase 0. 계약 완성
 
 1. ERD 문서 작성
-2. API 통합 문서와 OpenAPI 초안 작성
-3. worker JSON Schema와 오류 code 목록 작성
+2. API 통합 문서와 기준 OpenAPI 작성
+3. worker JSON Schema, 오류 code와 TS·Python·C# 생성 규칙 작성
 4. Google OAuth/OIDC package, PostgreSQL access·migration 도구 확정
 
 ### Phase 1. 기반 수직 흐름
@@ -559,9 +684,10 @@ Reflo_fin/
 
 1. 객체 저장소와 upload session
 2. artifact·file version과 quarantine
-3. outbox, job projection과 Temporal 연결
-4. file scan·PDF·Excel worker 최소 실행
-5. polling·retry·cancel·worker 재시작 검증
+3. outbox dispatcher, Workflow Control Worker와 Temporal 연결
+4. job projection·artifact commit·reconciliation 구현
+5. file scan·PDF·Excel worker 최소 실행
+6. polling·retry·cancel·worker 재시작·orphan cleanup 검증
 
 ### Phase 3. 7단계 기능
 
@@ -577,13 +703,18 @@ Reflo_fin/
 
 - 브라우저 bundle에 DB·S3·Temporal·OpenAI credential과 worker library가 없다.
 - 다른 사용자의 project·artifact를 ID 추측으로 조회·수정·다운로드할 수 없다.
+- browser의 파일 byte는 web API를 통과하지 않고 제한된 presigned URL로 quarantine object에 직접 업로드된다.
 - DB commit 직후 web process가 종료돼도 outbox 작업이 결국 시작된다.
+- Workflow Control Worker 재시작과 새 code version 배포 뒤에도 active workflow가 replay된다.
 - 같은 command와 activity가 중복 전달돼도 결과가 한 번만 반영된다.
 - worker 종료·Temporal 재시작·network 단절 후 완료 지점부터 복구된다.
+- activity worker의 PostgreSQL 직접 연결이 network와 credential 수준에서 거부된다.
+- Temporal·projection 불일치와 S3·DB orphan을 reconciliation이 탐지·복구한다.
 - 상위 version 변경 뒤 과거 결과가 최신 결과처럼 표시되지 않는다.
 - 승인되지 않은 Evidence·계산·보고서 artifact를 publish할 수 없다.
 - 최종 PDF와 XLSX에서 사용한 모든 입력·Evidence·도구 version을 추적할 수 있다.
 - 현재 10개 URL의 핵심 UI 구조가 backend 연결 후에도 유지된다.
+- staging restore test에서 PostgreSQL·S3·Temporal과 application을 목표 RPO·RTO 안에 복구한다.
 
 ## 21. 남은 결정
 

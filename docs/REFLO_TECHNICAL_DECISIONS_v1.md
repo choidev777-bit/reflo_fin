@@ -1534,6 +1534,12 @@ Browser
 
 대표 workflow는 다음과 같다.
 
+- API는 job, 고정 input version과 outbox command를 하나의 PostgreSQL transaction에 저장한다.
+- Outbox Dispatcher는 deterministic workflow ID로 Temporal execution을 시작한다.
+- Workflow Control Worker는 Workflow 정의, activity 순서, replay·versioning, cancellation과 reconciliation을 담당한다.
+- PDF·Excel·Research·Agent activity worker는 PostgreSQL에 직접 쓰지 않고 service identity로 Internal Worker API에 진행률과 typed result를 제출한다.
+- Internal Worker API가 project·job·input version·artifact hash를 다시 검증하고 domain transaction과 projection을 갱신한다.
+
 ```text
 FileIngestWorkflow
   → ValidateUpload
@@ -1567,6 +1573,7 @@ ReportWorkflow
 
 | Task queue | 실행 환경 | 주요 작업 |
 |---|---|---|
+| `workflow-control` | Node.js control worker | Workflow 정의·replay·versioning·reconciliation |
 | `file-scan` | 제한된 검사 container | MIME·magic byte·암호화·악성·크기 검사 |
 | `pdf-analysis` | Python PDF worker | PyMuPDF 분석, Template IR 입력 생성 |
 | `pdf-render` | Python PDF worker | pikepdf/qpdf 수정, PDFium 렌더링 |
@@ -1582,6 +1589,7 @@ ReportWorkflow
 ### 워커 격리와 자원 정책
 
 - API·web process 안에서 PDF parser, PDFium, OpenCV, Aspose.Cells와 업로드 폰트를 직접 실행하지 않는다.
+- activity worker에 PostgreSQL credential을 제공하지 않는다. domain과 projection 변경은 service-authenticated Internal Worker API만 수행한다.
 - 워커 container는 non-root, read-only root filesystem, privilege escalation 금지, capability 제거와 runtime default seccomp를 기본으로 한다.
 - host path와 Docker socket을 mount하지 않는다.
 - 작업마다 전용 임시 directory를 만들고 완료·실패·취소 후 삭제한다.
@@ -1652,6 +1660,7 @@ ReportWorkflow
 6. owner·project가 다른 사용자의 object key를 알고 있어도 조회·다운로드할 수 없는지 검증한다.
 7. production 객체 저장소, Temporal 운영 방식과 backup·복구 목표를 확정한다.
 8. 임시·프로젝트·Evidence·최종 artifact의 보존기간과 삭제 절차를 TD-012 정책과 함께 확정한다.
+9. Temporal history·PostgreSQL projection·S3 artifact 불일치를 reconciliation이 탐지·복구하는지 검증한다.
 
 ### 참고 기준
 
