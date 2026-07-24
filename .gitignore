@@ -13,6 +13,8 @@
 **/.sites-runtime/
 **/*.tsbuildinfo
 **/*.log
+**/playwright-report/
+**/test-results/
 
 # Local environment files
 **/.env*
