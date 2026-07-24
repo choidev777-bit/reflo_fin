@@ -4,7 +4,8 @@ info:
   title: REFLO API
   version: 1.0.0
   license:
-    name: Proprietary
+    name: GNU Affero General Public License v3.0
+    identifier: AGPL-3.0-only
   description: |
     REFLO browser application API and Internal Worker API contract.
     Public project routes never expose object-store keys or Temporal workflow IDs.
@@ -490,15 +491,15 @@ paths:
       - $ref: "#/components/parameters/ProjectId"
     get:
       tags: [Validation]
-      operationId: downloadValidationWorkbook
-      summary: Load the read-only SpreadJS workbook import descriptor
+      operationId: getValidationWorkbookReadModel
+      summary: Load the read-only React workbook grid model
       responses:
         "200":
-          description: Read-only validation workbook descriptor
+          description: Read-only validation workbook model
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ValidationWorkbookDescriptor"
+                $ref: "#/components/schemas/ValidationWorkbookReadModel"
         default:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
@@ -510,7 +511,7 @@ paths:
     post:
       tags: [Validation]
       operationId: decideValidationResult
-      summary: Accept, reject, or request re-research for a result
+      summary: Accept a qualified result, reject, restore, or request re-research
       security:
         - sessionCookie: []
           csrfToken: []
@@ -539,7 +540,7 @@ paths:
           $ref: "#/components/responses/Error"
       x-idempotency-required: true
       x-project-owner-required: true
-      x-error-codes: [STALE_VALIDATION_VERSION, INVALID_RESULT_TRANSITION]
+      x-error-codes: [STALE_VALIDATION_VERSION, INVALID_RESULT_TRANSITION, INVALID_DECISION_REASON]
   /api/projects/{projectId}/validation/conflicts/{conflictId}/decision:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -576,7 +577,7 @@ paths:
           $ref: "#/components/responses/Error"
       x-idempotency-required: true
       x-project-owner-required: true
-      x-error-codes: [CONFLICT_ALREADY_RESOLVED, STALE_VALIDATION_VERSION]
+      x-error-codes: [CONFLICT_ALREADY_RESOLVED, STALE_VALIDATION_VERSION, INVALID_DECISION_REASON]
   /api/projects/{projectId}/validation/drafts:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -2165,7 +2166,7 @@ paths:
         default:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
-      x-error-codes: [QUESTION_TEXT_INVALID, VERSION_CONFLICT]
+      x-error-codes: [QUESTION_COUNT_INVALID, QUESTION_TEXT_INVALID, QUESTION_METADATA_INVALID, VERSION_CONFLICT]
   /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -2194,7 +2195,7 @@ paths:
         default:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
-      x-error-codes: [QUESTION_TEXT_INVALID, VERSION_CONFLICT]
+      x-error-codes: [QUESTION_TEXT_INVALID, QUESTION_METADATA_INVALID, VERSION_CONFLICT]
     delete:
       tags: [Hypothesis]
       operationId: deleteResearchQuestion
@@ -2218,7 +2219,7 @@ paths:
         default:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
-      x-error-codes: [QUESTION_COUNT_INVALID, VERSION_CONFLICT]
+      x-error-codes: [VERSION_CONFLICT]
   /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/order:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -2277,7 +2278,7 @@ paths:
           $ref: "#/components/responses/Error"
       x-idempotency-required: true
       x-project-owner-required: true
-      x-error-codes: [QUESTION_COUNT_INVALID, FALSIFICATION_REQUIRED, INPUT_REVISION_CHANGED]
+      x-error-codes: [QUESTION_COUNT_INVALID, QUESTION_METADATA_INVALID, INPUT_REVISION_CHANGED]
   /api/projects/{projectId}/research-plan:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -2768,6 +2769,16 @@ components:
       type: string
       pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
       examples: ["12500.50"]
+    TargetPerString:
+      type: string
+      pattern: "^(?:0\\.[1-9]|[1-9][0-9]?(?:\\.[0-9])?|100(?:\\.0)?)$"
+      description: 0.1 이상 100.0 이하, 소수점 한 자리까지 허용한다.
+      examples: ["12.5"]
+    TargetPriceString:
+      type: string
+      pattern: "^(?:[1-9][0-9]{0,8}|1000000000)$"
+      description: 1원 이상 1,000,000,000원 이하의 정수다.
+      examples: ["125000"]
     RelativeRoute:
       type: string
       pattern: "^/(?!/)[^\\r\\n]*$"
@@ -3405,6 +3416,25 @@ components:
       type: object
       additionalProperties: false
       required: [role, filename, byteSize, mediaType]
+      oneOf:
+        - properties:
+            role:
+              const: previous_report_pdf
+            mediaType:
+              const: application/pdf
+            byteSize:
+              type: integer
+              minimum: 1
+              maximum: 52428800
+        - properties:
+            role:
+              const: analysis_workbook
+            mediaType:
+              const: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+            byteSize:
+              type: integer
+              minimum: 1
+              maximum: 104857600
       properties:
         role:
           $ref: "#/components/schemas/FileRole"
@@ -3424,7 +3454,7 @@ components:
     UploadSessionResponse:
       type: object
       additionalProperties: false
-      required: [uploadId, uploadUrl, method, headers, expiresAt]
+      required: [uploadId, uploadUrl, method, headers, expiresAt, maxSizeBytes]
       properties:
         uploadId:
           $ref: "#/components/schemas/OpaqueId"
@@ -3607,7 +3637,7 @@ components:
     ResearchQuestion:
       type: object
       additionalProperties: true
-      required: [id, text, category, falsificationCriteria, order]
+      required: [id, text, purpose, metrics, period, comparison, suggestedSourceTypes, order]
       properties:
         id:
           $ref: "#/components/schemas/OpaqueId"
@@ -3615,20 +3645,42 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-        category:
-          type: string
-          enum: [company, industry, financial, risk, valuation, catalyst]
-        falsificationCriteria:
+        purpose:
           type: string
           minLength: 1
-          maxLength: 1000
+          maxLength: 500
+        metrics:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+        period:
+          type: string
+          minLength: 1
+          maxLength: 200
+        comparison:
+          type: string
+          minLength: 1
+          maxLength: 300
+        suggestedSourceTypes:
+          type: array
+          minItems: 1
+          maxItems: 5
+          uniqueItems: true
+          items:
+            type: string
+            enum: [filing, company, news, industry, market_data]
         order:
           type: integer
           minimum: 0
     QuestionSet:
       type: object
       additionalProperties: true
-      required: [id, version, status, questions]
+      required: [id, version, status, questions, missingContext]
       properties:
         id:
           $ref: "#/components/schemas/OpaqueId"
@@ -3639,8 +3691,17 @@ components:
           enum: [draft, approved, stale]
         questions:
           type: array
+          maxItems: 5
           items:
             $ref: "#/components/schemas/ResearchQuestion"
+        missingContext:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
         approvedAt:
           type: [string, "null"]
           format: date-time
@@ -3661,7 +3722,7 @@ components:
             - type: "null"
         thesis:
           type: string
-          maxLength: 5000
+          maxLength: 500
         questionSet:
           oneOf:
             - $ref: "#/components/schemas/QuestionSet"
@@ -3679,7 +3740,7 @@ components:
         thesis:
           type: string
           minLength: 1
-          maxLength: 5000
+          maxLength: 500
         requestId:
           type: string
           minLength: 1
@@ -3709,7 +3770,7 @@ components:
         desiredCount:
           type: integer
           minimum: 3
-          maximum: 20
+          maximum: 5
         guidance:
           type: string
           maxLength: 2000
@@ -3730,8 +3791,9 @@ components:
                 - type: "null"
     CreateResearchQuestionRequest:
       type: object
+      description: The server derives and validates purpose, metrics, period, comparison, and suggested source types from the question text and current project context.
       additionalProperties: false
-      required: [expectedQuestionSetVersion, text, category, falsificationCriteria, requestId]
+      required: [expectedQuestionSetVersion, text, requestId]
       properties:
         expectedQuestionSetVersion:
           $ref: "#/components/schemas/VersionNumber"
@@ -3739,19 +3801,13 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-        category:
-          type: string
-          enum: [company, industry, financial, risk, valuation, catalyst]
-        falsificationCriteria:
-          type: string
-          minLength: 1
-          maxLength: 1000
         requestId:
           type: string
           minLength: 1
           maxLength: 128
     UpdateResearchQuestionRequest:
       type: object
+      description: Updating question text causes the server to regenerate and validate its research metadata.
       additionalProperties: false
       required: [expectedQuestionSetVersion, requestId]
       minProperties: 3
@@ -3762,13 +3818,6 @@ components:
           type: string
           minLength: 1
           maxLength: 500
-        category:
-          type: string
-          enum: [company, industry, financial, risk, valuation, catalyst]
-        falsificationCriteria:
-          type: string
-          minLength: 1
-          maxLength: 1000
         requestId:
           type: string
           minLength: 1
@@ -3915,6 +3964,35 @@ components:
       type: object
       additionalProperties: false
       required: [fileName, mediaType, sizeBytes, checksumSha256]
+      oneOf:
+        - properties:
+            mediaType:
+              const: application/pdf
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 52428800
+        - properties:
+            mediaType:
+              const: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 104857600
+        - properties:
+            mediaType:
+              const: text/csv
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 10485760
+        - properties:
+            mediaType:
+              const: text/plain
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 5242880
       properties:
         fileName:
           type: string
@@ -3922,7 +4000,7 @@ components:
           maxLength: 255
         mediaType:
           type: string
-          enum: [application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv]
+          enum: [application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, text/plain]
         sizeBytes:
           type: integer
           minimum: 1
@@ -4149,7 +4227,7 @@ components:
         workbook:
           type: object
           additionalProperties: true
-          required: [artifactId, originalWorkbookHash, workbookVersion, displayName, snapshotUrl, visibleSheets]
+          required: [artifactId, originalWorkbookHash, workbookVersion, displayName, readModelUrl, visibleSheets]
           properties:
             artifactId:
               $ref: "#/components/schemas/OpaqueId"
@@ -4159,7 +4237,7 @@ components:
               $ref: "#/components/schemas/VersionNumber"
             displayName:
               type: string
-            snapshotUrl:
+            readModelUrl:
               $ref: "#/components/schemas/RelativeRoute"
             visibleSheets:
               type: array
@@ -4287,6 +4365,23 @@ components:
       type: object
       additionalProperties: false
       required: [workbookVersion, draftVersion, requestId, inputMode]
+      oneOf:
+        - properties:
+            inputMode:
+              const: target_per
+          required: [targetPer]
+          not:
+            properties:
+              targetPrice: {}
+            required: [targetPrice]
+        - properties:
+            inputMode:
+              const: target_price
+          required: [targetPrice]
+          not:
+            properties:
+              targetPer: {}
+            required: [targetPer]
       properties:
         workbookVersion:
           $ref: "#/components/schemas/VersionNumber"
@@ -4300,9 +4395,9 @@ components:
           type: string
           enum: [target_per, target_price]
         targetPer:
-          $ref: "#/components/schemas/DecimalString"
+          $ref: "#/components/schemas/TargetPerString"
         targetPrice:
-          $ref: "#/components/schemas/DecimalString"
+          $ref: "#/components/schemas/TargetPriceString"
     ValuationWriteResponse:
       type: object
       additionalProperties: false
@@ -4838,7 +4933,7 @@ components:
     EditSessionResponse:
       type: object
       additionalProperties: false
-      required: [sessionId, reportVersionId, holderUserId, expiresAt, heartbeatAfterSeconds]
+      required: [sessionId, reportVersionId, holderUserId, expiresAt, leaseTtlSeconds, heartbeatAfterSeconds]
       properties:
         sessionId:
           $ref: "#/components/schemas/OpaqueId"
@@ -4848,9 +4943,12 @@ components:
           $ref: "#/components/schemas/OpaqueId"
         expiresAt:
           $ref: "#/components/schemas/Timestamp"
+        leaseTtlSeconds:
+          type: integer
+          const: 120
         heartbeatAfterSeconds:
           type: integer
-          minimum: 1
+          const: 30
     EditSessionHeartbeatRequest:
       type: object
       additionalProperties: false
@@ -5046,6 +5144,28 @@ components:
       type: object
       additionalProperties: false
       required: [fileName, mediaType, sizeBytes, checksumSha256, targetPageId]
+      oneOf:
+        - properties:
+            mediaType:
+              const: text/csv
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 10485760
+        - properties:
+            mediaType:
+              const: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 26214400
+        - properties:
+            mediaType:
+              enum: [image/png, image/jpeg]
+            sizeBytes:
+              type: integer
+              minimum: 1
+              maximum: 15728640
       properties:
         fileName:
           type: string
@@ -5053,10 +5173,11 @@ components:
           maxLength: 255
         mediaType:
           type: string
-          enum: [image/png, image/jpeg, application/pdf]
+          enum: [text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, image/png, image/jpeg]
         sizeBytes:
           type: integer
           minimum: 1
+          description: CSV 10 MiB, XLSX 25 MiB, PNG·JPEG 15 MiB까지 허용한다. 이미지는 추가로 20 MP 이하인지 서버에서 검사한다.
         checksumSha256:
           type: string
           pattern: "^[a-f0-9]{64}$"
@@ -5447,15 +5568,14 @@ components:
               format: date-time
             locator:
               $ref: "#/components/schemas/EvidenceLocator"
-    ValidationWorkbookDescriptor:
+    ValidationWorkbookReadModel:
       type: object
       additionalProperties: false
       required:
         - originalWorkbookHash
         - workbookVersion
-        - importUrl
-        - expiresAt
         - visibleSheets
+        - cells
         - validationTargets
         - readOnlyReason
       properties:
@@ -5464,11 +5584,6 @@ components:
           minLength: 16
         workbookVersion:
           $ref: "#/components/schemas/VersionNumber"
-        importUrl:
-          type: string
-          format: uri
-        expiresAt:
-          $ref: "#/components/schemas/Timestamp"
         visibleSheets:
           type: array
           items:
@@ -5480,6 +5595,26 @@ components:
                 $ref: "#/components/schemas/OpaqueId"
               name:
                 type: string
+        cells:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sheetId, address, rawValue, formattedText, formula, styleToken, readOnly]
+            properties:
+              sheetId:
+                $ref: "#/components/schemas/OpaqueId"
+              address:
+                type: string
+              rawValue: {}
+              formattedText:
+                type: string
+              formula:
+                type: [string, "null"]
+              styleToken:
+                type: string
+              readOnly:
+                type: boolean
         validationTargets:
           type: array
           items:
@@ -5503,11 +5638,11 @@ components:
           $ref: "#/components/schemas/VersionNumber"
         action:
           type: string
-          enum: [REJECT, RESTORE, REINVESTIGATE]
+          enum: [ACCEPT_QUALIFIED, REJECT, RESTORE, REINVESTIGATE]
         reason:
           type: string
-          minLength: 1
-          maxLength: 2000
+          minLength: 5
+          maxLength: 500
     ConflictDecisionRequest:
       type: object
       additionalProperties: false
@@ -5519,8 +5654,8 @@ components:
           $ref: "#/components/schemas/OpaqueId"
         reason:
           type: string
-          minLength: 1
-          maxLength: 2000
+          minLength: 5
+          maxLength: 500
     ValidationDraftItem:
       type: object
       additionalProperties: false

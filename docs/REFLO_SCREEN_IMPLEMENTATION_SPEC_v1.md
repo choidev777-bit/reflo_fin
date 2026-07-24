@@ -83,7 +83,7 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
 - 상위 단계 데이터 변경으로 하위 결과가 무효화되면 `재검증 필요` 상태를 표시한다.
 - 화면에 보이는 버튼은 실제 동작을 갖거나 제거한다.
 - 하드코딩 데이터는 API 응답 또는 명시적인 정적 카피로 구분한다.
-- SpreadJS, PDF·Excel 워커, Temporal, Agent 코드는 실제 사용하는 URL에만 배치한다.
+- React workbook grid, PDF·Excel 워커, Temporal, Agent 코드는 실제 사용하는 URL에만 배치한다.
 - 디자이너의 레이아웃과 시각 표현은 기능·접근성·요구사항 충돌이 없는 한 유지한다.
 
 ## 5. canonical workflow 계약
@@ -194,37 +194,38 @@ queued → running → succeeded | failed
 
 | URL | 브라우저·화면 기술 | backend·worker 기술 | 넣지 않는 기술 |
 |---|---|---|---|
-| `/` | Next.js·React 인증/생성 UI | 세션·PostgreSQL | SpreadJS, Temporal, PDF·Excel·Agent |
-| `/projects` | 목록·검색·정렬·projection | PostgreSQL project/job projection | SpreadJS, PDF·Excel·Agent runtime |
-| `process/setup` | form·기업 검색 | 세션·PostgreSQL·기업 master | S3, Temporal, SpreadJS, PDF·Excel·Agent |
-| `process/files` | upload·결과 비교 UI | S3 호환 저장소, Temporal, PDF worker, Aspose.Cells 분석 | SpreadJS workbook UI |
-| `process/hypothesis` | 질문 편집·승인 UI | PydanticAI Hypothesis Agent, Temporal, PostgreSQL | Research/Validation Agent, SpreadJS, PDF·Excel worker |
-| `process/research-plan` | 계획·source·cell metadata UI | Research/Validation Agent, network worker, Temporal, S3 | SpreadJS, PDF patch·render |
-| `process/validation` | Evidence viewer, SpreadJS 읽기 전용 workbook | Validation workflow, Aspose.Cells, source/PDF viewer API | SpreadJS 편집·client export |
-| `process/valuation` | SpreadJS 편집 UI, 일반 React 판단 UI | Aspose.Cells 권위 계산·저장, PostgreSQL | browser 권위 계산, SpreadJS client export |
-| `process/report-outline` | page·slot 구성 UI | Report Outline/Draft Agent, Temporal, Template IR | SpreadJS, browser PDF·XLSX 생성 |
-| `/report` | Template IR 기반 report editor | PDF·Excel·Agent worker, Temporal, 검증·export | SpreadJS, browser 최종 export |
+| `/` | Next.js·React 인증/생성 UI | 세션·PostgreSQL | workbook grid, Temporal, PDF·Excel·Agent |
+| `/projects` | 목록·검색·정렬·projection | PostgreSQL project/job projection | workbook grid, PDF·Excel·Agent runtime |
+| `process/setup` | form·기업 검색 | 세션·PostgreSQL·기업 master | S3, Temporal, workbook grid, PDF·Excel·Agent |
+| `process/files` | upload·결과 비교 UI | S3 호환 저장소, Temporal, PDF worker, ClosedXML 분석 | workbook grid |
+| `process/hypothesis` | 질문 편집·승인 UI | PydanticAI Hypothesis Agent, Temporal, PostgreSQL | Research/Validation Agent, workbook grid, PDF·Excel worker |
+| `process/research-plan` | 계획·source·cell metadata UI | Research/Validation Agent, network worker, Temporal, S3 | workbook grid, PDF patch·render |
+| `process/validation` | Evidence viewer, React 읽기 전용 workbook grid | Validation workflow, ClosedXML, source/PDF viewer API | workbook 편집·client export |
+| `process/valuation` | React workbook grid 편집 UI, 일반 React 판단 UI | ClosedXML 권위 계산·저장, PostgreSQL | browser 권위 계산, client XLSX export |
+| `process/report-outline` | page·slot 구성 UI | Report Outline/Draft Agent, Temporal, Template IR | workbook grid, browser PDF·XLSX 생성 |
+| `/report` | Template IR 기반 report editor | PDF·Excel·Agent worker, Temporal, 검증·export | workbook grid, browser 최종 export |
 
-SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀 편집용이다. 두 화면 모두 계산 권위는 Aspose.Cells이며 최종 XLSX를 브라우저에서 만들지 않는다.
+React workbook grid는 validation에서 읽기 전용, valuation에서 허용 셀 편집용이다. 두 화면 모두 계산 권위는 ClosedXML이며 최종 XLSX를 브라우저에서 만들지 않는다.
 
 ## 10. 확정된 MVP 구현 기본값
 
 - 인증은 Google 로그인만 제공하고 PostgreSQL 기반 불투명 server session을 사용한다. 세부 계약은 TD-014를 따른다.
 - 보고서 기준일은 `Asia/Seoul`의 date-only 입력과 KST 일말 `cutoffAt`을 사용한다. 세부 계약은 TD-015를 따른다.
 - 작업 진행 상태는 3초 visibility-aware polling으로 조회한다. SSE·WebSocket은 초기 구현 범위가 아니다.
-- SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀만 편집 가능하게 사용한다.
+- React workbook grid는 validation에서 읽기 전용, valuation에서 허용 셀만 편집 가능하게 사용한다.
 - Agent는 PydanticAI와 OpenAI GPT provider를 사용한다. 정확한 GPT model ID와 비용 한도는 Agent별 평가 후 server configuration으로 고정한다.
 
 ## 11. 교차 검수 결과와 남은 결정
 
 2026-07-24에 10개 URL 명세를 함께 검수해 단계명, stage key, route 전이, path parameter, 소유권 오류, 비동기 취소 상태와 기술 위치를 이 문서의 공통 계약으로 통일했다.
 
-구현 전에 별도 제품·기술 결정으로 확정해야 하는 주요 항목:
+10개 URL의 application contract 구현을 막는 미결정 항목은 없다.
 
-1. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
-2. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
-3. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
-4. Agent별 GPT model ID·비용 한도·prompt/schema version과 원시 prompt·응답 보존 정책
-5. polling 부하 또는 사용자 지연이 실제로 문제가 되었을 때 SSE·WebSocket으로 전환할 측정 기준
+- Google OIDC·PostgreSQL 도구는 TD-018에서 exact version까지 확정했다.
+- 파일 입력 한도·악성 검사·지원 형식·취소는 TD-019를 따른다.
+- Validation 충분성·조건부 확인·decision 사유는 TD-020을 따른다.
+- workbook read model, Decimal·반올림·민감도·현재주가는 TD-021을 따른다.
+- Report editor·PDF viewer·edit lease·import·보존은 TD-022를 따른다.
+- Agent model·package·timeout·비용·raw 보존은 TD-023을 따른다.
 
-Google OIDC, PostgreSQL client와 migration 도구는 TD-018에서 exact version까지 확정했다.
+AGPL-3.0 대응 소스 공개, third-party notice, production provider·resource sizing, 실제 PDF·workbook 표본 회귀와 법적 보존기간은 production deployment gate다. 구현 contract를 다시 미정 상태로 만들지 않는다. polling 부하나 사용자 지연이 측정 기준을 넘을 때만 TD-016을 새 decision으로 개정해 SSE·WebSocket을 검토한다.

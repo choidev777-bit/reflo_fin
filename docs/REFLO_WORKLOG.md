@@ -36,8 +36,8 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - 화면을 처음부터 다시 디자인하지 않는다.
 - 각 URL별 컴포넌트, 버튼, 데이터 연결, 상태, API, 필요한 기술을 명세한 뒤 구현한다.
 - 서비스 단계 수는 문서 기준의 7단계로 통일한다.
-- Excel형 UI는 밸류에이션 화면에 SpreadJS React를 연결할 예정이다.
-- SpreadJS는 표시·입력 UI만 담당하고, 권위 계산과 최종 XLSX 저장은 Aspose.Cells for .NET이 담당한다.
+- Excel형 UI는 밸류에이션 화면에 React workbook grid를 연결할 예정이다.
+- React workbook grid는 표시·입력 UI만 담당하고, 권위 계산과 최종 XLSX 저장은 ClosedXML 0.105.0이 담당한다.
 - Agent는 PydanticAI로 구현하고 OpenAI GPT 모델은 server-side 설정으로 연결한다.
 
 ## 3. 현재 구현 상태
@@ -79,12 +79,56 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - S3 API 호환 객체 저장소: 원본 PDF·XLSX와 대형 파생 파일
 - Temporal: 장시간·다단계 작업 오케스트레이션
 - Python 격리 워커: PDF 분석·수정·렌더링·검증
-- .NET 격리 워커: Aspose.Cells 기반 Excel 재계산·검증·저장
-- SpreadJS React: 브라우저의 Excel 표시·입력 UI
+- .NET 격리 워커: ClosedXML 기반 Excel 재계산·검증·저장
+- React workbook grid: 브라우저의 Excel 표시·입력 UI
 
 백엔드 기술은 UI 디자인 코드와 분리한다.
 
 ## 4. 작업 기록
+
+### 2026-07-25 — AGPL 공개와 무료 Excel 스택 확정
+
+#### 결과
+
+- 루트에 GNU AGPL v3.0 전문을 `LICENSE`로 추가하고 README에 네트워크 대응 소스 제공·배포 commit 링크·secret 제외 원칙을 명시했다.
+- REFLO 전체를 AGPL-3.0으로 공개하므로 PyMuPDF/MuPDF는 AGPL 조건으로 유지하고 Artifex 상용 라이선스 구매 gate를 제거했다.
+- Aspose.Cells를 ClosedXML 0.105.0으로, SpreadJS를 server read model 기반 React workbook grid로 교체했다.
+- validation은 읽기 전용 grid, valuation은 `editableCellSet`에 포함된 셀만 편집하며 browser는 수식을 계산하거나 XLSX를 생성하지 않는다.
+
+#### 검증
+
+- `fixtures/ISC_095340_Peer_PER_Valuation_v4.xlsx`: 13개 sheet, 178개 formula의 Excel cache 대비 ClosedXML 재계산 mismatch 0개.
+- ClosedXML 왕복 저장 뒤 formula·constant·style·merge·data validation·conditional formatting과 package feature mismatch 0개.
+- 대표 입력 변경 뒤 Forward EPS, Target PER, 목표주가와 상승여력을 ClosedXML 저장·재열기 및 Excel 16.0 `CalculateFullRebuild`로 교차검증했다.
+- `fixtures/ISC_1Q26_실적리뷰_삼성증권.pdf`: pikepdf 왕복 저장 뒤 text·font·bbox·resource 보존, PDFium 288 DPI 5페이지 pixel diff 0.
+
+#### 다음 작업
+
+- 화면별 구현 순서에 따라 React workbook read model API와 grid를 만들고 로컬 서버에서 keyboard·paste·권한·재계산 흐름을 확인한다.
+- PDF 콘텐츠 교체 전략은 TD-007의 실제 숫자·문장·표·차트 patch acceptance를 구현하면서 검증한다.
+- 배포 화면에 공개 저장소와 정확한 commit의 `소스 코드` 링크를 추가하고 third-party notice를 검사한다.
+
+### 2026-07-25 — 구현 차단 미결정 제거와 계약 동기화
+
+#### 결과
+
+- TD-019~TD-023으로 파일 입력, Validation 충분성, Valuation 수치·React workbook grid, Report editor·viewer·lease, Agent 실행 profile을 확정했다.
+- 화면 명세, 서비스 동작, 시스템 아키텍처, ERD, API 설명과 OpenAPI를 같은 값으로 동기화했다.
+- OpenAPI에 파일별 크기·MIME, valuation 조건부 입력 범위, `ACCEPT_QUALIFIED`, report lease와 import 제한을 기계 검증 가능한 schema로 반영했다.
+- 조사 자료의 파일·URL 개수, 지원 형식, 필수 source 실패, progress weight와 완료 뒤 이동 정책을 확정했다.
+- 남은 AGPL 공개·third-party notice, provider 선택, worker sizing과 법무 보존 검토는 구현 계약이 아니라 production gate로 분리했다.
+
+#### 검증
+
+- Redocly OpenAPI lint: 오류·경고 없음
+- Worker JSON Schema: 13 schemas, 6 fixtures, 18 result types 통과
+- 기준 문서 Markdown 상대 링크: 98개 확인, broken 0
+- `git diff --check`: whitespace 오류 없음
+
+#### 다음 작업
+
+- 확정된 계약을 기준으로 Phase 0 migration·repository·인증 수직 흐름 구현을 시작한다.
+- production 배포 전 대응 소스 링크·third-party notice, provider, 부하·복구와 법무 보존 gate를 별도로 닫는다.
 
 ### 2026-07-25 — 구현 문서 기준선 확정
 
@@ -151,7 +195,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - `REFLO_API_SPEC_v1.md`와 machine-readable 단일 원본 `contracts/openapi/reflo-v1.yaml`을 작성했다.
 - public path 80개·operation 86개와 Internal Worker API path·operation 5개를 인증, CSRF, project 소유권, version, idempotency와 공통 오류 계약으로 묶었다.
 - 10개 화면 명세의 endpoint를 전부 포함하고 주요 request·response field와 `operationStatus`·`progressPercent` job projection을 화면·아키텍처·ERD 기준에 맞췄다.
-- validation의 SpreadJS endpoint는 편집용 XLSX가 아니라 read-only import descriptor로 확정했다.
+- validation의 React workbook grid endpoint는 편집용 XLSX가 아니라 read-only import descriptor로 확정했다.
 - report import에 upload 완료 검증 endpoint가 빠져 있음을 발견해 `/report/imports/{importId}/complete`를 API와 보고서 화면 명세에 추가했다.
 - `redocly.yaml`을 추가하고 README·아키텍처·ERD·기술 결정문·화면 명세 인덱스에서 API 계약으로 이동할 수 있게 연결했다.
 
@@ -182,7 +226,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - 공통 `versioned_resource`·`resource_version`, 여러 입력을 함께 고정하는 approval·stage completion과 하위 단계 무효화 구조를 설계했다.
 - Temporal job projection, outbox, idempotency, activity attempt, reconciliation과 Internal Worker API 결과 transaction을 table·constraint로 구체화했다.
 - S3 artifact metadata, upload quarantine, Source·locator·Evidence·검증·충돌 결정과 FK 기반 provenance 구조를 정의했다.
-- 조사 후보와 승인 Evidence를 분리하는 `research_result_version`, Aspose.Cells 권위 workbook·계산·valuation, report revision·edit lease·검증·승인·export 모델을 포함했다.
+- 조사 후보와 승인 Evidence를 분리하는 `research_result_version`, ClosedXML 권위 workbook·계산·valuation, report revision·edit lease·검증·승인·export 모델을 포함했다.
 - 화면 명세의 논리 entity와 물리 table 매핑, 필수 unique·check·index, FK 삭제 정책, DB role과 migration 순서를 추가했다.
 - README, 아키텍처, 기술 결정문과 작업 로그에서 ERD를 기준 문서로 연결했다.
 
@@ -265,7 +309,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - TD-016으로 active job의 3초 visibility-aware polling, hidden·terminal 중단과 오류 backoff를 확정했다.
 - TD-017로 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft Agent를 PydanticAI로 구현하고 OpenAI GPT provider를 연결하기로 했다.
 - OpenAI API key는 `llm` worker secret으로 제한하고, 정확한 GPT model ID는 Agent별 server configuration과 평가 결과로 고정하도록 했다.
-- validation의 SpreadJS 읽기 전용, valuation의 허용 셀 편집 원칙을 유지했다.
+- validation의 React workbook grid 읽기 전용, valuation의 허용 셀 편집 원칙을 유지했다.
 - 로컬 `docs/pydantic_ai_guide.md`와 현재 PydanticAI 공식 OpenAI provider·structured output·retry·usage limit 문서를 대조했다.
 
 #### 검증
@@ -277,7 +321,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 #### 남은 결정
 
 - TD-014 계약을 구현할 Google OAuth/OIDC package와 정확한 version
-- SpreadJS 상용·SaaS 라이선스, package version과 배포 hostname
+- React workbook read model, ClosedXML version과 AGPL 배포 소스 링크
 - Agent별 정확한 GPT model ID, 비용·token·timeout 한도와 prompt·응답 보존 정책
 - Temporal·PDF·Excel worker의 production resource·동시성 한도
 
@@ -296,7 +340,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - 별도 작업에서 작성한 `03-setup.md`부터 `10-report.md`까지의 커밋을 화면 번호순으로 `main`에 통합했다.
 - `/`, `/projects`, 7개 프로세스 단계, 완료 후 보고서 작업 공간까지 총 10개 URL의 1차 화면 구현 명세를 완성했다.
 - 공식 단계명과 stage key, URL 이동 순서, `{projectId}` API path 표기, 공통 프로젝트 context와 `targetPeriod`, 오류·권한·멱등성, 비동기 작업 상태와 산출물 version 무효화 규칙을 전 화면에서 통일했다.
-- 마스터 명세에 URL별 기술 배치 표를 추가해 SpreadJS, PostgreSQL, S3, Temporal, PDF·Excel 워커와 Agent의 사용 위치 및 사용하지 않을 위치를 명확히 했다.
+- 마스터 명세에 URL별 기술 배치 표를 추가해 React workbook grid, PostgreSQL, S3, Temporal, PDF·Excel 워커와 Agent의 사용 위치 및 사용하지 않을 위치를 명확히 했다.
 - 보고서 화면은 8번째 프로세스 단계가 아니라 7단계 완료 후 진입하는 작업 공간으로 확정했다.
 
 #### 검증
@@ -311,9 +355,9 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 - Google OAuth/OIDC 라이브러리, session 저장·만료·회전, CSRF 정책
 - `cutoffDate`를 권위 시각 `cutoffAt`으로 바꾸는 timezone·day-end 규칙
-- SpreadJS 라이선스, package version, 배포 hostname과 지원 브라우저
+- React workbook read model, ClosedXML version, AGPL 배포 소스 링크와 지원 브라우저
 - Temporal·PDF·Excel worker의 production timeout, resource와 동시성 제한
-- PDF 처리 라이브러리의 상용 배포 라이선스와 실제 증권사 표본 검증
+- PDF 처리 라이브러리의 AGPL·third-party notice와 실제 증권사 표본 검증
 - Agent model·provider·비용 한도·prompt/schema version·원시 응답 보존 정책
 - 실시간 상태 전송을 초기 polling에서 SSE·WebSocket으로 바꿀 기준
 
@@ -361,7 +405,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - `/` 홈 상세 명세는 `docs/screens/01-home.md`로 분리했다.
 - 기존 헤더·히어로·모달 디자인은 재사용하고 인증 상태와 실제 프로젝트 생성만 연결하도록 정리했다.
 - Google 로그인, 실제 `projectId`, 7단계 표시, 사용자 메뉴·로그아웃, 오류·보안·테스트 조건을 명시했다.
-- 홈에서 사용하지 않는 SpreadJS, Temporal, PDF·Excel 워커, Agent는 로드하지 않도록 명시했다.
+- 홈에서 사용하지 않는 React workbook grid, Temporal, PDF·Excel 워커, Agent는 로드하지 않도록 명시했다.
 - 인증 라이브러리·세션 정책·CSRF 방식은 기술 결정 문서에 추가해야 할 미확정 항목으로 분리했다.
 
 #### 다음 작업
@@ -396,7 +440,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 #### 남은 작업
 
 - 경고 20개는 사용되지 않는 레거시 프로토타입 코드, `<img>` 최적화, 접근성 속성 문제다.
-- 실제 API, 인증, DB, 파일 처리, SpreadJS 연결은 아직 구현되지 않았다.
+- 실제 API, 인증, DB, 파일 처리, React workbook grid 연결은 아직 구현되지 않았다.
 - 다음 작업은 문서 기준의 URL별 화면·버튼·데이터·API 명세 확정이다.
 
 #### Git
@@ -468,7 +512,7 @@ git revert 7c78d7c
 
 - 기존 하드코딩 UI에는 ESLint 오류 7개와 경고가 남아 있었다. 오류 7개는 위 개발 기준선 작업에서 해결했다.
 - 타입검사와 프로덕션 빌드는 통과하므로 현재 실행에는 영향을 주지 않는다.
-- 아직 실제 API, 인증, DB, 파일 업로드, 작업 진행 상태, SpreadJS가 연결되지 않았다.
+- 아직 실제 API, 인증, DB, 파일 업로드, 작업 진행 상태, React workbook grid가 연결되지 않았다.
 - 대형 단일 컴포넌트를 단계별 컴포넌트로 나누기 전에는 기능 추가 시 충돌 위험이 높다.
 
 ## 5. 로컬 실행
@@ -498,9 +542,9 @@ npm run start
 2. contract type generation과 CI gate를 실제 repository 구조에 추가한다.
 3. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
 4. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
-5. SpreadJS 라이선스·package version·hostname 범위를 확인한 뒤 validation·valuation 통합 gate를 해제한다.
+5. React workbook read model·ClosedXML 0.105.0 계약을 적용하고 validation·valuation 통합 gate를 해제한다.
 6. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
-7. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
+7. 밸류에이션 화면의 가짜 Excel 영역은 React workbook grid로 교체하고, 권위 계산·저장은 ClosedXML worker에 연결한다.
 
 ## 7. 작업 기록 규칙
 

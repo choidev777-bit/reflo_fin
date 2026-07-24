@@ -20,6 +20,8 @@ REFLO worker가 교환하는 activity input, typed result, artifact descriptor, 
 | 재계산·RenderPlan·PDF 검증·publish | `v1/report-worker-artifact.schema.json` |
 | type·queue·payload registry | `schema-registry.json` |
 
+`hypothesis_questions`의 prompt·입력·domain validation 단일 원본은 [`../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md)다. 이 디렉터리는 structured output 형식만 소유한다.
+
 HTTP method, path, workload identity와 command envelope의 권위는 [`../openapi/reflo-v1.yaml`](../openapi/reflo-v1.yaml)이다. `POST /internal/v1/jobs/{jobId}/results` request body는 `worker-result-envelope.schema.json`을 직접 참조한다.
 
 ## Version 규칙
@@ -61,7 +63,7 @@ HTTP method, path, workload identity와 command envelope의 권위는 [`../opena
 - physical source locator의 stream·operator 범위·token hash 일치
 - Template IR slot·block·object·mask 교차 참조
 - MappingSet의 단일 권위 source, row·column key uniqueness와 series 길이
-- Excel `structureHash`, formula hash와 Aspose.Cells 재계산 결과
+- Excel `structureHash`, formula hash와 ClosedXML 재계산 결과
 - quote hash 정규화 version과 source locator 재현
 - Agent가 새 Evidence·숫자·page·block을 만들지 않았는지 확인
 - RenderPlan이 exact approved version만 고정했는지 확인

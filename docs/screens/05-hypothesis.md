@@ -20,12 +20,12 @@
 | 현재 route 파일 | `source-react/app/projects/[projectId]/process/hypothesis/page.tsx` |
 | 현재 실제 렌더링 경로 | route 재-export → `source-react/app/page.tsx` → `PlannedProcessPage` → `HypothesisSetup` |
 | 현재 디자인 파일 | `source-react/app/process.tsx`, `source-react/app/globals.css` |
-| 관련 기술 결정 | TD-011의 Temporal·LLM 격리 워커·PostgreSQL 작업 projection, TD-014, TD-016, TD-017 |
+| 관련 기술 결정 | TD-011의 Temporal·LLM 격리 워커·PostgreSQL 작업 projection, TD-014, TD-016, TD-017, TD-023 |
 | 현재 구현 상태 | 하드코딩·브라우저 로컬 상태 기반 프로토타입, 인증·저장·PydanticAI·승인 미연결 |
 
 ## 2. 화면 목적과 책임
 
-이 화면은 애널리스트의 현재 관점을 정답으로 확정하는 곳이 아니다. 사용자가 정한 잠정 투자의견과 투자 가설을 Hypothesis Agent가 객관적으로 확인하거나 반증할 수 있는 질문으로 바꾸고, 사용자가 질문 목록을 편집·정렬·승인하는 곳이다.
+이 화면은 애널리스트의 현재 관점을 정답으로 확정하는 곳이 아니다. 사용자가 정한 잠정 투자의견과 투자 가설을 Hypothesis Agent가 가설을 뒷받침하기 위해 확인해야 할 조사 질문으로 바꾸고, 사용자가 질문 목록을 편집·정렬·승인하는 곳이다.
 
 이 화면의 책임은 다음과 같다.
 
@@ -33,7 +33,7 @@
 2. 사용자의 현재 투자 가설을 자유 입력으로 저장한다.
 3. PydanticAI 기반 Hypothesis Agent로 3~5개의 조사 질문을 만든다.
 4. 질문이 기업·기간·관찰 지표를 명확히 포함하는지 검증한다.
-5. 가설을 기각하거나 수정하게 할 반증 질문을 최소 1개 포함한다.
+5. 전체 질문이 가설의 핵심 인과관계와 중요한 하위 주장을 함께 다루는지 검증한다.
 6. 사용자가 질문을 추가·수정·삭제·정렬한 뒤 전체 질문 세트를 승인하게 한다.
 7. 승인한 질문 버전을 다음 자료 수집 및 계획 단계의 입력으로 고정한다.
 
@@ -61,8 +61,8 @@
 | 충돌 항목 | 현재 프로토타입 | 목표 계약 |
 |---|---|---|
 | 잠정 투자의견 | 선택 사항 | `BUY/HOLD/SELL` 중 하나 필수 |
-| 질문 생성 | 브라우저 정규식으로 0~6개 생성 | 서버 PydanticAI Hypothesis Agent가 3~5개 생성 |
-| 질문 품질 | 문구만 존재 | 기업·기간·관찰 지표 명확, 반증 질문 1개 이상 |
+| 질문 생성 | 브라우저 정규식으로 최대 5개 생성 | 서버 PydanticAI Hypothesis Agent가 3~5개 생성 |
+| 질문 품질 | 문구만 존재 | 기업·기간·비교 기준·관찰 지표 명확, 핵심 인과관계 포괄 |
 | 질문 승인 | 없음 | 현재 입력 revision과 일치하는 질문 세트 전체 승인 필수 |
 | 저장 | React 메모리와 모듈 전역변수 | PostgreSQL 자동 저장·버전 관리 |
 | 다음 단계 조건 | 가설 문자열만 있으면 활성 | 투자의견·가설·유효한 질문 3~5개·전체 승인 모두 필요 |
@@ -110,12 +110,11 @@
 1. 잠정 투자의견이 `BUY`, `HOLD`, `SELL` 중 하나다.
 2. 투자 가설이 공백 제거 후 비어 있지 않다.
 3. 질문이 3~5개다.
-4. 모든 질문이 비어 있지 않고 기업·대상 기간·관찰 가능한 지표를 포함한다.
-5. `falsificationQuestion=true`인 반증 질문이 최소 1개다.
-6. 중복 질문이 없다.
-7. 질문 세트가 현재 투자의견·가설 `inputRevision`에서 생성됐다.
-8. 사용자가 현재 질문 세트 버전 전체를 승인했다.
-9. 저장 충돌이나 생성 작업 오류가 남아 있지 않다.
+4. 모든 질문이 비어 있지 않고 기업·대상 기간·비교 기준·관찰 가능한 지표를 포함한다.
+5. 중복 질문이 없다.
+6. 질문 세트가 현재 투자의견·가설 `inputRevision`에서 생성됐다.
+7. 사용자가 현재 질문 세트 버전 전체를 승인했다.
+8. 저장 충돌이나 생성 작업 오류가 남아 있지 않다.
 
 ## 5. 사용자 상태별 화면
 
@@ -195,7 +194,6 @@ hypothesis URL 진입
 | 생성 signature를 클라이언트 권위값으로 사용 | 제거 | 서버 `inputRevision`을 권위값으로 사용 |
 | 질문 전체 승인 UI 없음 | 추가 | 질문 패널 하단에 단일 승인 CTA 추가 |
 | 질문 정렬 UI 없음 | 추가 | drag handle과 키보드 이동 동작 추가 |
-| 반증 질문 구분 없음 | 추가 | 행의 조용한 `반증 질문` 표식과 편집 시 유형 선택 |
 | 생성·저장 실패 상태 없음 | 추가 | 카드 내부 오류와 재시도 |
 | 공용 하단 action bar | 재사용 | 실제 자동 저장 상태, 즉시 저장, 엄격한 다음 조건 연결 |
 | 카드의 장식 그림자 | 수정 | `DESIGN.md`에 따라 hairline 중심의 평면 카드로 정리 |
@@ -208,7 +206,6 @@ hypothesis URL 진입
 |---|---|---|
 | generation 진행·실패 영역 | 서버 Agent 작업은 즉시 끝나지 않으며 화면 이탈 뒤에도 계속됨 | 질문 패널 자리 |
 | 질문 전체 승인 CTA | 기준 문서의 사용자 승인 조건 충족 | 질문 패널 footer |
-| 반증 질문 표식·유형 선택 | 반증 질문 최소 1개 조건을 사용자가 확인·복구 | 질문 행, 추가·편집 상태 |
 | pointer·keyboard 정렬 control | 중요도 순서를 보존하고 drag 전용 접근성 문제 방지 | 각 질문 행 |
 | stale·obsolete 안내 | 입력 변경과 늦은 Agent 응답의 오적용 방지 | 질문 패널 header |
 | save error·version conflict 복구 | 자동 저장 실패와 다중 탭 충돌 처리 | 관련 카드와 공용 footer |
@@ -291,7 +288,6 @@ HTML을 허용하지 않고 일반 텍스트로 저장·렌더링한다. 입력�
 
 - 2자리 화면 순서 `01`~`05`
 - 질문 본문
-- 반증 질문이면 `반증 질문` 텍스트 표식
 - 수정
 - 삭제
 - drag handle
@@ -305,21 +301,19 @@ HTML을 허용하지 않고 일반 텍스트로 저장·렌더링한다. 입력�
 |---|---|
 | 질문 본문 | 공백 제거 후 1~300자 |
 | 질문 수 | 전체 3~5개, 5개이면 추가 비활성 |
-| 질문 유형 | `일반 질문` 또는 `반증 질문` |
 | 추가 위치 | 목록 마지막 |
 | 수정 방식 | 한 번에 한 행 인라인 편집 |
 | 저장 | Enter 또는 `저장` |
 | 취소 | Escape 또는 `취소` |
 | 중복 | 정규화 문장이 같은 질문은 거부 |
 
-사용자가 추가한 질문도 기업·대상 기간·관찰 지표가 드러나야 승인할 수 있다. 내부 `observableMetric` 식별자는 서버가 안정적으로 부여하며 일반 UI에는 노출하지 않는다.
+사용자가 추가한 질문도 기업·대상 기간·비교 기준·관찰 지표가 드러나야 승인할 수 있다. server는 현재 프로젝트 문맥으로 목적·지표·기간·비교 기준·제안 출처 metadata를 생성·검증하며 일반 UI에는 이를 편집 필드로 노출하지 않는다.
 
 ### 9.7 질문 삭제
 
 - 현재 디자인처럼 즉시 활성 목록에서 제거하되 짧은 `실행 취소` toast를 제공한다.
 - 물리 삭제가 아니라 새 question-set version에서 제외한다.
 - 삭제 결과가 3개 미만이어도 편집은 허용하지만 승인은 차단한다.
-- 유일한 반증 질문을 삭제해도 편집은 허용하지만 `반증 질문 1개 필요` 오류를 표시한다.
 - 승인 후 삭제는 승인을 해제한다.
 
 ### 9.8 질문 정렬
@@ -394,8 +388,8 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
 2. 질문 3~5개
 3. 순서 고유·연속
 4. 질문 본문 비어 있지 않음
-5. `observableMetric` camelCase 식별자 유효
-6. 반증 질문 1개 이상
+5. 목적·지표·기간·비교 기준·제안 출처 metadata 유효
+6. Agent 초기 우선순위 고유·연속
 7. 중복 없음
 8. 현재 project input revision과 일치
 
@@ -434,6 +428,7 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
 | `status` | question-set status | draft·stale·approved 등 |
 | `approvedAt`, `approvedBy` | nullable | 전체 승인 기록 |
 | `questions` | question[] | 현재 활성 질문 |
+| `missingContext` | string[] | Agent가 구체화에 부족하다고 판단한 입력 |
 
 질문은 최소 다음 필드를 가진다.
 
@@ -441,9 +436,12 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
 {
   "questionId": "hq_01...",
   "order": 1,
-  "text": "2026년 2분기 ... 관찰 가능한 지표는 무엇인가?",
-  "observableMetric": "quarterlyProductAsp",
-  "falsificationQuestion": false,
+  "text": "2026년 하반기 삼성전기 카메라모듈 ASP는 전년 동기 대비 상승했는가?",
+  "purpose": "제품 가격 상승 여부 확인",
+  "metrics": ["카메라모듈 ASP", "제품 믹스"],
+  "period": "2026년 하반기",
+  "comparison": "전년 동기",
+  "suggestedSourceTypes": ["company", "filing"],
   "origin": "agent"
 }
 ```
@@ -464,7 +462,6 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
 | `editingQuestionId` | string 또는 null | 현재 인라인 편집 |
 | `editingValue` | string | 편집 질문 |
 | `newQuestion` | string | 추가 질문 |
-| `newQuestionType` | normal·falsification | 추가 유형 |
 | `reorderState` | idle·saving·error | 정렬 저장 |
 | `approvalState` | draft·submitting·approved·error | 전체 승인 |
 | `pendingInvalidation` | object 또는 null | 하위 결과 영향 확인 |
@@ -632,7 +629,7 @@ rating 또는 thesis를 자동 저장한다.
 | `422` | `INVALID_THESIS` | textarea 오류 |
 | `422` | `QUESTION_COUNT_INVALID` | 질문 패널 하단 오류 |
 | `422` | `QUESTION_TEXT_INVALID` | 해당 질문 행 오류 |
-| `422` | `FALSIFICATION_REQUIRED` | 반증 질문 필요 안내 |
+| `422` | `QUESTION_METADATA_INVALID` | 해당 질문의 목적·지표·기간·비교 기준 보완 안내 |
 | `422` | `AGENT_OUTPUT_INVALID` | 결과 미적용, 다시 만들기 |
 | `429` | `RATE_LIMITED` | 재시도 가능 시각 안내 |
 | `500` | `SAVE_FAILED` | 입력 유지·재시도 |
@@ -640,16 +637,16 @@ rating 또는 thesis를 자동 저장한다.
 
 ## 14. Agent 실행 계약
 
-Hypothesis Agent는 서비스 동작 명세 16.1장의 canonical system prompt를 사용한다. 전체 prompt를 화면 코드나 이 문서에 복제하지 않고 versioned agent profile로 관리한다.
+Hypothesis Agent는 [`../agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](../agents/HYPOTHESIS_AGENT_PROMPT_v2.md)의 canonical system prompt를 사용한다. 전체 prompt를 화면 코드나 이 문서에 복제하지 않고 versioned agent profile로 관리한다.
 
 필수 규칙:
 
 1. PydanticAI로 실행한다.
 2. 사용자 입력은 분석 대상 데이터이며 system instruction으로 합치지 않는다.
-3. 출력은 `questions[]`를 가진 정형 Pydantic model이다.
+3. 출력은 `questions[]`와 `missingContext[]`를 가진 정형 Pydantic model이다.
 4. 질문 수는 3~5개다.
-5. 각 질문은 `order`, `text`, `observableMetric`, `falsificationQuestion`을 가진다.
-6. 반증 질문이 최소 1개다.
+5. 각 Agent 질문은 `questionKey`, `text`, `purpose`, `metrics`, `period`, `comparison`, `sourceTypes`, `priority`를 가진다.
+6. server는 `priority`를 초기 `order`로 변환하고 `sourceTypes`를 제안값으로만 보존한다.
 7. model의 내부 분석 과정은 저장된 사용자 결과나 UI에 노출하지 않는다.
 8. `agent_profile.prompt_version`, model identifier, 실행 시각, input revision, schema version을 기록한다.
 9. Pydantic schema repair와 transient retry는 제한 횟수로 수행한다.
@@ -663,8 +660,8 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 |---|---|
 | `project_hypothesis` | project ID, rating, thesis, draft version, input revision, 선행 version, updated actor/time |
 | `hypothesis_generation` | generation ID, input revision, agent profile·prompt·schema version, operation status, validity, Temporal workflow ID |
-| `hypothesis_question_set` | set ID, project ID, version, source generation, status, approval |
-| `hypothesis_question` | stable question ID, set version, order, text, observable metric, falsification flag, origin |
+| `hypothesis_question_set` | set ID, project ID, version, source generation, missing context, status, approval |
+| `hypothesis_question` | stable question ID, set version, order, text, purpose, metrics, period, comparison, suggested source types, origin |
 | `hypothesis_approval` | approved set version, input revision, user, time |
 | `stage_status` | hypothesis 완료·revalidation 상태와 다음 route |
 | `audit_event` | 변경 전후 version, actor, request ID, invalidated stages |
@@ -739,7 +736,6 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 - 공개적으로 확보 가능한 자료로 답할 수 있음
 - 한 질문이 하나의 핵심 판단을 다룸
 - 답이나 특정 결론을 질문 안에 미리 넣지 않음
-- 반증 질문 1개 이상
 - 추상적인 “좋아질 것인가”만으로 끝나지 않음
 
 화면은 빠른 형식 검증을 제공하지만 승인 가능 여부의 권위 판정은 서버가 수행한다.
@@ -758,7 +754,6 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | 다중 탭 충돌 | 최신본 존재 안내 | 최신 내용 불러오기 |
 | 질문 2개 이하 | 승인 차단, 필요한 수 표시 | 추가·재생성 |
 | 질문 5개 | 추가 비활성 | 수정·삭제 |
-| 반증 질문 없음 | 승인 차단 | 질문 유형 변경·추가 |
 | 상위 파일 version 변경 | 승인 해제·stale | 재생성·재승인 |
 | 세션 만료 | 입력 임시 보존 | 로그인 후 재조회·충돌 확인 |
 | generation rate limit | 가능 시각 표시 | 이후 재시도 |
@@ -807,12 +802,12 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | Research Agent | 없음 | 이 화면에서 실행하지 않음 |
 | Validation Agent | 없음 | 이 화면에서 실행하지 않음 |
 | DART·IR·KRX·ECOS·FnGuide·뉴스 수집 | 없음 | research-plan 승인 뒤 실행 |
-| SpreadJS | 없음 | 로드하지 않음 |
-| Aspose.Cells | 없음 | 호출하지 않음 |
+| React workbook grid | 없음 | 로드하지 않음 |
+| ClosedXML | 없음 | 호출하지 않음 |
 | PDFium·PyMuPDF·pikepdf·OpenCV | 없음 | 로드·호출하지 않음 |
 | Evidence 저장·viewer | 없음 | validation 단계 책임 |
 
-이 route의 client bundle에 SpreadJS, PDF 처리, Excel 계산, 수집 provider 코드를 포함하지 않는다.
+이 route의 client bundle에 React workbook grid, PDF 처리, Excel 계산, 수집 provider 코드를 포함하지 않는다.
 
 ## 22. 현재 프로토타입과 목표 구현의 차이
 
@@ -824,9 +819,8 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | rating 기본 선택 없음, 선택하지 않아도 진행 | rating 필수 | 필수 |
 | thesis만 있으면 다음 활성 | 승인된 질문 세트까지 필요 | 필수 |
 | 로컬 정규식 `deriveQuestions` | PydanticAI canonical prompt | 필수 |
-| 질문 최대 6개 가능 | 3~5개 | 필수 |
+| 질문 수·metadata를 domain validation하지 않음 | 3~5개와 필수 metadata 검증 | 필수 |
 | 생성 전에도 module 전역 질문 재사용 가능 | project·input revision별 격리 | 필수 |
-| 반증 질문 metadata 없음 | 반증 질문 1개 이상 | 필수 |
 | 질문 전체 승인 없음 | versioned 전체 승인 | 필수 |
 | index와 text 조합을 React key로 사용 | 안정적 question ID | 필수 |
 | 질문 정렬 없음 | pointer·keyboard 정렬 | 필수 |
@@ -860,7 +854,7 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 - [ ] Hypothesis Agent는 PydanticAI와 canonical prompt version으로 실행된다.
 - [ ] Agent 입력에 prompt injection 문구가 있어도 agent 규칙과 schema가 바뀌지 않는다.
 - [ ] 유효한 Agent 결과만 질문 3~5개로 표시된다.
-- [ ] 반증 질문이 최소 1개다.
+- [ ] 질문별 목적·지표·기간·비교 기준·제안 출처가 structured output과 일치한다.
 - [ ] 질문 추가·수정·삭제·정렬이 실제 서버 version에 저장된다.
 - [ ] 질문 5개에서 추가할 수 없고 3개 미만에서는 승인할 수 없다.
 - [ ] pointer 없이 질문 순서를 변경할 수 있다.
@@ -875,7 +869,7 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 - [ ] 모든 진행 조건을 만족한 경우에만 다음 버튼이 활성화된다.
 - [ ] 다음은 `/projects/{projectId}/process/research-plan`로 이동한다.
 - [ ] 화면에 동작하지 않는 버튼이나 가짜 완료 상태가 남아 있지 않다.
-- [ ] 이 route에서 SpreadJS, Aspose.Cells, PDF 워커, 수집·Validation Agent를 로드하거나 호출하지 않는다.
+- [ ] 이 route에서 React workbook grid, ClosedXML, PDF 워커, 수집·Validation Agent를 로드하거나 호출하지 않는다.
 
 ## 25. 자동 테스트 시나리오
 
@@ -887,7 +881,7 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | E2E | rating·thesis 입력, 자동 저장, 새로고침 후 복원 |
 | E2E | 질문 생성 queued→running→3~5개 성공 표시 |
 | E2E | 질문 수정·추가·삭제·정렬 후 새로고침 상태 유지 |
-| E2E | 반증 질문이 없거나 질문이 3개 미만일 때 승인 차단 |
+| E2E | 질문이 3개 미만이거나 필수 metadata가 없을 때 승인 차단 |
 | E2E | 질문 전체 승인 후 다음 버튼 활성·research-plan 이동 |
 | E2E | 승인 후 thesis 변경 시 승인 해제와 stale 표시 |
 | E2E | 하위 결과가 있는 승인본 변경 시 재검증 경고 |
@@ -895,11 +889,11 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | E2E | 생성 중 이탈·재진입 후 진행 상태 복구 |
 | E2E | mobile에서 rating·질문·action이 순서대로 stack |
 | 단위 | thesis trim·1~500자 검증 |
-| 단위 | 질문 3~5개·중복·반증 질문 검증 |
+| 단위 | 질문 3~5개·중복·metadata·우선순위 검증 |
 | 단위 | question order 재번호와 이동 경계 |
 | 단위 | inputRevision 변경에 따른 stale·approval 해제 |
 | 계약 | canonical Agent output Pydantic schema 검증 |
-| 계약 | 2개·6개·반증 없음·중복 Agent 결과 거부 |
+| 계약 | 2개·6개·필수 metadata 없음·중복 Agent 결과 거부 |
 | 통합 | PydanticAI 실행→Temporal projection→question set 저장 |
 | 통합 | generation request idempotency와 obsolete 결과 격리 |
 | 통합 | draft·question-set optimistic concurrency 충돌 |
@@ -912,15 +906,10 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | 접근성 | 질문 편집·삭제·추가·정렬·승인을 keyboard만으로 완료 |
 | 접근성 | 생성·저장·오류 상태의 live announcement |
 | 회귀 | 기존 STEP 03 제목·카드·색상·간격의 대표 desktop 화면 |
-| 번들 | hypothesis route에 SpreadJS·PDF·Excel worker 코드 미포함 |
+| 번들 | hypothesis route에 React workbook grid·PDF·Excel worker 코드 미포함 |
 
-## 26. 아직 필요한 제품·기술 결정
+## 26. 확정된 Agent 기본값과 후속 범위
 
-이 화면 계약은 확정할 수 있지만 다음 선택은 기준 문서에 아직 없다.
+Hypothesis Agent의 model·reasoning·token·timeout·비용·rate limit과 원시 prompt·응답 30일 보존은 TD-023을 따른다. 사용자 질문은 이 화면의 300자 상한을 적용한다. `optionalContext` 별도 입력은 MVP에서 제외한다.
 
-1. Hypothesis Agent가 사용할 정확한 GPT model ID·model settings·비용 한도
-2. Agent 원시 prompt·응답의 보존기간과 운영자 열람 범위
-3. 사용자 질문의 300자 상한을 다른 화면과 공통 상수로 확정할지 여부
-4. `optionalContext`에 사용자가 별도 배경 정보를 입력하는 기능을 후속 제공할지 여부
-
-인증은 TD-014·TD-018, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT, 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 선택이 남아 있어도 필수 rating, 500자 thesis, PydanticAI 질문 3~5개, 반증 질문, 질문 CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.
+인증은 TD-014·TD-018, Agent framework와 provider는 TD-017, 진행 상태는 TD-016의 polling으로 확정됐다. 필수 rating, 500자 thesis, 질문 3~5개, 질문 metadata, CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.

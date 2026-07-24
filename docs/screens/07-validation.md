@@ -22,8 +22,8 @@
 | 현재 스타일 | `source-react/app/globals.css`의 `rv-*` 계열 |
 | 현재 주요 컴포넌트 | `Home`, `PlannedProcessPage`, `ResearchValidation`, `ScreenHead` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 4장, 5장, 11장, 12장, 16장, 17장, 19장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-017 |
-| 구현 상태 | 고정 샘플 데이터와 가짜 뷰어만 존재, 실제 인증·API·검증·결정 저장·SpreadJS 미구현 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-017, TD-020, TD-021, TD-023 |
+| 구현 상태 | 고정 샘플 데이터와 가짜 뷰어만 존재, 실제 인증·API·검증·결정 저장·React workbook grid 미구현 |
 
 ### 7.2 화면 목적과 책임
 
@@ -94,7 +94,7 @@
 공유 Process 하단 액션 바의 `다음`은 다음 조건을 모두 만족할 때만 활성화한다.
 
 1. 선행 조사 계획 버전과 현재 검증 버전이 일치한다.
-2. 모든 필수 질문에 검증된 근거가 있고 답변 충분성이 `sufficient` 또는 사용자 확인 가능한 `qualified`다.
+2. 모든 필수 질문에 검증된 근거가 있고 답변 충분성이 `sufficient`이거나 `qualified`에 유효한 `ACCEPT_QUALIFIED` decision이 있다.
 3. 모든 필수 Excel 실제값이 검증된 Evidence와 입력 셀에 연결됐다.
 4. 핵심 숫자 검증 실패가 없다.
 5. 해결되지 않은 출처 충돌이 없다.
@@ -122,7 +122,7 @@
 | 가설 탭 | 질문 그룹, `전체·출처 충돌·확인 완료` 필터, 결과 선택, 원문 패널을 제공한다. |
 | 원문 패널 | 페이지·확대 UI와 하이라이트 모양은 있으나 실제 PDF viewer가 아니다. 일부 컨트롤은 동작하지 않는다. |
 | 출처 drawer | 질문별 출처 수와 외부 링크를 보여주고 drag·keyboard resize를 지원한다. |
-| Excel 탭 | DART 목록과 Excel처럼 보이는 수제 table을 나란히 표시한다. SpreadJS와 실제 workbook은 연결되지 않았다. |
+| Excel 탭 | DART 목록과 Excel처럼 보이는 수제 table을 나란히 표시한다. React workbook grid와 실제 workbook은 연결되지 않았다. |
 | 분할 작업 영역 | 가설·Excel 모두 pointer와 방향키로 너비를 조절하고 좁은 화면에서 쌓는다. |
 | 상태 | `complete`, `conflict` 두 상태만 있으며 실제 충돌 선택·반려·재조사·승인 저장이 없다. |
 | 저장 | `자동 저장됨`은 고정 문구이고 `임시 저장`은 toast만 표시한다. |
@@ -166,7 +166,7 @@
 | 내부 PDF viewer 모양 | 구조 재사용 | 실제 source version·page·좌표 highlight viewer로 교체 |
 | `signed-url://` demo와 `동작 확인` popup | 제거 | 실제 내부 viewer 또는 공식 외부 URL 이동 |
 | 페이지·확대 button | 수정 | 실제 viewer 동작 연결, 미구현이면 숨김 |
-| fake Excel table | 교체 | TD-010 SpreadJS React 읽기 전용 workbook |
+| fake Excel table | 교체 | TD-010 React workbook grid 읽기 전용 workbook |
 | DART 왼쪽·Excel 오른쪽 순서 | 수정 | Excel 왼쪽·선택 셀 원문 오른쪽 |
 | `Excel 연결 미리보기` 고정 상태 | 수정 | 실제 workbook version·읽기 전용·반영 상태 표시 |
 | `참조 보고서 PDF` Evidence | 제거 | 디자인·문체 참고로만 보존하고 검증 결과 목록에서는 제외 |
@@ -208,9 +208,9 @@ Process header·sidebar
 ```text
 검증된 실제값
   → TD-005 MappingSet의 목표 cell 확인
-  → Aspose.Cells 작업 사본에 실제값 반영
+  → ClosedXML 작업 사본에 실제값 반영
   → 수식 재계산·참조 무결성 검사
-  → SpreadJS 읽기 전용 workbook에 server delta 반영
+  → React workbook grid 읽기 전용 workbook에 server delta 반영
   → cell 선택
   → 오른쪽 원문의 표·문장 좌표 highlight
   → 값·기간·단위·연결/별도·source 비교
@@ -238,12 +238,12 @@ Process header·sidebar
 | `ResultDecisionActions` | 반려·재조사 요청과 사유 입력 | result status, version | decision mutation |
 | `ConflictResolutionPanel` | 후보 원문·값 비교와 채택 | conflict group | conflict decision |
 | `ExcelValidationPane` | 실제 workbook와 source 비교 | workbook manifest, mappings | cell selection |
-| `ValidationWorkbook` | SpreadJS 읽기 전용 workbook | import session, cell metadata | selected cell |
+| `ValidationWorkbook` | React workbook grid 읽기 전용 workbook | read model, cell metadata | selected cell |
 | `ExcelSourceViewer` | 선택 cell의 DART·IR 원문 | mapping, Evidence | source switch·highlight |
 | `ValidationProgress` | 수집·검증·Excel 반영 job projection | job summaries | 재시도·상태 갱신 |
 | `ValidationStageActions` | 임시 저장, 완료 gate, 다음 이동 | dirty draft, gate | save·approve-and-next |
 
-`PdfEvidenceViewer`와 `ValidationWorkbook`은 category를 선택했을 때 지연 로드한다. PydanticAI, PDF parser, Aspose.Cells와 Temporal client를 브라우저 component에 넣지 않는다.
+`PdfEvidenceViewer`와 `ValidationWorkbook`은 category를 선택했을 때 지연 로드한다. PydanticAI, PDF parser, ClosedXML과 Temporal client를 브라우저 component에 넣지 않는다.
 
 ### 7.10 가설 영역 표시 계약
 
@@ -347,7 +347,7 @@ DART XBRL, KRX, ECOS, FnGuide처럼 구조화된 값은 endpoint, canonical para
 
 - 공식 실제값으로 채우는 cell만 기본 목록에 포함한다.
 - 미래 추정치, Target PER, formula output 자체는 자동 입력 대상에서 제외한다.
-- formula output의 정확성은 입력값 반영 뒤 Aspose.Cells가 재계산해 검증한다.
+- formula output의 정확성은 입력값 반영 뒤 ClosedXML이 재계산해 검증한다.
 - 한 cell에는 하나의 권위 Evidence만 연결한다.
 - 다른 source 후보는 검증 또는 conflict 후보로 보존한다.
 - 값, 기간, 단위, 통화, 연결·별도와 실제·잠정·추정 구분이 모두 맞아야 `연결 완료`다.
@@ -431,10 +431,10 @@ TD-012를 따르며 최소 다음을 사용한다.
 | `bindingId`, `workbookVersion` | TD-005·TD-010 버전 |
 | `sheetId`, `sheetName`, `address` | stable identity와 표시 주소 |
 | `metric`, `period`, `unit`, `scope` | cell 의미 |
-| `value`, `formattedText` | Aspose.Cells 권위 값 |
+| `value`, `formattedText` | ClosedXML 권위 값 |
 | `evidenceId` | 선택된 권위 Evidence |
 | `writeStatus` | `pending`, `applied`, `calculated`, `failed`, `stale` |
-| `calculationRunId` | Aspose.Cells 실행 |
+| `calculationRunId` | ClosedXML 실행 |
 | `affectedCellIds` | 재계산된 결과 cell |
 
 ### 7.14 상태 모델
@@ -486,6 +486,13 @@ TD-012를 따르며 최소 다음을 사용한다.
 - 성공 시 승인 사용자, 시각, project·research plan·Evidence·workbook version을 고정한다.
 - 승인 뒤 결과를 변경하면 기존 승인을 수정하지 않고 새 validation version을 만든다.
 
+#### 조건부 근거 확인
+
+- TD-020의 deterministic rule이 `qualified`로 판정한 필수 질문에만 표시한다.
+- 사용자는 `조건부 근거 확인`과 5~500자 이유를 제출해 `ACCEPT_QUALIFIED` decision을 남길 수 있다.
+- `insufficient`, `reinvestigating`, unresolved conflict와 핵심 숫자 실패는 이 동작으로 우회할 수 없다.
+- 확인 뒤에도 원래 `qualified` 상태와 한계 사유를 유지한다. 화면·보고서에서 `sufficient`로 바꾸지 않는다.
+
 #### 반려
 
 - 원문은 맞지만 프로젝트 문맥에 부적절하거나 결과를 사용하지 않으려는 경우에 사용한다.
@@ -522,7 +529,7 @@ TD-012를 따르며 최소 다음을 사용한다.
 | VAL-NAV-01 | `프로젝트로 돌아가기` button | 항상 | `/projects` 이동 | 작업은 계속 실행 | 미제출 draft가 있으면 확인 |
 | VAL-NAV-02 | workflow sidebar button | 접근 가능한 단계 | 해당 process URL 이동 | 실제 URL 갱신 | 계획 수정 시 무효화 경고 |
 | VAL-TAB-01 | HYPOTHESIS `button[role=tab]` | 항상 | 가설 category 선택 | 가설 panel 표시 | `aria-selected`, 좌우 방향키 |
-| VAL-TAB-02 | EXCEL `button[role=tab]` | workbook 분석 완료 | Excel category 선택 | SpreadJS 지연 로드 | 준비 전 disabled+이유 |
+| VAL-TAB-02 | EXCEL `button[role=tab]` | workbook 분석 완료 | Excel category 선택 | React workbook grid 지연 로드 | 준비 전 disabled+이유 |
 | VAL-FILTER-01 | 상태 filter button | 가설 category | 결과 목록 filtering | count와 목록 갱신 | `aria-pressed`, 44px hit area |
 | VAL-GROUP-01 | 질문 card header button | 질문 존재 | 질문·첫 결과 선택 | card와 viewer 동기화 | 질문 전체가 button임을 명확히 표시 |
 | VAL-RESULT-01 | Evidence result row button | machine 통과 결과 | 결과 선택 | 오른쪽 원문·판정 표시 | `aria-current` 또는 `aria-pressed` |
@@ -541,6 +548,8 @@ TD-012를 따르며 최소 다음을 사용한다.
 | VAL-DECISION-05 | `재조사 요청` button | 결과·실패·충돌 | 요청 panel 열기 | 사유 입력 표시 | 이미 실행 중이면 disabled |
 | VAL-DECISION-06 | 재조사 사유 `textarea` | 요청 panel 열림 | 5~500자 입력 | 제출 가능 | 질문·지표 자동 context 표시 |
 | VAL-DECISION-07 | `재조사 시작` button | 사유 유효 | decision+workflow 시작 | job 상태 표시 | 중복 request 한 번만 실행 |
+| VAL-DECISION-08 | `조건부 근거 확인` button | 필수 질문이 `qualified`이고 미확인 | 확인 panel 열기 | 한계·사유 입력 표시 | `insufficient`에는 노출 금지 |
+| VAL-DECISION-09 | `조건부로 진행` button | 5~500자 이유 유효 | `ACCEPT_QUALIFIED` decision 저장 | stage gate 재계산 | 원래 `qualified` label 유지 |
 | VAL-CONFLICT-01 | conflict 후보 radio | unresolved conflict | Evidence 후보 선택 | 비교 panel 선택 상태 | 실제 `input[type=radio]` 또는 동일 semantics |
 | VAL-CONFLICT-02 | 선택 이유 `textarea` | 후보 선택 | 5~500자 입력 | 확정 가능 | 선택 이유 label 필수 |
 | VAL-CONFLICT-03 | `선택값 확정` button | 후보·이유 유효 | conflict decision 저장 | resolved·Excel 반영 시작 | 자동 추천값 preselect 금지 |
@@ -560,7 +569,7 @@ TD-012를 따르며 최소 다음을 사용한다.
 | `activeFilter` | filter enum | client | 가설 결과 filter |
 | `selectedQuestionId` | ID 또는 null | client | 선택 질문 |
 | `selectedResultId` | ID 또는 null | client | 선택 결과 |
-| `selectedCell` | sheet·address 또는 null | SpreadJS/client | Excel source 연결 |
+| `selectedCell` | sheet·address 또는 null | React workbook grid/client | Excel source 연결 |
 | `expandedViewer` | boolean | client | 원문 pane 확대 |
 | `splitRatio` | number | client preference | desktop pane 비율 |
 | `sourceDrawer` | open·question·type·width | client | source drawer |
@@ -637,18 +646,18 @@ presigned URL은 project 소유권 검사 후 발급하며 object key를 API 입
 
 #### `GET /api/projects/{projectId}/validation/workbook`
 
-SpreadJS 읽기 전용 표시용 manifest를 반환한다.
+React workbook grid 읽기 전용 표시용 manifest를 반환한다.
 
 - `originalWorkbookHash`
 - `workbookVersion`
-- 짧은 만료 import session
+- versioned read model URL
 - visible sheet 목록
 - validation target cell set
 - read-only reason
 - selected cell별 Evidence binding
 - client 표시 호환성 경고
 
-SpreadJS client export URL과 편집 가능한 `editableCellSet`은 이 화면에 반환하지 않는다.
+XLSX client export URL과 편집 가능한 `editableCellSet`은 이 화면에 반환하지 않는다.
 
 #### `POST /api/projects/{projectId}/validation/results/{resultId}/decisions`
 
@@ -746,7 +755,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | `project_id` | 서버가 소유권 확인 |
 | `validation_version` | 결정 전 예상 version과 성공 후 새 version |
 | `target_type`, `target_id` | result 또는 conflict |
-| `action` | reject, restore, reinvestigate, select-source |
+| `action` | reject, restore, reinvestigate, select-source, accept-qualified |
 | `selected_evidence_id` | conflict 선택 시 필수 |
 | `reason` | 5~500자 |
 | `created_by` | 검증된 세션 사용자 |
@@ -776,14 +785,16 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 - 단위, 통화, 기간, 연결·별도와 실제·잠정·추정 구분이 명시된다.
 - 합계·증감률·비율은 Decimal 기반 코드로 재계산한다.
 - Excel cell의 metric·기간·scope와 일치한다.
-- Aspose.Cells 반영·재계산·formula error·순환참조 검사를 통과한다.
+- ClosedXML 반영·재계산·formula error·순환참조 검사를 통과한다.
 
 #### 질문 충분성
 
-- 필수 질문마다 최소 한 개 이상의 검증 결과가 있어야 한다.
-- 조사 계획이 요구한 핵심 지표가 모두 포함돼야 한다.
-- 반증 질문의 결과를 숨기거나 지지 결과만으로 충분 판정하지 않는다.
-- 필수 Evidence 반려 또는 stale 상태면 충분성을 다시 계산한다.
+- TD-020의 rule version을 사용한다.
+- 필수 질문마다 최소 한 개 이상의 검증 Evidence와 계획의 핵심 지표 coverage가 있어야 한다.
+- `sufficient`는 전체 필수 coverage, 핵심 숫자 검증과 unresolved conflict·stale·반려 필수 결과 없음이 모두 필요하다.
+- `qualified`는 핵심 coverage와 최소 Evidence는 충족하지만 단일 원천, 간접 원천 또는 비핵심 보조 지표 누락 중 하나가 있을 때만 사용한다.
+- 필수 지표 누락, 검증 Evidence 부재, 핵심 숫자 실패, conflict, stale와 반려로 coverage가 깨진 상태는 `insufficient`다.
+- Agent가 충분성을 확정하지 않는다. deterministic code가 계산하고 사용자는 `qualified`만 이유와 함께 확인할 수 있다.
 
 #### 차단 항목
 
@@ -812,7 +823,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | conflict 후보 일부 로딩 실패 | 자동 선택 금지 | 모두 로드 후 결정 |
 | decision 저장 실패 | textarea·선택 유지 | 같은 idempotency key 재시도 |
 | stale version | 최신 상태 재조회 | draft text 병합 없이 사용자 확인 |
-| Excel import 불일치 | 영향 sheet·cell 경고 | 권위값은 Aspose 유지, 진행 차단 여부 표시 |
+| Excel read model 불일치 | 영향 sheet·cell 경고 | 권위값은 ClosedXML 유지, 진행 차단 여부 표시 |
 | worker 실패 | 원인 code와 재시도 가능 여부 | non-retryable은 계획·파일 수정 |
 | 네트워크 끊김 | 기존 데이터 읽기 가능, offline 표시 | 복구 후 projection 재조회 |
 
@@ -863,8 +874,8 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | 가짜 PDF page | 실제 source PDF viewer와 좌표 highlight | 필수 |
 | 동작 없는 viewer button | 실제 동작 연결 또는 제거 | 필수 |
 | 원문 왼쪽·Excel 오른쪽 | Excel 왼쪽·원문 오른쪽 | 필수 |
-| HTML/CSS fake spreadsheet | SpreadJS 실제 workbook 읽기 전용 표시 | 필수 |
-| Excel 값이 server calculation과 무관 | Aspose.Cells 반영·재계산 결과 | 필수 |
+| HTML/CSS fake spreadsheet | React workbook grid 실제 workbook 읽기 전용 표시 | 필수 |
+| Excel 값이 server calculation과 무관 | ClosedXML 반영·재계산 결과 | 필수 |
 | static `자동 저장됨` | mutation 동기화 상태 | 필수 |
 | `임시 저장` toast만 표시 | decision draft 실제 저장 | 필수 |
 | `다음`이 무조건 step 9로 이동 | server stage gate·승인 후 valuation route | 필수 |
@@ -921,8 +932,8 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | PydanticAI Research Agent | 승인 계획 기반 후보 수집 | backend worker만 |
 | PydanticAI Validation Agent | Research 추론 없이 원문 독립 확인 | backend worker만 |
 | 결정적 validation code | 숫자·단위·합계·증감률·source identity | backend worker |
-| SpreadJS React | 실제 workbook 읽기 전용 UI | Excel tab에서 dynamic import |
-| Aspose.Cells for .NET | 실제값 기록·수식 재계산·작업 사본 저장 | .NET worker |
+| React workbook grid | 실제 workbook 읽기 전용 UI | Excel tab에서 dynamic import |
+| ClosedXML 0.105.0 | 실제값 기록·수식 재계산·작업 사본 저장 | .NET worker |
 | PDF viewer | source version page·bbox highlight | browser viewer + artifact API |
 | TD-001·007·008 보고서 PDF 처리 | 없음 | 이 화면의 Evidence viewer와 혼동해 로드하지 않음 |
 | FnGuide provider | 컨센서스 Evidence가 있을 때 backend collection | browser 직접 호출 금지 |
@@ -933,7 +944,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 - 화면 component: `features/validation/components/`
 - client query·mutation: `features/validation/api/`
 - 공유 Evidence viewer: `features/evidence/`
-- SpreadJS adapter: `features/workbook/ValidationWorkbook.tsx`
+- React workbook grid adapter: `features/workbook/ValidationWorkbook.tsx`
 - 상태·API type: `features/validation/contracts.ts`
 
 현재 대형 `app/process.tsx`와 `app/globals.css`에서 디자인을 바꾸지 않고 validation component·style을 먼저 분리한 뒤 실제 API를 연결한다.
@@ -949,7 +960,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 7. 실제 PDF·뉴스·구조화 API locator viewer를 연결한다.
 8. 반려·재조사·conflict decision mutation과 동시성·idempotency를 구현한다.
 9. TD-004·005 기반 실제값 반영과 Excel mapping 상태를 연결한다.
-10. fake Excel table을 SpreadJS 읽기 전용 workbook으로 교체하고 pane 순서를 수정한다.
+10. fake Excel table을 React workbook grid 읽기 전용 workbook으로 교체하고 pane 순서를 수정한다.
 11. 공유 하단 action bar에 draft 저장·server gate·직접 valuation 이동을 연결한다.
 12. 접근성, responsive, worker 실패, 보안과 회귀 테스트를 통과한다.
 
@@ -960,7 +971,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 - [ ] research-plan 미승인 프로젝트는 가장 이른 미완료 단계로 이동한다.
 - [ ] 수집·검증 작업은 화면 이탈 후에도 계속되고 재진입 시 같은 run 상태를 보여준다.
 - [ ] Validation Agent는 Research Agent 추론 없이 원문·locator·프로젝트 기준만 받는다.
-- [ ] 숫자·합계·증감률·Excel 계산값은 코드·Aspose.Cells 검증을 통과한다.
+- [ ] 숫자·합계·증감률·Excel 계산값은 코드·ClosedXML 검증을 통과한다.
 - [ ] machine 검증 실패 후보는 검증된 값·주장으로 노출되지 않는다.
 - [ ] 이전 분기 증권사 리포트가 새 사실의 최종 Evidence로 사용되지 않는다.
 - [ ] 질문별 한 줄 답변, 충분성, 지지·반박·중립 결과가 검증 Evidence와 일치한다.
@@ -972,8 +983,8 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 - [ ] 재조사는 기존 결과를 보존한 채 새 workflow·version을 만든다.
 - [ ] 상위 데이터 변경 시 현재 결과와 하위 결과에 `재검증 필요`가 표시된다.
 - [ ] Excel tab은 실제 workbook을 왼쪽, 선택 cell 원문을 오른쪽에 표시한다.
-- [ ] SpreadJS workbook의 모든 cell은 validation 단계에서 읽기 전용이다.
-- [ ] workbook 표시값과 최종 권위값은 Aspose.Cells 결과를 따른다.
+- [ ] React workbook grid의 모든 cell은 validation 단계에서 읽기 전용이다.
+- [ ] workbook 표시값과 최종 권위값은 ClosedXML 결과를 따른다.
 - [ ] source value·Excel cell·formula output·후속 report까지 provenance가 이어진다.
 - [ ] `자동 저장됨`은 실제 server sync 완료 뒤에만 표시된다.
 - [ ] `임시 저장`은 실제 decision draft를 저장하며 빈 toast button으로 남지 않는다.
@@ -1018,8 +1029,8 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | E2E | stale 응답 뒤 입력한 사유 text 유지 |
 | E2E | Excel tab의 실제 sheet·cell·formula bar 표시 |
 | 보안 | validation workbook의 입력·paste·formula·format 변경 거부 |
-| 통합 | Excel 실제값 반영 후 Aspose.Cells formula 결과·version 갱신 |
-| 통합 | client 표시값과 Aspose 권위값 불일치 시 server 값 우선 |
+| 통합 | Excel 실제값 반영 후 ClosedXML formula 결과·version 갱신 |
+| 통합 | client 표시값과 ClosedXML 권위값 불일치 시 server 값 우선 |
 | 접근성 | tablist, filter, result row, dialog accessible name |
 | 접근성 | pointer·방향키·Home·End·double-click splitter |
 | 접근성 | drawer focus trap·Escape·trigger focus 복귀 |
@@ -1028,15 +1039,8 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 | 회귀 | active purpose tab, 질문·Evidence card, conflict·complete color token |
 | 회귀 | validation 화면에서 완료 modal이 다시 생기지 않음 |
 
-### 7.29 아직 필요한 제품·기술 결정
+### 7.29 확정된 구현 기본값과 production gate
 
-두 기준 문서로 화면 동작 대부분을 확정할 수 있지만 다음 항목은 구현 전에 추가 결정이 필요하다.
+TD-020에서 질문 충분성, `qualified` 조건부 확인, 5~500자 decision 사유와 하위 무효화 확인문을 확정했다. 인증은 TD-014·TD-018, job 상태 전달은 TD-016, React workbook grid integration은 TD-021, Agent profile은 TD-023을 따른다.
 
-1. 질문별 `sufficient`, `qualified`, `insufficient` 자동 판정 기준과 사용자 override 허용 여부
-2. 선택값·반려·재조사 사유의 최소 5자 규칙을 제품 공통 규칙으로 확정할지 여부
-3. validation 승인 뒤 후속 단계가 진행된 상태에서 결정을 바꿀 때 보여줄 하위 무효화 확인 문구
-4. 뉴스·유료 자료의 snapshot 보존·표시·삭제 범위
-5. SpreadJS 상용·SaaS 배포 라이선스와 실제 workbook 회귀검사
-6. Aspose.Cells, Temporal, PDF viewer와 Evidence 저장의 production 운영 한도
-
-인증은 TD-014·TD-018, job 상태 전달은 TD-016의 polling으로 확정됐다. 1~3은 feature 구현 gate, 4~6은 production gate다. 현재 화면의 레이아웃, 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동 계약을 바꾸지 않는다.
+뉴스·유료 자료의 계약상 보존 권한, AGPL-3.0 대응 소스 링크, third-party notice, 실제 workbook 회귀, worker resource와 Evidence 장기 보존기간은 production gate다. 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동의 application contract 구현을 막지 않는다.

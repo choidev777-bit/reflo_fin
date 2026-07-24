@@ -752,8 +752,8 @@ PostgreSQL의 논리 모델은 최소 다음 값을 보존한다.
 | S3 호환 객체 저장소 | 없음 | 파일이 없는 단계이므로 호출하지 않음 |
 | Temporal | 없음 | setup 저장은 짧은 동기 transaction |
 | PDF Python 워커 | 없음 | 파일 단계 전이므로 로드·호출 금지 |
-| Aspose.Cells .NET 워커 | 없음 | Excel 단계 전이므로 호출 금지 |
-| SpreadJS React | 없음 | workbook UI가 없는 화면이므로 번들에 포함 금지 |
+| ClosedXML .NET 워커 | 없음 | Excel 단계 전이므로 호출 금지 |
+| React workbook grid | 없음 | workbook UI가 없는 화면이므로 번들에 포함 금지 |
 | PydanticAI Agent | 없음 | 설정 확정에 AI 사용 금지 |
 
 #### 목표 파일 경계
@@ -838,7 +838,7 @@ PostgreSQL의 논리 모델은 최소 다음 값을 보존한다.
 - [ ] 잠긴 미래 단계와 미생성 Report로 이동할 수 없다.
 - [ ] 키보드만으로 기업 검색·선택, 필드 입력과 완료가 가능하다.
 - [ ] 모바일에서 sidebar 없이도 작업 흐름과 다음 동작에 접근할 수 있다.
-- [ ] setup route에서 SpreadJS, Aspose.Cells, PDF 워커, Temporal과 Agent 코드를 로드하거나 호출하지 않는다.
+- [ ] setup route에서 React workbook grid, ClosedXML, PDF 워커, Temporal과 Agent 코드를 로드하거나 호출하지 않는다.
 
 ### 1.28 자동 테스트 시나리오
 

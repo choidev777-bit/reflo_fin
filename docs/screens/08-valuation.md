@@ -22,8 +22,8 @@
 | 현재 공용 구현 파일 | `source-react/app/page.tsx`, `source-react/app/process.tsx`, `source-react/app/globals.css` |
 | 현재 주요 컴포넌트 | `PlannedProcessPage`, `Valuation`, `ScreenHead` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 13장, 15장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-012, TD-014~TD-016 |
-| 구현 상태 | 하드코딩 React 프로토타입만 존재, SpreadJS·API·Aspose.Cells·저장·권한 미구현 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-012, TD-014~TD-016, TD-021 |
+| 구현 상태 | 하드코딩 React 프로토타입만 존재, React workbook grid·API·ClosedXML·저장·권한 미구현 |
 
 ### 8.2 목적과 책임
 
@@ -33,12 +33,12 @@
 
 1. 업로드한 실제 Excel의 시트·셀·수식·스타일을 브라우저에서 재현한다.
 2. TD-003으로 분류된 직접 입력 셀 중 현재 밸류에이션 단계에서 허용된 셀만 편집하게 한다.
-3. 모든 입력을 서버의 Aspose.Cells 작업 사본에 저장하고 권위 수식 결과를 다시 받는다.
+3. 모든 입력을 서버의 ClosedXML 작업 사본에 저장하고 권위 수식 결과를 다시 받는다.
 4. Forward EPS, 현재주가, 이전 보고서 기준값과 선택적 AI 제안을 서로 구분해 보여준다.
 5. 사용자가 Target PER 또는 목표주가를 직접 입력하고 최종 값을 승인하게 한다.
 6. 최신 Excel 계산 버전과 연결된 밸류에이션 승인 버전을 만들고 페이지 내용 설정 단계로 이동한다.
 
-이 화면은 미래 추정치나 Target PER을 자동 확정하지 않는다. SpreadJS의 계산 결과, React의 `Number` 계산, AI 제안값은 권위값이 아니다.
+이 화면은 미래 추정치나 Target PER을 자동 확정하지 않는다. React workbook grid의 계산 결과, React의 `Number` 계산, AI 제안값은 권위값이 아니다.
 
 ### 8.3 진입 조건과 접근 제어
 
@@ -78,7 +78,7 @@
 |---|---|---|---|
 | 초기 로딩 | 최종 크기 skeleton | skeleton | 비활성 |
 | workbook 불러오는 중 | 파일명·버전 표시, grid skeleton | 이전 권위 결과가 있으면 읽기 전용 표시 | 비활성 |
-| 편집 가능 | SpreadJS와 Target PER 입력 | 최신 서버 계산값 | 완료 조건에 따라 활성 |
+| 편집 가능 | React workbook grid와 Target PER 입력 | 최신 서버 계산값 | 완료 조건에 따라 활성 |
 | 계산 중 | 입력 셀의 pending 상태, 수식 결과는 이전 값 유지 | `계산 중` | `다음` 비활성 |
 | 자동 저장 완료 | 최신 workbook version 표시 | 최신 권위 계산값 | 조건 충족 시 활성 |
 | 계산 실패 | 실패 batch 원복, 셀별 오류 | 마지막 정상 결과와 오류 | 재시도 전 비활성 |
@@ -92,10 +92,10 @@
 ```text
 조사 결과 검증 완료
   → valuation 초기 데이터와 workbook 권한 조회
-  → SpreadJS에 최신 작업 사본 로드
+  → React workbook grid에 최신 작업 사본 로드
   → 미래 추정치 입력 셀 편집
   → cell delta를 서버에 전송
-  → Aspose.Cells 작업 사본에 원자적 반영
+  → ClosedXML 작업 사본에 원자적 반영
   → 수식 재계산·오류·참조 무결성 검사
   → 영향 셀·Forward EPS·차트 delta 수신
   → Target PER 근거와 선택적 AI 제안 확인
@@ -123,11 +123,11 @@
 | 2개 full-width 단계 탭 | 그대로 재사용 | 선택 underline, 원형 step marker, 키보드 tab 동작 보완 |
 | 왼쪽 하나의 tabbed work card | 그대로 재사용 | 순차 카드를 하나의 공유 card에서 교체하는 구조 유지 |
 | 가짜 workbook chrome | 형태 재사용 | 실제 파일명·sheet·range·연결·편집 가능 상태로 교체 |
-| 정적 HTML forecast table | 제거·교체 | SpreadJS workbook surface로 교체 |
-| 정적 HTML PER 비교 table | 제거·교체 | SpreadJS 읽기 전용 sheet·range 또는 서버 reference table로 교체 |
+| 정적 HTML forecast table | 제거·교체 | React workbook grid surface로 교체 |
+| 정적 HTML PER 비교 table | 제거·교체 | React workbook grid 읽기 전용 sheet·range 또는 서버 reference table로 교체 |
 | FY25·FY26E·FY27E 하드코딩 기간 | 제거 | 실제 workbook의 기간·header·number format 표시 |
 | 삼성전자 파일명·셀 주소 | 제거 | 프로젝트의 실제 workbook 이름·sheet·주소 표시 |
-| 브라우저 `Number` 기반 EPS 계산 | 제거 | Aspose.Cells 서버 결과만 사용 |
+| 브라우저 `Number` 기반 EPS 계산 | 제거 | ClosedXML 서버 결과만 사용 |
 | AI 제안 분리 카드 | 구조 재사용·조건부 노출 | 제안 version·근거가 있을 때만 표시, 자동 확정 금지 |
 | AI 제안 카드의 별도 보라색 강조 | 수정 | `DESIGN.md`의 paper·soft·hairline과 REFLO lime 계층 안에서 분리 |
 | Target PER boxed input | 그대로 재사용 | unit, focus, 서버 검증, 승인 상태 연결 |
@@ -143,7 +143,7 @@
 | valuation 다음의 숨은 EvidenceReview | 제거 | valuation에서 report-outline으로 직접 이동 |
 | 중복 승인 badge·자동 재계산 helper | 제거 | 입력·계산·승인 상태를 필요한 위치에 한 번만 표시 |
 
-현재 레이아웃의 큰 틀은 유지한다. 필수 구조 변경은 정적 표를 실제 SpreadJS로 교체하고, 선택 셀 정보와 계산·저장·오류 상태를 추가하는 범위다.
+현재 레이아웃의 큰 틀은 유지한다. 필수 구조 변경은 정적 표를 실제 React workbook grid로 교체하고, 선택 셀 정보와 계산·저장·오류 상태를 추가하는 범위다.
 
 ### 8.7 목표 컴포넌트 구성
 
@@ -153,8 +153,8 @@
 | `ValuationPage` | 탭·요약·modal·완료 상태 조정 | `ValuationWorkspace` | 단계 이동·승인 |
 | `ProcessShell` | 공통 header, sidebar, bottom action bar | 프로젝트·단계 projection | 이전·다음 route 이동 |
 | `ValuationStageTabs` | 계산·판단 탭 전환 | active tab | tab change |
-| `WorkbookCard` | 실제 workbook chrome와 SpreadJS host | workbook descriptor | ready·load error |
-| `SpreadWorkbook` | sheet·cell 표시, selection, 허용 셀 입력 | workbook snapshot, editable set | cell delta batch |
+| `WorkbookCard` | 실제 workbook chrome와 React workbook grid host | workbook descriptor | ready·load error |
+| `WorkbookGrid` | sheet·cell 표시, selection, 허용 셀 입력 | workbook read model, editable set | cell delta batch |
 | `SelectedCellInfo` | 선택 셀 이름·주소·값·단위·기간·권한 사유 | selection metadata | 없음 |
 | `CalculationStatus` | 계산 중·완료·실패·version 표시 | calculation run | retry |
 | `PerReferencePanel` | 이전 보고서·Excel 기준값·원천 위치 | reference rows | source/range inspection |
@@ -162,9 +162,9 @@
 | `TargetPerDecision` | Target PER 입력·승인 | valuation draft | draft update·approve |
 | `ValuationSummary` | 목표주가·상승여력·계산식 | 권위 계산 결과 | 목표주가 직접 입력 |
 | `SensitivityDialog` | EPS×PER 시나리오 grid | sensitivity response | close |
-| `ValuationErrorBoundary` | SpreadJS load·runtime 오류 격리 | error | reload·지원 정보 |
+| `ValuationErrorBoundary` | React workbook grid load·runtime 오류 격리 | error | reload·지원 정보 |
 
-SpreadJS workbook instance는 React 전역 state로 복제하지 않는다. React는 workbook version, 선택 셀 metadata, 요청 상태, draft와 승인 상태만 관리한다.
+전체 workbook을 하나의 React 전역 state로 복제하지 않는다. sheet별 normalized cache와 viewport slice를 사용하고 React는 workbook version, 선택 셀 metadata, 요청 상태, draft와 승인 상태만 관리한다.
 
 ### 8.8 화면 레이아웃과 반응형
 
@@ -172,28 +172,28 @@ SpreadJS workbook instance는 React 전역 state로 복제하지 않는다. Reac
 
 - 현재처럼 왼쪽 workbench와 오른쪽 valuation summary의 2열을 유지한다.
 - 오른쪽 summary는 viewport 안에서 sticky로 유지하되 bottom action bar와 겹치지 않는다.
-- SpreadJS host는 현재 workbook card 폭을 채우고, 최소 높이는 실제 행을 읽고 편집할 수 있는 수준으로 확보한다.
+- React workbook grid host는 현재 workbook card 폭을 채우고, 최소 높이는 실제 행을 읽고 편집할 수 있는 수준으로 확보한다.
 - workbook 내부 scroll과 페이지 scroll을 구분한다.
 
 #### Tablet
 
 - 약 1180px 이하에서 workbench와 summary를 한 열로 쌓는다.
 - 탭은 두 열을 유지하되 label을 말줄임으로 숨기지 않는다.
-- SpreadJS는 가로 scroll과 sheet tab scroll을 workbook 안에서 처리한다.
+- React workbook grid는 가로 scroll과 sheet tab scroll을 workbook 안에서 처리한다.
 
 #### Mobile
 
 - 제목, 탭, workbook, 선택 셀 정보, summary, 하단 액션 순서로 한 열 배치한다.
-- SpreadJS host를 작은 HTML 표로 대체하지 않는다.
+- 하드코딩 정적 HTML 표를 실제 workbook UI인 것처럼 사용하지 않는다.
 - 최소 44px interaction target을 유지하고 값·단위 글자를 축소해 억지로 한 행에 넣지 않는다.
 - 민감도 grid는 modal 안에서 가로 scroll을 허용한다.
-- 지원 가능한 최소 화면 폭과 SpreadJS mobile 편집 품질은 TD-010 확정 전환 검증에 포함한다.
+- 지원 가능한 최소 화면 폭과 React workbook grid mobile 편집 품질은 TD-010 확정 전환 검증에 포함한다.
 
-### 8.9 SpreadJS 배치 범위
+### 8.9 React workbook grid 배치 범위
 
 #### 배치한다
 
-SpreadJS는 `Forward EPS 계산` 탭의 workbook 영역을 주 표시·입력 surface로 사용한다.
+React workbook grid는 `Forward EPS 계산` 탭의 workbook 영역을 주 표시·입력 surface로 사용한다.
 
 - 실제 보이는 sheet 이름과 순서
 - row·column header
@@ -218,38 +218,37 @@ SpreadJS는 `Forward EPS 계산` 탭의 workbook 영역을 주 표시·입력 su
 - 승인·다음 버튼
 - 감사 이력 전체 화면
 
-이 영역은 일반 React UI로 유지한다. spreadsheet가 아닌 판단·상태 UI를 SpreadJS cell로 만들지 않는다.
+이 영역은 일반 React UI로 유지한다. spreadsheet가 아닌 판단·상태 UI를 React workbook grid cell로 만들지 않는다.
 
 #### 로드·번들 규칙
 
-- SpreadJS React와 Excel I/O module은 valuation route에서만 client-side dynamic import한다.
-- server render 단계에서 workbook instance를 만들지 않는다.
-- 사용하지 않는 Designer Ribbon, collaboration, AI, pivot add-on은 MVP bundle에 넣지 않는다.
+- workbook grid는 valuation route에서만 client-side dynamic import한다. XLSX I/O와 formula engine은 browser bundle에 포함하지 않는다.
+- server render 단계에서 workbook grid를 만들지 않는다.
+- designer, collaboration, AI와 pivot module은 MVP bundle에 넣지 않는다.
 - theme CSS는 route에서 필요한 범위로 로드하고 기존 REFLO shell을 덮어쓰지 않게 격리한다.
-- production·staging hostname과 정확한 package version은 TD-010 라이선스·버전 정책을 따른다.
+- production·staging은 같은 AGPL-3.0 소스를 사용하고 정확한 ClosedXML version은 TD-010 라이선스·버전 정책을 따른다.
 
-### 8.10 SpreadJS와 서버 데이터 동기화 계약
+### 8.10 React workbook grid와 서버 데이터 동기화 계약
 
 #### 8.10.1 초기 workbook 로드
 
 ```text
 GET valuation workspace
-  → originalWorkbookHash·workbookVersion·snapshotArtifact 확인
-  → SpreadJS module 로드
-  → 최신 작업 사본 snapshot import
-  → workbookVersion과 snapshot version 일치 확인
+  → originalWorkbookHash·workbookVersion 확인
+  → React workbook grid module 로드
+  → same-origin API에서 versioned workbook read model 다운로드
+  → workbookVersion과 read model version 일치 확인
   → server editableCellSet 적용
-  → calculation mode를 manual로 설정
   → 편집 활성화
 ```
 
-- 브라우저에 표시하는 workbook과 Aspose.Cells 세션은 같은 `originalWorkbookHash`에서 파생된 같은 `workbookVersion`이어야 한다.
-- import 완료 전에는 편집하지 못한다.
+- 브라우저에 표시하는 workbook과 ClosedXML 세션은 같은 `originalWorkbookHash`에서 파생된 같은 `workbookVersion`이어야 한다.
+- read model 로드 완료 전에는 편집하지 못한다.
 - 브라우저는 노란 배경·파란 글씨를 다시 판정하지 않는다.
 - 서버가 준 `editableCellSet`만 unlock하고 worksheet protection을 적용한다.
 - 수식, 검증된 실제값, system 입력값, hidden system sheet와 현재 단계 미허용 셀은 잠근다.
 - client protection은 UX 장치다. 실제 권한은 cell update API가 다시 검사한다.
-- SpreadJS client formula calculation은 manual mode로 두고 권위 계산에 사용하지 않는다.
+- client formula calculation은 구현하지 않는다.
 
 #### 8.10.2 입력 batch
 
@@ -288,7 +287,7 @@ GET valuation workspace
   → expected workbookVersion 확인
   → editableCellSet 재검사
   → batch type·단위·범위 검증
-  → Aspose.Cells 작업 사본에 batch 전체 적용
+  → ClosedXML 작업 사본에 batch 전체 적용
   → 수식 재계산
   → 수식 오류·순환참조·필수 출력·참조 무결성 검사
   → 성공 시 새 workbookVersion과 sparse delta 저장
@@ -342,10 +341,10 @@ GET valuation workspace
 - 입력 cell은 pending 상태를 표시할 수 있지만 저장 성공으로 먼저 표시하지 않는다.
 - 영향 수식 cell은 서버 응답 전까지 이전 권위값과 `계산 중` 상태를 유지한다.
 - 응답은 request sequence와 workbook version이 최신일 때만 적용한다.
-- sparse delta 적용 중 SpreadJS paint·event를 suspend하고 한 번에 갱신한다.
+- sparse delta 적용 중 React workbook grid paint·event를 suspend하고 한 번에 갱신한다.
 - 서버 실패 시 입력 batch 전체를 이전 권위값으로 되돌리고 해당 셀 가까이에 오류를 표시한다.
 - `409 STALE_WORKBOOK_VERSION`이면 자동 병합하지 않고 최신 delta 적용 또는 snapshot reload를 요구한다.
-- 계산 세션이 사라졌으면 서버가 최신 작업 사본으로 새 Aspose 세션을 복구한 뒤 재시도한다.
+- 계산 세션이 사라졌으면 서버가 최신 작업 사본으로 새 ClosedXML 세션을 복구한 뒤 재시도한다.
 
 ### 8.11 선택 셀 정보 계약
 
@@ -376,7 +375,7 @@ GET valuation workspace
 | `target_per` | Target PER | Target PER 원천 셀 기록 후 목표주가 재계산 |
 | `target_price` | 목표주가 | 역산 PER 계산·Target PER 원천 셀 기록 후 workbook 목표주가 재계산 |
 
-목표주가 직접 입력 mode에서도 formula 결과 cell을 값으로 덮어쓰지 않는다. 서버가 `입력 목표주가 ÷ Forward EPS`로 역산한 PER을 사용자 입력용 Target PER 셀에 기록하고 Aspose.Cells가 기존 목표주가 수식을 다시 계산한다.
+목표주가 직접 입력 mode에서도 formula 결과 cell을 값으로 덮어쓰지 않는다. 서버가 `입력 목표주가 ÷ Forward EPS`로 역산한 PER을 사용자 입력용 Target PER 셀에 기록하고 ClosedXML이 기존 목표주가 수식을 다시 계산한다.
 
 workbook의 반올림 규칙 때문에 사용자가 입력한 목표주가와 재계산 결과가 다르면 서버 결과를 권위값으로 표시하고 차이를 입력 field 아래에 명확히 알린다.
 
@@ -394,7 +393,7 @@ workbook의 반올림 규칙 때문에 사용자가 입력한 목표주가와 �
 | 오류 위치 | field 바로 아래 |
 | 승인 | 별도 `입력값 승인` action |
 
-Target PER의 업무상 최소·최대 범위는 기준 문서에 없다. 임의의 `8~22배` 제한을 구현하지 않는다. 운영상 범위가 필요하면 별도 제품 결정으로 확정한다.
+TD-021에 따라 Target PER 직접 입력은 `0.1배` 이상 `100.0배` 이하, 소수 첫째 자리까지 허용한다. 현재 프로토타입의 `8~22배`는 제품 범위가 아니다. 목표주가 직접 입력은 1원 이상 10억원 이하의 정수이고 서버가 역산 PER을 계산한다.
 
 #### 목표주가 field
 
@@ -425,16 +424,16 @@ Target PER의 업무상 최소·최대 범위는 기준 문서에 없다. 임의
 | 값 | 권위 원천 |
 |---|---|
 | forecast 입력 | 서버가 승인한 typed cell value |
-| Forward EPS | Aspose.Cells 재계산 완료 cell |
+| Forward EPS | ClosedXML 재계산 완료 cell |
 | Target PER | 사용자가 승인한 valuation draft와 연결된 Excel input cell |
-| 목표주가 | Aspose.Cells의 mapped 목표주가 cell |
+| 목표주가 | ClosedXML의 mapped 목표주가 cell |
 | 현재주가 | 기준일·시장·통화가 명시된 검증 KRX snapshot |
 | 상승여력 | 서버 Decimal 계산 또는 workbook mapped 결과 |
-| 민감도 값 | 서버 Decimal·Aspose 계산 결과 |
+| 민감도 값 | 서버 Decimal·ClosedXML 계산 결과 |
 
 #### 정밀도 규칙
 
-- JavaScript `Number`, `Math.round`와 SpreadJS formula 결과를 저장·승인·보고서 값으로 사용하지 않는다.
+- JavaScript `Number`, `Math.round`와 React workbook grid formula 결과를 저장·승인·보고서 값으로 사용하지 않는다.
 - API의 decimal raw value는 string으로 주고받는다.
 - Excel 입력값의 단위와 소수 자릿수는 해당 cell의 number format과 metadata를 따른다.
 - 화면은 서버가 반환한 `rawValue`와 `formattedText`를 분리한다.
@@ -444,38 +443,29 @@ Target PER의 업무상 최소·최대 범위는 기준 문서에 없다. 임의
 - reference 값은 원 출처의 정밀도를 보존한다. 이전 보고서의 `14.2배`를 임의로 `14.20배`로 바꾸지 않는다.
 - 서로 다른 단위의 셀을 UI에서 일괄 `억원`으로 표시하지 않는다.
 
-현재 기술 결정 문서에는 Decimal library, rounding mode와 workbook number format이 없는 derived API 값의 fallback 반올림 방식이 없다. 구현 전에 TD-004 또는 별도 기술 결정에 이를 추가해야 한다. 그 전까지 workbook 계산값이 있는 지표는 workbook formatting을 우선한다.
+TD-021에 따라 Next.js application의 derived 계산은 `decimal.js@10.6.0`과 `ROUND_HALF_UP`을 사용한다. workbook number format과 MappingSet `display.rounding`을 우선하고 둘 다 없을 때 목표주가 1,000원, PER 0.01배, 상승여력 0.1% 단위로 표시한다. 저장값은 반올림 전 decimal string이다.
 
 ### 8.14 민감도 표 계약
 
 - modal은 `EPS × PER = 목표주가` 시나리오를 표로 표시한다.
-- 행의 EPS와 열의 PER scenario는 서버 응답을 사용한다.
+- 행의 EPS와 열의 PER scenario는 TD-021의 server rule을 사용한다. EPS는 기준값의 `-10%, -5%, 0%, +5%, +10%`, PER은 기준값의 `-2.0, -1.0, 0, +1.0, +2.0`배다.
 - 현재 승인 후보와 일치하는 cell을 deep green `#557909` text·border와 `#f4f9ea` 배경으로 표시한다.
 - 현재 cell은 색 외에 `현재 입력값` 접근성 설명을 가진다.
 - 각 cell은 목표주가 formatted text를 표시한다.
 - 민감도 값을 선택해 Target PER을 바꾸는 동작은 MVP 기본 기능으로 추가하지 않는다.
 - modal 오류는 Target PER 직접 입력과 승인을 막지 않는다.
 
-현재 프로토타입의 고정 `14~18배`, 5개 EPS 행과 `±4%` 생성 규칙은 제품 기준이 아니다. scenario 개수, 간격과 범위는 서버 설정으로 반환해야 하며 정확한 생성 정책은 추가 제품 결정이 필요하다.
+현재 프로토타입의 고정 `14~18배`와 `±4%` 생성 규칙은 제품 기준이 아니다. PER axis는 `0.1` 미만을 `0.1`로 clamp하고 중복 axis를 제거한다. 실제 axis와 `ruleVersion`은 서버 응답을 표시한다.
 
 ### 8.15 AI 제안 계약
 
-AI 제안은 선택 기능이며 다음 조건을 만족할 때만 표시한다.
-
-- 사용한 이전 PER, 실적 변화, 비교 자료와 Evidence ID가 있다.
-- proposal version과 생성 시각이 있다.
-- 입력 workbook version, 계산 run과 기준일이 명시돼 있다.
-- 제안 배수 또는 범위와 짧은 이유가 구조화돼 있다.
-
-`제안값 적용`은 Target PER draft를 채우고 서버 재계산을 실행할 뿐 승인하지 않는다. 사용자가 별도 승인해야 한다. AI 제안이 없거나 실패해도 사용자는 직접 Target PER을 입력해 완료할 수 있다.
-
-기준 문서의 Agent 목록에는 Valuation Proposal Agent와 prompt·Pydantic schema가 정의돼 있지 않다. 별도 기술 결정 전에는 현재 하드코딩된 `16.0배`와 이유를 실제 AI 결과처럼 노출하지 않는다.
+TD-021에 따라 Valuation AI proposal은 MVP에서 제외한다. 현재 하드코딩된 `16.0배`, AI 제안 이유, `제안값 적용` control을 표시하지 않는다. 이후 optional feature로 추가할 때는 별도 Agent profile·Pydantic schema·평가를 먼저 확정하며 자동 승인 금지 원칙을 유지한다.
 
 ### 8.16 버튼·탭·modal UI 계약
 
 | ID | 화면 요소 | 노출·활성 조건 | 동작 | 성공 결과 | 실패 처리 |
 |---|---|---|---|---|---|
-| VAL-TAB-01 | `Forward EPS 계산` | 항상 | 계산 탭 선택 | SpreadJS forecast 영역 | 없음 |
+| VAL-TAB-01 | `Forward EPS 계산` | 항상 | 계산 탭 선택 | React workbook grid forecast 영역 | 없음 |
 | VAL-TAB-02 | `Target PER 설정` | 항상 | 판단 탭 선택 | 기준값·제안·입력 영역 | 계산 미완료 시 승인 비활성 |
 | VAL-BTN-01 | sheet tab | visible sheet만 | active sheet 변경 | 실제 sheet 표시 | load 오류 안내 |
 | VAL-BTN-02 | `근거 보기` | selection에 provenance 존재 | Evidence·계산 경로 열기 | drawer 또는 전용 panel | 원문 오류와 재시도 |
@@ -498,7 +488,7 @@ AI 제안은 선택 기능이며 다음 조건을 만족할 때만 표시한다.
 | 묶음 | 주요 필드 | 용도 |
 |---|---|---|
 | project | `projectId`, 기업, 대상 기간, 기준일, 단계 상태 | header·guard |
-| workbook | `artifactId`, `originalWorkbookHash`, `workbookVersion`, 파일명, visible sheets | SpreadJS load |
+| workbook | `artifactId`, `originalWorkbookHash`, `workbookVersion`, 파일명, visible sheets | React workbook grid load |
 | permissions | `editableCellSetVersion`, editable·required cells, read-only reasons | client UX·server 검증 |
 | calculation | `calculationRunId`, status, outputs, formula errors | 요약·완료 조건 |
 | selection metadata | sheet ID, cell address, name, role, unit, period, provenance | 선택 셀 정보 |
@@ -523,18 +513,18 @@ AI 제안은 선택 기능이며 다음 조건을 만족할 때만 표시한다.
 | 상태 | 타입 | 설명 |
 |---|---|---|
 | `activeTab` | `excel \| decision` | 선택 탭 |
-| `workbookLoadStatus` | `idle \| loading \| ready \| error` | SpreadJS import |
+| `workbookLoadStatus` | `idle \| loading \| ready \| error` | workbook read model 로드 |
 | `workbookVersion` | integer | 최신 서버 작업 사본 version |
 | `editableCellSetVersion` | integer | 편집 권한 version |
 | `pendingBatch` | cell delta batch 또는 null | 서버 확인 대기 입력 |
-| `calculationStatus` | `idle \| calculating \| success \| error` | Aspose 계산 상태 |
+| `calculationStatus` | `idle \| calculating \| success \| error` | ClosedXML 계산 상태 |
 | `selectedCell` | metadata 또는 null | inspector |
 | `draft` | valuation draft | PER·목표주가 입력 mode |
 | `approval` | approval summary 또는 null | 최신 승인 |
 | `sensitivityStatus` | `closed \| loading \| open \| error` | modal |
 | `pageError` | 정형 오류 또는 null | route-level 오류 |
 
-SpreadJS cell matrix와 전체 workbook JSON을 React state에 저장하지 않는다.
+전체 cell matrix를 단일 React state에 저장하지 않는다. sheet별 cache와 현재 viewport만 활성화한다.
 
 ### 8.19 API 계약
 
@@ -563,7 +553,7 @@ SpreadJS cell matrix와 전체 workbook JSON을 React state에 저장하지 않�
     "originalWorkbookHash": "sha256:...",
     "workbookVersion": 17,
     "displayName": "리노공업_2Q26_PER_Valuation_Model.xlsx",
-    "snapshotUrl": "/api/projects/prj_01.../valuation/workbook?version=17",
+    "readModelUrl": "/api/projects/prj_01.../valuation/workbook?version=17",
     "visibleSheets": []
   },
   "permissions": {
@@ -598,11 +588,11 @@ SpreadJS cell matrix와 전체 workbook JSON을 React state에 저장하지 않�
 
 #### `GET /api/projects/{projectId}/valuation/workbook?version={workbookVersion}`
 
-- 소유권을 다시 확인한 뒤 해당 version의 작업 사본 snapshot을 반환한다.
-- 응답은 SpreadJS가 import할 수 있는 검증된 XLSX 또는 별도 확정한 SJS 형식이다.
+- 소유권을 다시 확인한 뒤 해당 version의 workbook JSON read model을 반환한다.
+- 응답은 visible sheet metadata, viewport cell, style token, merge, formula 표시값과 editable set을 포함한다.
 - object key와 저장소 credential을 노출하지 않는다.
 - version이 최신 workspace descriptor와 다르면 `409 WORKBOOK_VERSION_MISMATCH`를 반환한다.
-- client export 용도로 사용하지 않는다.
+- XLSX byte와 client export descriptor를 반환하지 않는다.
 
 #### `PATCH /api/projects/{projectId}/valuation/workbook/cells`
 
@@ -624,7 +614,7 @@ SpreadJS cell matrix와 전체 workbook JSON을 React state에 저장하지 않�
 
 #### `PUT /api/projects/{projectId}/valuation/draft`
 
-Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산한다.
+Target PER 또는 목표주가 draft를 갱신하고 ClosedXML 작업 사본을 재계산한다.
 
 ```json
 {
@@ -700,7 +690,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 - 계산 checkpoint 작업 사본
 - 최종 승인에 연결된 XLSX 작업 사본
 
-원본은 수정하지 않는다. 최종 XLSX는 SpreadJS client export가 아니라 Aspose.Cells 작업 사본에서 생성한다.
+원본은 수정하지 않는다. 최종 XLSX는 React workbook grid client export가 아니라 ClosedXML 작업 사본에서 생성한다.
 
 #### PostgreSQL 최소 모델
 
@@ -709,7 +699,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 | `workbook_version` | project, original hash, artifact, structure hash, version, created at |
 | `editable_cell_set` | workbook version, set version, sheet ID, address, role, required, read-only reason |
 | `cell_change` | before·after typed value, user, request ID, workbook versions, changed at |
-| `calculation_run` | input version, Aspose version, status, errors, result hash, duration |
+| `calculation_run` | input version, ClosedXML version, status, errors, result hash, duration |
 | `valuation_draft` | draft version, input mode, PER, requested target price, workbook version |
 | `valuation_approval` | approval version, calculation run, EPS, PER, 목표주가, current price snapshot, user, time |
 | `stage_completion` | project, stage, approval version, completed at |
@@ -734,7 +724,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 - 최신 workbook snapshot이 정상 로드됐다.
 - 모든 `requiredEditableCells`가 유효한 typed value를 가진다.
 - pending cell batch가 없다.
-- 최신 Aspose calculation run이 성공했다.
+- 최신 ClosedXML calculation run이 성공했다.
 - 수식 오류, 순환참조, 합계 불일치와 참조 무결성 오류가 없다.
 - Forward EPS 계산이 성공했고 PER 방식 적용 가능한 값이다.
 - Target PER이 0보다 큰 값으로 확정됐다.
@@ -768,7 +758,7 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 4. 매크로는 실행하지 않는다.
 5. paste HTML·image와 executable content를 저장하지 않는다.
 6. snapshot URL은 짧은 수명과 project 범위를 가지며 object key를 권한으로 사용하지 않는다.
-7. SpreadJS license key는 backend credential이나 권한 수단으로 사용하지 않는다.
+7. workbook grid에는 license key가 없으며 backend 권한은 로그인 session과 server editable set으로만 판정한다.
 8. 다른 사용자의 artifact ID, workbook version, request ID를 재사용해도 접근할 수 없다.
 9. 오류 응답에 원본 object key, Google subject, stack trace와 worker 내부 경로를 노출하지 않는다.
 10. 변경·승인·완료 request는 CSRF 방어와 idempotency를 적용한다.
@@ -777,15 +767,15 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 
 | 상황 | 사용자 화면 | 후속 동작 |
 |---|---|---|
-| SpreadJS module 로딩 | 최종 host 크기 skeleton | 준비 후 import |
-| workbook import 실패 | 파일명·version·구체 오류와 `다시 불러오기` | 같은 snapshot 재시도 |
+| React workbook grid module 로딩 | 최종 host 크기 skeleton | 준비 후 read model 로드 |
+| workbook read model 로드 실패 | 파일명·version·구체 오류와 `다시 불러오기` | 같은 version 재시도 |
 | editable cell 없음 | 읽기 전용 workbook과 원인 | 필수 입력이 없다면 PER 판단으로 진행 |
 | 필수 입력 누락 | cell과 완료 blocker 표시 | 입력 대기 |
 | 계산 중 | 이전 결과 유지, `계산 중` | 중복 승인 차단 |
 | cell 검증 실패 | batch 원복, cell 오류 | 수정 후 재입력 |
 | formula error·순환참조 | 계산 오류와 영향 cell | 다음 차단, files 또는 지원 안내 |
 | stale workbook | grid 잠금, 최신 version 안내 | delta 적용 또는 reload |
-| 계산 session 종료 | `계산 세션 복구 중` | 최신 checkpoint로 복구 |
+| 계산 session 종료 | `계산 세션 복구 중` | TD-021의 15분 idle·60분 hard limit 뒤 최신 checkpoint로 새 session 생성 |
 | 네트워크 단절 | pending을 성공 처리하지 않음 | 연결 복구 후 재시도 또는 원복 |
 | current price 없음 | 상승여력 `계산 불가` | snapshot 확보 전 승인 차단 |
 | AI 제안 없음·실패 | 제안 card 숨김 또는 비차단 안내 | 직접 입력 가능 |
@@ -802,7 +792,7 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 - Target PER·목표주가 input은 visible label 또는 명확한 접근성 이름과 field 단위가 있다.
 - 상태는 색만으로 전달하지 않고 `편집 가능`, `읽기 전용`, `계산 중`, `승인 완료` 문구를 제공한다.
 - workbook host에는 용도와 기본 keyboard 사용법을 간단히 제공한다.
-- SpreadJS의 keyboard navigation과 accessibility option을 목표 browser에서 검증한다.
+- React workbook grid의 keyboard navigation과 accessibility option을 목표 browser에서 검증한다.
 - 선택 셀 정보는 screen reader가 주소·역할·값·단위를 읽을 수 있어야 한다.
 - 계산 완료·실패는 과도하게 반복되지 않는 `aria-live` 영역으로 알린다.
 - modal focus trap과 닫기 후 focus 복귀를 보장한다.
@@ -815,16 +805,16 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 |---|---|---|
 | Next.js App Router | 보호 route·초기 server data·redirect | 사용 |
 | React Client Component | tabs, summary, dialog, request 상태 | 사용 |
-| SpreadJS React | 실제 workbook 표시·허용 셀 입력 | 사용 |
-| SpreadJS Excel I/O | 최신 작업 사본 import | 사용 |
-| Aspose.Cells for .NET | 권위 재계산·검증·XLSX 저장 | backend 사용 |
+| React workbook grid | 실제 workbook 표시·허용 셀 입력 | 사용 |
+| server workbook read model | 최신 작업 사본 import | 사용 |
+| ClosedXML 0.105.0 | 권위 재계산·검증·XLSX 저장 | backend 사용 |
 | PostgreSQL | version·delta·calculation·approval·감사 | 사용 |
 | S3 호환 저장소 | 원본·작업 사본 snapshot | backend 사용 |
 | Temporal | 긴 checkpoint·복구 작업이 필요할 때 | backend 간접 사용 |
 | TD-005 MappingSet | EPS·PER·목표주가 cell·PDF slot 연결 | 사용 |
 | Evidence·provenance | current price·PER 근거·계산 경로 | 사용 |
-| PydanticAI | 선택적 PER 제안 | 새 결정 전 필수 경로에서 사용 금지 |
-| SpreadJS client export | 최종 XLSX | 사용 금지 |
+| PydanticAI | Valuation AI proposal | MVP에서 사용하지 않음 |
+| React workbook grid client export | 최종 XLSX | 사용 금지 |
 | browser formula engine | 권위 계산 | 사용 금지 |
 | HTML data table | 실제 workbook 대체 | 사용 금지 |
 | PDF 워커 | valuation 화면 계산 | 호출하지 않음 |
@@ -836,14 +826,14 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 | route가 공용 `app/page.tsx` 재노출 | valuation 전용 보호 route·data boundary | 구현 품질 |
 | `baseline-project`·`new` 허용 | 실제 project ID와 소유권 guard | 필수 |
 | 삼성전자 파일명·고정 sheet·cell | 실제 workbook metadata | 필수 |
-| HTML table을 Excel처럼 표시 | SpreadJS 실제 workbook | 필수 |
+| HTML table을 Excel처럼 표시 | React workbook grid 실제 workbook | 필수 |
 | 세 개 forecast row만 편집 | server `editableCellSet` 전체 중 현재 단계 허용 셀 | 필수 |
 | 모든 forecast 값이 `억원` | cell별 실제 단위·format | 필수 |
-| React state가 workbook 값 소유 | SpreadJS instance + server version | 필수 |
-| 브라우저 `Number`와 고정 비율로 EPS 계산 | Aspose.Cells 권위 수식 | 필수 |
+| React state가 workbook 전체 값 소유 | sheet cache + viewport + server version | 필수 |
+| 브라우저 `Number`와 고정 비율로 EPS 계산 | ClosedXML 권위 수식 | 필수 |
 | 현재주가 `165000` 하드코딩 | 검증 KRX snapshot | 필수 |
 | 이전 PER 14.2·기준 15.0·AI 16.0 하드코딩 | versioned reference·optional proposal | 필수 |
-| Target PER 범위를 UI `8~22`로 암묵 제한 | 별도 결정 전 positive decimal만 검증 | 필수 |
+| Target PER 범위를 UI `8~22`로 암묵 제한 | TD-021의 `0.1~100.0`, 소수 첫째 자리 검증 | 필수 |
 | 목표주가 client 직접 반올림 | workbook·server Decimal 결과 | 필수 |
 | 저장·API·오류 없음 | batch delta·자동 저장·원복·version conflict | 필수 |
 | 승인 state가 local boolean | 불변 approval version | 필수 |
@@ -873,7 +863,6 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 - 두 valuation 탭
 - workbook sheet tab
 - forecast 입력 cell
-- AI 제안 적용
 - Target PER 입력·승인
 - 목표주가 직접 입력
 - 민감도 표
@@ -896,24 +885,23 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 - 민감도 cell 클릭으로 즉시 승인
 - 비교기업 peer multiple 자동 선택
 - 실시간 공동 편집
-- SpreadJS client XLSX export
+- React workbook grid client XLSX export
 - PBR·EV/EBITDA·DCF 전환
 
 ### 8.29 구현 순서
 
-1. TD-010의 SpreadJS 라이선스·package version과 배포 hostname 범위를 확정한다.
+1. TD-021의 React workbook read model과 ClosedXML 0.105.0 package를 적용한다.
 2. valuation 전용 route guard와 초기 workspace API를 구현한다.
-3. workbook snapshot·editable cell·selection metadata 계약을 Aspose 분석 결과와 연결한다.
-4. SpreadJS를 route 전용 dynamic import로 배치하고 실제 작업 사본을 불러온다.
-5. server editable set을 SpreadJS protection과 cell UX에 투영한다.
-6. batch cell delta, Aspose calculation session, sparse response와 원복을 구현한다.
+3. workbook read model·editable cell·selection metadata 계약을 ClosedXML 분석 결과와 연결한다.
+4. React workbook grid를 route 전용 dynamic import로 배치하고 versioned read model을 불러온다.
+5. server editable set을 React workbook grid protection과 cell UX에 투영한다.
+6. batch cell delta, ClosedXML calculation session, sparse response와 원복을 구현한다.
 7. Forward EPS·current price·reference row를 실제 versioned 데이터로 교체한다.
 8. Target PER·목표주가 input mode와 draft update API를 구현한다.
-9. AI proposal은 별도 schema가 확정된 경우에만 연결한다.
-10. sensitivity server 계산과 modal을 연결한다.
-11. valuation approval과 stage complete API를 구현한다.
-12. auto-save status, stale version, 오류·복구·접근성을 검증한다.
-13. current React UI와 screenshot 기준으로 시각 회귀를 수행하되 fake Excel 표는 기준에서 제외한다.
+9. TD-021의 sensitivity server 계산과 modal을 연결한다.
+10. valuation approval과 stage complete API를 구현한다.
+11. auto-save status, stale version, 오류·복구·접근성을 검증한다.
+12. current React UI와 screenshot 기준으로 시각 회귀를 수행하되 fake Excel 표는 기준에서 제외한다.
 
 ### 8.30 완료 조건
 
@@ -921,21 +909,21 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 - [ ] 다른 사용자 프로젝트는 동일 404로 처리된다.
 - [ ] validation 선행 조건을 우회해 편집할 수 없다.
 - [ ] 실제 workbook 파일명, visible sheet와 기간·cell format이 표시된다.
-- [ ] 가짜 HTML 표가 실제 SpreadJS workbook으로 교체된다.
+- [ ] 가짜 HTML 표가 실제 React workbook grid로 교체된다.
 - [ ] server editable set에 포함된 현재 단계 셀만 편집할 수 있다.
 - [ ] 수식·실제값·system cell·hidden sheet·workbook 구조는 수정할 수 없다.
 - [ ] multi-cell paste가 잠긴 셀을 포함하면 전체가 거절된다.
 - [ ] client formula 결과가 권위값·PDF·최종 XLSX에 사용되지 않는다.
-- [ ] cell 입력은 versioned batch로 Aspose.Cells에 반영된다.
+- [ ] cell 입력은 versioned batch로 ClosedXML에 반영된다.
 - [ ] 계산 성공 시 sparse cell·chart·Forward EPS delta가 화면에 반영된다.
 - [ ] 계산 실패 시 batch 전체가 이전 값으로 원복된다.
 - [ ] stale·중복·out-of-order 응답이 최신 화면을 덮어쓰지 않는다.
 - [ ] 선택 셀의 주소, 값, 단위, 기간, 역할과 provenance를 확인할 수 있다.
 - [ ] Target PER은 사용자가 직접 입력·승인한다.
-- [ ] AI 제안 적용이 자동 승인을 만들지 않는다.
+- [ ] MVP 화면에 하드코딩 AI 제안과 적용 control이 없다.
 - [ ] 목표주가 직접 입력은 formula cell을 덮어쓰지 않고 역산 PER을 통해 재계산된다.
 - [ ] Forward EPS·Target PER·목표주가·현재주가·상승여력의 권위 원천이 구분된다.
-- [ ] 모든 decimal 계산이 binary float가 아닌 서버 Decimal·Aspose 결과를 사용한다.
+- [ ] 모든 decimal 계산이 binary float가 아닌 서버 Decimal·ClosedXML 결과를 사용한다.
 - [ ] 민감도 grid는 서버 scenario와 권위 계산값을 표시한다.
 - [ ] 원본 Excel은 변경되지 않고 프로젝트 작업 사본과 변경 이력이 남는다.
 - [ ] 최신 workbook·draft·calculation run에 연결된 approval version이 생성된다.
@@ -945,7 +933,7 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 - [ ] pending 입력·오류·세션 만료 상태에서 입력 손실을 성공처럼 표시하지 않는다.
 - [ ] keyboard로 tab, workbook, 입력, 승인, 민감도 modal과 다음 이동을 사용할 수 있다.
 - [ ] mobile·tablet에서도 값과 단위를 읽고 workbook을 조작할 수 있다.
-- [ ] 최종 XLSX는 SpreadJS export가 아니라 Aspose.Cells 작업 사본에서 생성된다.
+- [ ] 최종 XLSX는 React workbook grid export가 아니라 ClosedXML 작업 사본에서 생성된다.
 
 ### 8.31 자동 테스트 시나리오
 
@@ -960,11 +948,11 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 | E2E | 민감도 modal 열기·닫기·현재 cell 확인 |
 | E2E | 최신 승인 완료 후 report-outline URL 직접 이동 |
 | E2E | mobile에서 sheet 이동·cell 입력·summary 확인 |
-| 통합 | XLSX snapshot original hash와 Aspose session hash 일치 |
+| 통합 | XLSX snapshot original hash와 ClosedXML session hash 일치 |
 | 통합 | TD-003 style 판정과 workflow editable set 교집합 |
 | 통합 | 단일 cell·multi-cell paste의 원자적 적용 |
 | 통합 | 보호 cell 포함 paste 전체 거절 |
-| 통합 | Aspose sparse delta가 SpreadJS displayed value와 일치 |
+| 통합 | ClosedXML sparse delta가 React workbook grid displayed value와 일치 |
 | 통합 | calculation failure 시 workbook version과 값 원복 |
 | 통합 | stale version·중복 request·out-of-order response 처리 |
 | 통합 | session 손실 후 최신 checkpoint 복구 |
@@ -979,34 +967,33 @@ valuation 뒤에 별도 Evidence Review 단계를 두지 않는다.
 | 보안 | snapshot URL scope·만료·object key 비노출 |
 | 접근성 | valuation tab arrow navigation과 panel 연결 |
 | 접근성 | input label·unit·오류·계산 status 안내 |
-| 접근성 | SpreadJS keyboard navigation과 선택 셀 정보 읽기 |
+| 접근성 | React workbook grid keyboard navigation과 선택 셀 정보 읽기 |
 | 접근성 | 민감도 modal focus trap·Escape·focus 복귀 |
-| 성능 | 기준 12-sheet workbook 최초 표시 시간과 peak memory |
+| 성능 | 기준 13-sheet workbook 최초 표시 시간과 peak memory |
 | 성능 | 3배 stress workbook scroll·selection·input latency |
 | 성능 | input-to-authoritative-result p50·p95 |
 | 시각 회귀 | 기존 2열 workbench·tab·summary·bottom bar 보존 |
 | 시각 회귀 | 선택 민감도 cell의 `#557909`·`#f4f9ea` 상태 |
 
-### 8.32 아직 필요한 제품·기술 결정
+### 8.32 확정된 구현 기본값과 production gate
 
-다음 항목은 두 기준 문서에 없거나 TD-010의 확정 전환 조건에 남아 있다.
+TD-021에서 다음을 확정했다.
 
-1. SpreadJS 정확한 package version, 상용·SaaS 라이선스와 production·staging hostname 범위
-2. Next.js에서 workbook snapshot을 XLSX로 직접 전달할지 SJS·server-converted format으로 전달할지
-3. Target PER 업무상 최소·최대 범위와 입력 소수 자릿수의 최종 운영 정책
-4. derived Decimal 값의 rounding mode와 workbook format이 없을 때의 fallback
-5. 민감도 EPS·PER axis의 개수·간격·범위 생성 규칙
-6. Valuation AI proposal의 Agent 책임, Pydantic output schema, prompt version과 근거 최소 요건
-7. 현재주가 snapshot의 정확한 기준시점과 사용자가 수동 갱신할 수 있는지
-8. Aspose calculation session의 유휴 checkpoint·해제 시간
-9. SpreadJS import 호환성 차이가 진행 차단인지 경고인지 정하는 feature별 표
-10. mobile 최소 지원 폭과 SpreadJS 편집 품질 기준
+1. React workbook grid read model과 ClosedXML 0.105.0 적용
+2. 권한 검사된 JSON read model 전달과 viewport 기반 표시
+3. Target PER `0.1~100.0`, 소수 첫째 자리 입력
+4. `decimal.js@10.6.0`, `ROUND_HALF_UP`과 fallback 표시 단위
+5. 5×5 EPS·PER 민감도 rule
+6. Valuation AI proposal의 MVP 제외
+7. 기준일 또는 직전 거래일 KRX 종가 immutable snapshot과 수동 갱신 제외
+8. calculation session 15분 idle checkpoint·60분 hard limit
+9. 1024px 이상 cell 직접 편집, tablet 선택-cell panel, mobile 순서형 입력 목록
 
-이 항목이 미확정이어도 다음 불변조건은 바뀌지 않는다.
+AGPL-3.0 대응 소스 링크, third-party notice, 실제 workbook 호환성 회귀와 resource sizing은 deployment gate다. 다음 불변조건은 유지한다.
 
 - 사용자가 추정치·Target PER·목표주가를 확정한다.
-- SpreadJS는 표시·입력 UI다.
-- Aspose.Cells가 유일한 계산·검증·저장 권위다.
+- React workbook grid는 표시·입력 UI다.
+- ClosedXML이 유일한 계산·검증·저장 권위다.
 - 원본 Excel은 수정하지 않는다.
 - formula와 검증된 실제값은 보호한다.
 - AI 제안은 선택 사항이며 자동 승인되지 않는다.

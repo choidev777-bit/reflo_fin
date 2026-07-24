@@ -194,7 +194,7 @@
 
 ### 1.12 API 계약
 
-인증 구현 라이브러리는 아직 기술 결정 문서에서 확정되지 않았다. 아래 경로는 홈 화면이 의존할 애플리케이션 계약이며 OAuth 공급자 세부 구현은 서버 내부로 숨긴다.
+인증 구현은 TD-014·TD-018에 따라 `openid-client@6.8.4`와 PostgreSQL hash-only opaque session을 사용한다. 아래 경로는 홈 화면이 의존할 애플리케이션 계약이며 OAuth 공급자 세부 구현은 서버 내부로 숨긴다.
 
 #### `GET /api/auth/session`
 
@@ -312,13 +312,13 @@ Idempotency-Key: 7a4d...
 | PostgreSQL | 사용자와 프로젝트 초안 소유권 저장 | 사용 |
 | OGL `Aurora` | 홈 배경 장식 | 현재 디자인 보존을 위해 사용 |
 | CSS·ShinyText | 홈 제목 표현 | 사용, 모션 감소 설정 지원 |
-| SpreadJS | 없음 | 홈에 로드하지 않음 |
-| Aspose.Cells | 없음 | 홈에서 호출하지 않음 |
+| React workbook grid | 없음 | 홈에 로드하지 않음 |
+| ClosedXML | 없음 | 홈에서 호출하지 않음 |
 | S3 호환 저장소 | 없음 | 파일이 없는 단계이므로 호출하지 않음 |
 | Temporal | 없음 | 장시간 작업이 없는 단계이므로 호출하지 않음 |
 | PydanticAI Agent | 없음 | 홈에서 Agent를 실행하지 않음 |
 
-홈 번들에 SpreadJS, PDF, Excel, Agent 관련 코드를 포함하지 않는다. 해당 기술은 실제 사용하는 URL에서 지연 로드한다.
+홈 번들에 React workbook grid, PDF, Excel, Agent 관련 코드를 포함하지 않는다. 해당 기술은 실제 사용하는 URL에서 지연 로드한다.
 
 ### 1.15 보안 규칙
 
@@ -390,7 +390,7 @@ Idempotency-Key: 7a4d...
 - [ ] 화면에 동작하지 않는 버튼이 남아 있지 않다.
 - [ ] 키보드만으로 로그인, 모달 열기·입력·제출·닫기가 가능하다.
 - [ ] 모션 감소 환경과 WebGL 실패 환경에서도 핵심 동작이 가능하다.
-- [ ] 홈에서 SpreadJS, PDF·Excel 워커, Temporal, Agent 코드를 로드하거나 호출하지 않는다.
+- [ ] 홈에서 React workbook grid, PDF·Excel 워커, Temporal, Agent 코드를 로드하거나 호출하지 않는다.
 
 ### 1.20 자동 테스트 시나리오
 

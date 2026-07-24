@@ -588,12 +588,12 @@ function HypothesisSetup({ opinion, setOpinion, hypothesis, setHypothesis }: {
             "현재 생각을 뒷받침하는 변화는 최근 공시·IR·뉴스에서 실제로 확인되는가?",
             "변화의 규모와 지속 기간을 판단할 수 있는 핵심 수치는 무엇인가?"
         );
-        next.push("수요 둔화·판가 하락·초기 가동비처럼 현재 생각을 약화할 반대 근거는 무엇인가?");
+        next.push("확인된 가격·판매량 변화가 사업부 매출과 영업이익률 개선으로 연결되고 있는가?");
         if (currentOpinion === "BUY") next.push("현재 주가는 이익 개선 기대를 얼마나 반영했으며, BUY 의견을 바꿔야 할 조건은 무엇인가?");
         else if (currentOpinion === "SELL") next.push("하방 위험은 현재 주가에 얼마나 반영됐으며, SELL 의견을 바꿀 긍정적 근거는 무엇인가?");
         else if (currentOpinion === "HOLD") next.push("HOLD 관점을 BUY 또는 SELL로 바꿀 수 있는 확인 신호는 무엇인가?");
         else next.push("수집된 근거에 따라 현재 관점을 바꿔야 하는 조건은 무엇인가?");
-        return Array.from(new Set(next)).slice(0, 6);
+        return Array.from(new Set(next)).slice(0, 5);
     };
     const generateQuestions = () => {
         const value = hypothesis.trim();

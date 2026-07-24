@@ -20,7 +20,7 @@
 | 현재 실질 구현 | route가 `source-react/app/page.tsx`를 다시 내보내고 `PlannedProcessPage`의 `FileUpload`를 표시 |
 | 현재 주요 컴포넌트 | `PlannedProcessPage`, `FileUpload`, `UploadBox`, `PdfReportAnalysisBody`, `ReportPageCarousel` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 9장, 19장 |
-| 관련 기술 결정 | TD-001~TD-008, TD-010~TD-012, TD-014, TD-016 |
+| 관련 기술 결정 | TD-001~TD-008, TD-010~TD-012, TD-014, TD-016, TD-019 |
 | 구현 상태 | 시각 프로토타입만 존재, 실제 업로드·저장·파일 검사·작업 복구·Excel 분석·매핑 미구현 |
 
 ### 1.2 화면 목적과 책임
@@ -196,7 +196,7 @@ files URL 진입
 | 차단 | 스캔 이미지 전용, 암호화, 손상, 실적 Review 아님, 기업 불일치, 분석·복제 검증 실패 |
 | 보존 | 원본 byte와 SHA-256을 불변 artifact로 저장 |
 
-전자서명 PDF, 포트폴리오 PDF, 첨부 파일과 특수 annotation의 지원 범위는 구현 전 추가 결정이 필요하다. 지원하지 않는 기능은 원본을 변환해 조용히 제거하지 않는다.
+TD-019에 따라 전자서명 PDF, PDF portfolio·embedded file·XFA·실행 action·multimedia와 지원하지 않는 annotation subtype은 활성 template 입력으로 거절한다. 지원하지 않는 기능을 원본에서 제거하거나 평탄화해 조용히 통과시키지 않는다.
 
 ### 4.2 실제 분석 Excel
 
@@ -204,7 +204,7 @@ files URL 진입
 |---|---|
 | 필수 여부 | 필수, 정확히 1개 활성 버전 |
 | 확장자 | MVP에서 `.xlsx` |
-| 실제 형식 | 서버 OOXML 구조와 Aspose.Cells로 확인 |
+| 실제 형식 | 서버 OOXML 구조와 ClosedXML로 확인 |
 | 사용 목적 | 실제값·추정값·수식·표·차트·PDF 연결 원천 |
 | 직접 입력 셀 | 최종 표시 배경 `#FFF2CC`와 글자 `#0000FF`를 동시에 가진 셀 |
 | 차단 | 암호화·손상, 지원하지 않는 외부 링크, 필수 수식 오류, 순환참조, 미지원 기능으로 권위 계산 불가 |
@@ -215,7 +215,7 @@ files URL 진입
 
 ### 4.3 공통 제한
 
-파일 크기, PDF 최대 페이지 수, Excel 최대 used-cell 수와 업로드 제한시간은 서버 설정으로 관리하고 업로드 세션 응답으로 화면에 표시한다. 기준 문서에 수치가 확정되지 않았으므로 React에 임의의 숫자를 하드코딩하지 않는다.
+TD-019의 MVP 기본값을 서버 설정으로 관리하고 upload session 응답으로 화면에 표시한다. PDF는 50 MiB·100 page, `.xlsx`는 100 MiB·50 sheet·전체 used-range cell 2,000,000개·sheet당 500,000개, upload session은 15분이다. React가 별도 상수를 복제하지 않고 서버 응답을 표시한다.
 
 브라우저의 `accept`와 크기 검사는 빠른 안내일 뿐이다. 최종 허용 여부는 업로드 후 서버 검사 결과가 결정한다.
 
@@ -353,7 +353,7 @@ ready → superseded
 - Excel artifact와 file version
 - PDF·Excel parser/worker version
 - PDF render profile version
-- Aspose.Cells version
+- ClosedXML version
 - 기존 MappingSet이 있으면 해당 version
 
 입력 version이 바뀌면 실행 중 결과를 최신 결과로 적용하지 않는다. 기존 run은 `obsolete`로 끝내거나 안전하게 취소하고 새 run을 시작한다.
@@ -368,7 +368,7 @@ ready → superseded
 | 3A | `pdf_template_analysis` | Python PDF worker | Template IR, page/block/slot/object와 자산 |
 | 3B | `excel_structure_analysis` | .NET Excel worker | sheet, formula, style, input cell, structure hash |
 | 4A | `pdf_style_profile` | text parser + Style Profile Agent | 문체 프로필 version |
-| 4B | `excel_recalculation` | Aspose.Cells | 수식 재계산·오류·순환참조 결과 |
+| 4B | `excel_recalculation` | ClosedXML | 수식 재계산·오류·순환참조 결과 |
 | 5 | `pdf_visual_validation` | PDFium + OpenCV worker | 고정 영역·좌표·동적 영역 품질 결과 |
 | 6 | `pair_compatibility` | 결정적 backend 검사 | 기업·기간·문서 유형·PER 구조 일치 |
 | 7 | `mapping_build` | mapping service | suggested MappingSet |
@@ -457,11 +457,11 @@ parser 내부 객체 수를 무조건 노출하지 않는다. 사용자의 교�
 - 노란 배경·파란 글씨를 동시에 가진 직접 입력 셀
 - 외부 workbook link, data connection, macro와 미지원 함수
 - `fileHash`, `structureHash`, workbook version
-- Aspose.Cells 재계산 결과와 오류
+- ClosedXML 재계산 결과와 오류
 
 ### 10.2 통과 기준
 
-- Aspose.Cells가 원본을 손상 없이 로드하고 작업 사본을 생성할 수 있다.
+- ClosedXML이 원본을 손상 없이 로드하고 작업 사본을 생성할 수 있다.
 - 외부 링크가 없거나 계산에 의존하지 않는다. MVP에서는 외부 링크가 필요하면 차단한다.
 - 필수 수식에 오류·지원 불가 함수·해결되지 않은 순환참조가 없다.
 - 시트·수식·표·차트와 필요한 스타일을 목표 범위에서 보존할 수 있다.
@@ -478,9 +478,9 @@ Excel 탭은 실제 workbook 편집 화면이 아니라 검사 결과 요약이�
 - 외부 링크, 미지원 함수, 계산 오류와 호환성 경고
 - 주요 시트 이름과 역할
 - PDF 연결에 사용하는 후보 범위
-- Aspose.Cells engine version과 계산 성공 여부
+- ClosedXML engine version과 계산 성공 여부
 
-전체 workbook을 React state로 복제하지 않는다. 기본 결과 요약에는 SpreadJS를 로드하지 않는다. 사용자가 매핑 후보의 실제 범위를 확인해야 할 때만 read-only SpreadJS viewer를 동적 로드할 수 있으며, 계산 정답과 저장 책임은 계속 Aspose.Cells에 있다.
+전체 workbook을 React state로 복제하지 않는다. 기본 결과 요약에는 React workbook grid를 로드하지 않는다. 사용자가 매핑 후보의 실제 범위를 확인해야 할 때만 read-only React workbook grid viewer를 동적 로드할 수 있으며, 계산 정답과 저장 책임은 계속 ClosedXML에 있다.
 
 ## 11. PDF↔Excel 매핑 계약
 
@@ -801,9 +801,9 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 | Python PDF worker | PyMuPDF/MuPDF 분석, pikepdf/qpdf 정밀 처리 준비 | 필수 |
 | PDFium + OpenCV worker | 288 DPI 시각 검증 | 필수 |
 | HarfBuzz + FreeType | glyph·폰트 분석과 이후 패치 준비 | PDF worker 내부 |
-| .NET Excel worker | Aspose.Cells 로드·재계산·구조 검사 | 필수 |
+| .NET Excel worker | ClosedXML 로드·재계산·구조 검사 | 필수 |
 | PydanticAI Style Profile Agent | 추출 텍스트의 문체 프로필 생성 | 제한 사용, 사실·숫자 변경 금지 |
-| SpreadJS React | 기본 요약에는 미사용, 매핑 범위 확인이 필요할 때만 동적 read-only viewer | 조건부 |
+| React workbook grid | 기본 요약에는 미사용, 매핑 범위 확인이 필요할 때만 동적 read-only viewer | 조건부 |
 | Research·Validation Agent | 이 화면의 파일 적합성 판정 | 사용하지 않음 |
 | FnGuide·DART·KRX·ECOS 수집 | 파일 화면 | 호출하지 않음 |
 
@@ -837,11 +837,11 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 3. S3 호환 quarantine 직접 업로드와 완료·취소·cleanup 흐름을 구현한다.
 4. file-scan worker와 업로드 검증 상태를 연결한다.
 5. PDF 분석·Template IR·문체 프로필·시각 검증 workflow를 연결한다.
-6. Aspose.Cells Excel 구조 분석·직접 입력 셀·재계산 검사를 연결한다.
+6. ClosedXML Excel 구조 분석·직접 입력 셀·재계산 검사를 연결한다.
 7. pair compatibility와 MappingSet 생성·검증을 연결한다.
 8. 현재 업로드 카드에 실제 파일별 progress·재시도·교체 상태를 연결한다.
 9. 현재 결과 대화상자를 PDF·Excel·mapping 결과 탭으로 확장한다.
-10. 필요한 경우 매핑 보정 drawer와 동적 read-only SpreadJS viewer를 연결한다.
+10. 필요한 경우 매핑 보정 drawer와 동적 read-only React workbook grid viewer를 연결한다.
 11. 단계 완료 API와 실제 hypothesis URL 이동을 연결한다.
 12. 중복·stale·실패·취소·권한·접근성 자동 테스트를 추가한다.
 13. 빈 상태, 실행 중, passed, 대표 blocked 상태만 시각 회귀 기준으로 관리한다.
@@ -873,7 +873,7 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 - [ ] 최신 passed version만 단계 입력으로 확정된다.
 - [ ] 확정 성공 후 실제 `/projects/{projectId}/process/hypothesis`로 이동한다.
 - [ ] 키보드만으로 파일 선택, 재시도, 결과 탭, 캐러셀, 매핑 보정과 다음 이동이 가능하다.
-- [ ] 기본 결과 화면에서 SpreadJS와 조사 Agent 코드를 불필요하게 로드하지 않는다.
+- [ ] 기본 결과 화면에서 React workbook grid와 조사 Agent 코드를 불필요하게 로드하지 않는다.
 - [ ] 화면에 동작하지 않는 버튼, 가짜 진행률과 하드코딩 분석 결과가 남아 있지 않다.
 
 ## 23. 테스트 시나리오
@@ -910,7 +910,7 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 | PDF 품질 | `0.25pt`, `0.5pt`, `0.75pt` 좌표 오류와 고정 영역 변경 검출 |
 | PDF 자산 | 표·차트·Form XObject·subset font·미확보 font |
 | Excel | 외부 링크, 숨김 시트, 이름 정의, 병합, chart, 미지원 함수 |
-| Excel 계산 | Aspose.Cells 기준 수식 재계산과 저장 전후 무결성 |
+| Excel 계산 | ClosedXML 기준 수식 재계산과 저장 전후 무결성 |
 | 입력 셀 | 노란 배경·파란 글씨 동시 조건만 판정 |
 | mapping | scalar·table·chart, 중복 key, 길이 불일치, 필수 미매핑 |
 | pair | 프로젝트·PDF·Excel 기업, 기간, 리포트 유형, PER 불일치 |
@@ -951,16 +951,15 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 - 매크로, 외부 링크, DDE와 embedded executable content를 실행하지 않는다.
 - 미리보기와 다운로드 URL이 짧게 만료되고 소유권 확인 없이 재발급되지 않는다.
 
-## 24. 필요한 추가 제품·기술 결정
+## 24. 확정된 구현 기본값과 production gate
 
-화면 계약은 확정할 수 있지만 다음 값은 기준 문서에 아직 없다.
+TD-019에서 다음 구현값을 확정했다.
 
-1. PDF·XLSX 최대 byte, PDF 최대 페이지, workbook 최대 used-cell·sheet 수
-2. 악성 파일 검사 엔진과 quarantine·실패 파일 보존기간
-3. 전자서명 PDF, PDF portfolio·첨부 파일과 특수 annotation 지원 범위
-4. 암호화 Excel과 `.xlsm`·`.xls` 입력의 명시적 지원·거절 정책
-5. 자동 매핑이 불가능한 slot의 사용자 범위 선택 UX와 운영자 지원 경계
-6. 사용자가 장시간 inspection을 직접 취소할 수 있는지와 취소 후 재개 정책
-7. 실제 표본군에서 PDF·Excel별 운영 크기·시간·메모리 한도
+1. PDF·XLSX 크기·page·sheet·used-range cell과 15분 upload session 한도
+2. `ClamAV 1.4.5 LTS`, signature freshness 차단과 quarantine 보존기간
+3. 전자서명·portfolio·embedded file·특수 PDF 기능의 거절 정책
+4. `.xlsx`만 허용하고 암호화·`.xlsm`·`.xls`·macro·external link를 거절하는 정책
+5. 서버가 검증한 workbook range 후보만 연결하는 slot 보정 UX
+6. queued·running inspection 취소와 새 job 재실행 정책
 
-inspection 진행 전달은 TD-016의 polling으로 확정됐다. 나머지 항목은 구현 전에 새 기술 결정 또는 운영 설정으로 확정한다. 미확정 값을 React 상수나 사용자 문구로 먼저 고정하지 않는다.
+inspection 진행은 TD-016의 polling을 사용한다. 실제 증권사 PDF·workbook 표본 회귀, AGPL-3.0 대응 소스 링크, third-party notice, production worker memory·동시성 조정은 배포 gate다. 화면·API 구현을 막는 미결정 항목은 없다.

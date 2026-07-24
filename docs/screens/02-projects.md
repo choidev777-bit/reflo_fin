@@ -450,8 +450,8 @@ workflowProgress = completedStageCount ÷ 7 × 100
 | PostgreSQL | 소유자 범위 목록과 project/job projection | 사용 |
 | Temporal | backend가 장시간 작업 상태 projection 갱신 | 간접 사용, 브라우저 직접 연결 금지 |
 | S3 호환 저장소 | 목록 API에 artifact byte를 제공하지 않음 | 직접 사용하지 않음 |
-| SpreadJS | 없음 | 번들에 포함하지 않음 |
-| Aspose.Cells | 없음 | 목록 route에서 호출하지 않음 |
+| React workbook grid | 없음 | 번들에 포함하지 않음 |
+| ClosedXML | 없음 | 목록 route에서 호출하지 않음 |
 | PDF Python worker·PDFium·OpenCV | 없음 | 목록 route에서 호출하지 않음 |
 | PydanticAI Agent | 없음 | 목록 조회·검색·상태 문구에 사용하지 않음 |
 
@@ -583,7 +583,7 @@ active job은 조건부 polling과 window focus 갱신으로 최신화한다. �
 - [ ] 프로젝트 행은 semantic link이며 중첩 interactive control이 없다.
 - [ ] mobile에서 프로젝트 정보를 가로 스크롤 없이 읽고 열 수 있다.
 - [ ] 동작하지 않는 도움말·행 메뉴·삭제·보관 버튼이 남아 있지 않다.
-- [ ] `/projects` 번들에서 SpreadJS, PDF·Excel 워커와 Agent 코드를 로드하거나 호출하지 않는다.
+- [ ] `/projects` 번들에서 React workbook grid, PDF·Excel 워커와 Agent 코드를 로드하거나 호출하지 않는다.
 
 ### 2.25 자동 테스트 시나리오
 

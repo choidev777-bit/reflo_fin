@@ -333,7 +333,7 @@ setup mutation에서 `reportType`, `companyDomain`, `valuationMethod`, `cutoffAt
 | `POST` | `/api/projects/{projectId}/mapping-sets/{mappingSetId}/revisions` | `200` | `MAPPING_VERSION_CONFLICT`, `MAPPING_CHANGE_INVALID` |
 | `POST` | `/api/projects/{projectId}/process/files/complete` | `200` | `INSPECTION_NOT_PASSED`, `MAPPING_NOT_CONFIRMED`, `STALE_PROJECT_VERSION` |
 
-지원 파일 role은 `previous_report_pdf`, `analysis_workbook` 두 개다. complete 성공 전 object는 검사 입력이 아니다.
+지원 파일 role은 `previous_report_pdf`, `analysis_workbook` 두 개다. TD-019에 따라 PDF는 50 MiB·100 page, XLSX는 100 MiB·50 sheet·전체 used-range 2,000,000 cell·sheet당 500,000 cell로 제한한다. upload session은 `maxSizeBytes`를 반환하며 complete 성공 전 object는 검사 입력이 아니다.
 
 ### 8.4 STEP 03 투자 의견·조사 질문
 
@@ -343,13 +343,14 @@ setup mutation에서 `reportType`, `companyDomain`, `valuationMethod`, `cutoffAt
 | `PATCH` | `/api/projects/{projectId}/hypothesis` | `200` | `VERSION_CONFLICT`, `INVALID_RATING`, `INVALID_THESIS` |
 | `POST` | `/api/projects/{projectId}/hypothesis/generations` | `202` | `INPUT_REVISION_CHANGED`, `AGENT_UNAVAILABLE` |
 | `GET` | `/api/projects/{projectId}/hypothesis/generations/{generationId}` | `200/304` | `GENERATION_NOT_FOUND` |
-| `POST` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions` | `200` | `QUESTION_TEXT_INVALID`, `VERSION_CONFLICT` |
-| `PATCH` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}` | `200` | `QUESTION_TEXT_INVALID`, `VERSION_CONFLICT` |
-| `DELETE` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}` | `200` | `QUESTION_COUNT_INVALID`, `VERSION_CONFLICT` |
+| `POST` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions` | `200` | `QUESTION_COUNT_INVALID`, `QUESTION_TEXT_INVALID`, `QUESTION_METADATA_INVALID`, `VERSION_CONFLICT` |
+| `PATCH` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}` | `200` | `QUESTION_TEXT_INVALID`, `QUESTION_METADATA_INVALID`, `VERSION_CONFLICT` |
+| `DELETE` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}` | `200` | `VERSION_CONFLICT` |
 | `PUT` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/order` | `200` | `QUESTION_ORDER_INVALID`, `VERSION_CONFLICT` |
-| `POST` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/approval` | `200` | `QUESTION_COUNT_INVALID`, `FALSIFICATION_REQUIRED`, `INPUT_REVISION_CHANGED` |
+| `POST` | `/api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/approval` | `200` | `QUESTION_COUNT_INVALID`, `QUESTION_METADATA_INVALID`, `INPUT_REVISION_CHANGED` |
 
-질문 생성 결과는 Pydantic schema와 domain validation을 모두 통과한 뒤에만 API에 나타난다. 원시 model text는 반환하지 않는다.
+질문 생성 결과는 Pydantic schema와 domain validation을 모두 통과한 뒤에만 API에 나타난다. 각 질문은 목적·지표·기간·비교 기준·제안 출처를 가지며 원시 model text는 반환하지 않는다.
+사용자가 질문을 추가하거나 본문을 수정하면 server가 현재 프로젝트 문맥으로 같은 metadata를 다시 생성·검증한다.
 
 ### 8.5 STEP 04 자료 수집 및 계획
 
@@ -365,7 +366,7 @@ setup mutation에서 `reportType`, `companyDomain`, `valuationMethod`, `cutoffAt
 | `POST` | `/api/projects/{projectId}/source-uploads/{uploadId}/complete` | `202` | `CHECKSUM_MISMATCH`, `UPLOAD_EXPIRED` |
 | `GET` | `/api/projects/{projectId}/source-uploads/{uploadId}` | `200/304` | `UPLOAD_NOT_FOUND` |
 
-plan approval, immutable input 고정, job과 outbox 생성은 한 transaction이다. 조사 workflow 성공 전에는 4단계를 완료하지 않는다.
+plan approval, immutable input 고정, job과 outbox 생성은 한 transaction이다. 조사 자료는 plan당 파일 10개·URL 20개, PDF 50 MiB, XLSX 100 MiB, CSV 10 MiB, UTF-8 TXT 5 MiB까지 허용한다. 조사 workflow 성공 전에는 4단계를 완료하지 않는다.
 
 ### 8.6 STEP 05 조사 결과 검증
 
@@ -380,7 +381,7 @@ plan approval, immutable input 고정, job과 outbox 생성은 한 transaction�
 | `POST` | `/api/projects/{projectId}/validation/drafts` | `200` | `INVALID_DECISION_REASON` |
 | `POST` | `/api/projects/{projectId}/validation/complete` | `200` | `STAGE_GATE_BLOCKED`, `WORKBOOK_UPDATE_IN_PROGRESS` |
 
-decision은 기존 Evidence를 수정·삭제하지 않는다. 재조사는 새 job과 새 validation version을 만들 수 있다.
+decision은 기존 Evidence를 수정·삭제하지 않는다. 사유는 5~500자다. TD-020의 `qualified`만 `ACCEPT_QUALIFIED`로 확인할 수 있고 `insufficient`는 우회할 수 없다. 재조사는 새 job과 새 validation version을 만들 수 있다.
 
 ### 8.7 STEP 06 PER 밸류에이션
 
@@ -394,7 +395,7 @@ decision은 기존 Evidence를 수정·삭제하지 않는다. 재조사는 새 
 | `POST` | `/api/projects/{projectId}/valuation/sensitivity` | `200` | `SENSITIVITY_INPUT_INVALID` |
 | `POST` | `/api/projects/{projectId}/valuation/complete` | `200` | `VALUATION_NOT_APPROVED`, `STALE_VALUATION_VERSION` |
 
-decimal 입력은 string이다. SpreadJS는 표시·입력 UI이며 API response의 Aspose.Cells 계산 결과만 권위값이다.
+decimal 입력은 string이다. Target PER은 0.1~100.0, 소수점 한 자리이며 직접 목표주가는 1~1,000,000,000원의 정수다. React workbook grid는 표시·입력 UI이며 API response의 ClosedXML 계산 결과만 권위값이다.
 
 ### 8.8 STEP 07 페이지 내용 설정
 
@@ -431,7 +432,7 @@ outline generation·patch·approval은 Template IR의 page 수·좌표·fixed bl
 | `PATCH` | `/api/projects/{projectId}/report/versions/{versionId}` | `200` |
 | `DELETE` | `/api/projects/{projectId}/report/edit-sessions/{sessionId}` | `204` |
 
-주요 오류는 `REPORT_VERSION_CONFLICT`, `EDIT_SESSION_CONFLICT`, `INVALID_REPORT_OPERATION`, `BLOCK_OVERFLOW`다. autosave 성공은 새 report version과 block revision을 반환한다.
+주요 오류는 `REPORT_VERSION_CONFLICT`, `EDIT_SESSION_CONFLICT`, `INVALID_REPORT_OPERATION`, `BLOCK_OVERFLOW`다. edit lease는 120초, heartbeat는 30초이며 server 시각상 만료된 lease만 takeover할 수 있다. autosave 성공은 새 report version과 block revision을 반환한다.
 
 #### AI·첨부
 
@@ -444,7 +445,7 @@ outline generation·patch·approval은 Template IR의 page 수·좌표·fixed bl
 | `GET` | `/api/projects/{projectId}/report/imports/{importId}` | `200/304` |
 | `POST` | `/api/projects/{projectId}/report/imports/{importId}/complete` | `202` |
 
-AI proposal은 diff 확인 전 본문을 바꾸지 않는다. apply는 숫자·Evidence·투자의견·사용자 가정 보존을 다시 검사한다. report import도 다른 직접 업로드와 마찬가지로 upload session 생성과 `complete`를 분리한다.
+AI proposal은 TD-023 Agent profile로 실행하고 diff 확인 전 본문을 바꾸지 않는다. apply는 숫자·Evidence·투자의견·사용자 가정 보존을 다시 검사한다. report import는 CSV 10 MiB, XLSX 25 MiB, PNG·JPEG 15 MiB·20 MP만 허용하며 이미지 OCR은 MVP에서 제외한다. 다른 직접 업로드와 마찬가지로 upload session 생성과 `complete`를 분리한다.
 
 #### 근거·미리보기·검증·승인
 
@@ -583,7 +584,7 @@ viewer descriptor의 URL은 짧게 만료되며 API가 object key를 입력으�
 - `number` value는 decimal string
 - formula·format·merge·row·column·sheet·chart 구조 변경 금지
 - multi-cell paste 중 잠긴 셀이 하나라도 있으면 전체 batch 실패
-- 성공 response의 sparse delta와 새 workbook version만 SpreadJS에 반영
+- 성공 response의 sparse delta와 새 workbook version만 React workbook grid에 반영
 
 ### 10.5 Report operation
 
@@ -606,7 +607,7 @@ operation type별 payload는 OpenAPI discriminator를 사용한다. `fixed`, `pr
 - project bootstrap과 workspace GET은 private cache이며 shared CDN cache 금지다.
 - session·project response는 기본 `Cache-Control: private, no-store`다.
 - polling GET은 `ETag`를 사용할 수 있지만 다른 사용자와 공유하지 않는다.
-- workbook import와 PDF preview URL은 짧은 만료 descriptor다.
+- workbook은 same-origin versioned JSON read model로 제공하고 PDF preview URL만 짧게 만료한다.
 - `POST artifacts/{artifactId}/download`는 권한 검사 후 새 URL을 발급한다.
 - 만료 URL을 갱신할 때 artifact를 재생성하지 않는다.
 - binary response는 안전한 `Content-Type`, `Content-Disposition`과 `X-Content-Type-Options: nosniff`를 사용한다.
@@ -706,7 +707,7 @@ npx -y @redocly/cli lint contracts/openapi/reflo-v1.yaml --config contracts/open
 - [x] public response에 object key·Temporal workflow ID·provider credential이 없다.
 - [x] job과 report 상태 enum이 ERD·화면 명세와 일치한다.
 - [x] decimal·date·cutoff 규칙이 TD-015와 일치한다.
-- [x] SpreadJS와 Aspose.Cells의 권위 경계가 request·response에 반영된다.
+- [x] React workbook grid와 ClosedXML의 권위 경계가 request·response에 반영된다.
 - [x] Agent output이 proposal·draft이고 승인·Evidence를 우회하지 않는다.
 - [x] Internal Worker API가 PostgreSQL direct write를 대체한다.
 - [x] README·아키텍처·ERD·기술 결정문에서 API 명세로 이동할 수 있다.

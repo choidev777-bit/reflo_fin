@@ -48,7 +48,7 @@ MVP는 다음 구조를 사용한다.
 - **S3 호환 객체 저장소:** 원본과 파생 PDF·XLSX, 원문 snapshot, page image와 최종 artifact
 - **Temporal + Workflow Control Worker:** 장시간·다단계 작업의 workflow 실행, replay, 재시도, 취소와 복구
 - **격리 worker:** PDF Python, Excel .NET, Research/Validation Python, PydanticAI Agent
-- **SpreadJS React:** validation 읽기 전용 workbook과 valuation 허용 셀 편집
+- **React workbook grid:** validation 읽기 전용 workbook과 valuation 허용 셀 편집
 
 MVP에서는 별도 범용 API microservice를 먼저 만들지 않는다. Next.js의 Node.js server runtime이 웹 BFF와 application service 역할을 함께 맡는다. BFF는 브라우저에 맞는 응답을 제공하는 서버 경계다. PDF·Excel·Agent 실행은 이 process 밖의 worker로 분리한다.
 
@@ -59,7 +59,7 @@ MVP에서는 별도 범용 API microservice를 먼저 만들지 않는다. Next.
 - 브라우저 state, 파일명, 사용자 ID, 계산값과 완료 표시는 권위값이 아니다.
 - PostgreSQL의 domain version과 작업 projection이 구조화 상태의 권위다.
 - S3 호환 저장소의 hash가 고정된 artifact가 파일 byte의 권위다.
-- Excel 계산과 최종 XLSX 저장은 Aspose.Cells가 권위다.
+- Excel 계산과 최종 XLSX 저장은 ClosedXML 0.105.0이 권위다.
 - Agent 출력은 제안이며 Evidence 검증, 결정적 계산과 사용자 승인을 대체하지 않는다.
 
 ### 3.2 불변 원본과 새 version
@@ -72,7 +72,7 @@ MVP에서는 별도 범용 API microservice를 먼저 만들지 않는다. Next.
 
 ### 3.3 무거운 실행의 격리
 
-- Next.js process에서 PDF parser, PDFium, OpenCV, Aspose.Cells와 업로드 폰트를 실행하지 않는다.
+- Next.js process에서 PDF parser, PDFium, OpenCV, ClosedXML과 업로드 폰트를 실행하지 않는다.
 - browser에서 Temporal, 객체 저장소 credential, OpenAI key와 worker 내부 API에 직접 접근하지 않는다.
 - 파일 처리 worker는 기본적으로 외부 network를 사용하지 않는다.
 - 외부 자료 수집은 allowlist가 적용된 `research-network` worker만 수행한다.
@@ -80,7 +80,7 @@ MVP에서는 별도 범용 API microservice를 먼저 만들지 않는다. Next.
 ### 3.4 최소 기술
 
 - Vinext, Cloudflare Workers, Wrangler, D1과 OpenAI Sites는 목표 architecture의 구성요소가 아니다.
-- Drizzle은 필수 architecture dependency가 아니다. PostgreSQL access와 migration 도구는 구현 전에 별도로 고정한다.
+- Drizzle은 필수 architecture dependency가 아니다. TD-018에 따라 PostgreSQL access는 `pg@8.22.0`, migration은 `node-pg-migrate@9.0.0`으로 고정한다.
 - Redis, 별도 message broker와 검색 cluster는 측정된 필요가 생기기 전 추가하지 않는다.
 - 초기 작업 상태 전달은 TD-016의 3초 polling을 사용한다.
 
@@ -122,7 +122,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Client["사용자 환경"]
-        UI["Next.js React UI<br/>SpreadJS 포함"]
+        UI["Next.js React UI<br/>workbook grid 포함"]
     end
 
     subgraph Web["Web/Application 경계"]
@@ -191,7 +191,7 @@ flowchart TB
 
 | 실행 단위 | 주요 책임 | 소유 데이터 | 금지 |
 |---|---|---|---|
-| Browser UI | 입력, 화면 상태, polling, Evidence 탐색, SpreadJS 표시·편집 | 저장 전 draft와 UI state | DB·S3·Temporal·OpenAI 직접 접근 |
+| Browser UI | 입력, 화면 상태, polling, Evidence 탐색, workbook grid 표시·편집 | 저장 전 draft와 UI state | DB·S3·Temporal·OpenAI 직접 접근 |
 | Next.js server | 인증, 소유권, 외부 API, 내부 service command, domain transaction, presigned URL | HTTP session과 domain write boundary | 무거운 파일 parser·Workflow·장시간 Agent 실행 |
 | PostgreSQL | 구조화 domain 상태, version, Evidence, 작업 projection, audit metadata | row·transaction | 대형 PDF·XLSX·page image 저장 |
 | S3 호환 저장소 | 원본·파생·최종 artifact byte | immutable object | 사용자 권한과 workflow 상태 판정 |
@@ -404,7 +404,7 @@ ready → superseded
 | `process/hypothesis` | 투자의견·가설·질문 편집과 승인 | PydanticAI Hypothesis Agent | hypothesis·question version |
 | `process/research-plan` | source·질문·cell 계획 승인 | 자료 수집·후보 추출 | plan, source, collection job |
 | `process/validation` | Evidence 선택·반려·재조사·승인 | 원문 독립 검증, workbook read model | Evidence, locator, validation version |
-| `process/valuation` | 허용 셀 입력, PER 판단·승인 | Aspose.Cells 재계산·검증 | workbook calculation, valuation version |
+| `process/valuation` | 허용 셀 입력, PER 판단·승인 | ClosedXML 재계산·검증 | workbook calculation, valuation version |
 | `process/report-outline` | page·slot 구성과 승인 | Outline·Draft Agent | outline version, generation job |
 | `/report` | 편집 operation, 검증 요청, 최종 승인 | PDF patch·render·검증·PDF/XLSX export | report version, render plan, final artifact |
 
@@ -419,7 +419,7 @@ ready → superseded
 | 작업의 사용자 표시 상태 | PostgreSQL projection |
 | workflow 재시도·timer·실행 history | Temporal |
 | PDF·XLSX·원문·image·대형 result | S3 호환 저장소 |
-| 브라우저의 workbook 표현 | SpreadJS instance, 비권위 |
+| 브라우저의 workbook 표현 | versioned React workbook read model, 비권위 |
 
 ### 12.2 version 고정
 
@@ -695,8 +695,8 @@ Reflo_fin/
 
 1. hypothesis와 PydanticAI
 2. research plan·수집·validation
-3. SpreadJS validation read model
-4. SpreadJS valuation edit와 Aspose.Cells 계산
+3. React workbook grid validation read model
+4. React workbook grid valuation edit와 ClosedXML 계산
 5. report outline·draft·편집·검증·export
 
 각 phase는 lint, typecheck, unit, integration, build와 브라우저 E2E를 통과한 뒤 다음 phase로 이동한다.
@@ -723,11 +723,11 @@ Reflo_fin/
 Phase 0 공통 구현을 막는 architecture 결정은 없다. 다음 항목은 관련 feature 통합 또는 production 배포 전에 확정한다.
 
 1. production infrastructure provider
-2. SpreadJS와 Aspose.Cells 상용 배포 라이선스
-3. Agent별 GPT model ID, token·비용·timeout 한도
-4. worker별 production resource·동시성·autoscaling 값
+2. AGPL-3.0 대응 소스 링크와 third-party license notice 배포 검증
+3. worker별 production resource·동시성·autoscaling 값
+4. source type별 원문·Evidence·감사 로그의 법적 보존·삭제 정책
 
 Google OIDC와 PostgreSQL 도구·version·구현 경계는 TD-018에서 확정했다.
-7. artifact·Evidence·감사 로그의 보존·삭제 정책
+파일 입력 기본값은 TD-019, Validation 판정은 TD-020, Valuation 수치·React workbook grid integration은 TD-021, Report 편집·preview·lease는 TD-022, Agent 실행 profile은 TD-023에서 확정했다. 위 항목은 provider·AGPL 공개·production sizing·법무 gate이며 application contract 구현을 막지 않는다.
 
 ERD는 이 문서의 소유권·version·artifact·Evidence·job 경계를 table 관계로 구체화한다. API 문서는 application use case, 오류, idempotency와 polling 계약을 endpoint별로 구체화한다.

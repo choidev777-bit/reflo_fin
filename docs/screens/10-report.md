@@ -19,7 +19,7 @@
 | 이전 화면 | `/projects/:projectId/process/report-outline` |
 | 현재 구현 route | `source-react/app/projects/[projectId]/report/page.tsx` |
 | 현재 실제 UI | `source-react/app/page.tsx`의 `ReportPage`와 하위 컴포넌트 |
-| 관련 기술 결정 | TD-001, TD-002, TD-004~TD-008, TD-011, TD-012, TD-014~TD-017 |
+| 관련 기술 결정 | TD-001, TD-002, TD-004~TD-008, TD-011, TD-012, TD-014~TD-017, TD-022, TD-023 |
 | 구현 상태 | 5페이지 디자인·편집 프로토타입만 존재, 실제 저장·버전·검증·작업·다운로드 미구현 |
 
 ### 10.2 기준 우선순위와 범위
@@ -124,7 +124,7 @@ MVP의 최종 산출물은 PDF와 값이 채워진 Excel이다. 현재 화면의
 - `reportGenerationMode`
 - parser·font·renderer·Agent·prompt 버전
 
-현재 화면의 `AI 초안과 함께 생성`과 `빈 텍스트 영역으로 생성` 선택은 선행 화면의 생성 입력이다. 두 방식을 지원하더라도 같은 버전 고정·레이아웃·검증 계약을 적용한다. 빈 텍스트 방식의 MVP 제공 여부는 10.44의 미확정 사항으로 남긴다.
+MVP는 승인된 outline에서 `AI 초안과 함께 생성`하는 방식만 제공한다. `빈 텍스트 영역으로 생성`은 TD-022에 따라 MVP 범위에서 제외한다. 생성 결과에는 같은 버전 고정·레이아웃·검증 계약을 적용한다.
 
 ### 10.6 이탈·복귀 조건
 
@@ -337,7 +337,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 | 한글 IME | composition 중 autosave·AI range 확정을 실행하지 않음 |
 | 오류 | block 아래가 아니라 선택 영역 가까이에 구체적 원인 표시 |
 
-원시 `contentEditable` DOM을 서버 저장값으로 직렬화하지 않는다. 구현 시 구조화 editor 또는 typed operation adapter가 필요하다. 편집기 라이브러리는 아직 미확정이다.
+편집 UI는 `@tiptap/core`, `@tiptap/react`, `@tiptap/starter-kit` `3.29.0`을 client-only로 사용하고 SSR에서는 `immediatelyRender: false`를 적용한다. Tiptap JSON과 DOM은 권위 저장값이 아니다. 허용 schema를 통과한 변경만 기존 typed operation adapter로 변환해 서버 `report_block_revision`에 저장한다.
 
 문장이 영역을 넘으면 다음 순서를 적용한다.
 
@@ -374,6 +374,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 - 적용은 일반 편집 operation으로 저장되고 undo할 수 있다.
 - 적용 성공 시 기존 full validation을 무효화한다.
 - PydanticAI의 구조화 output과 model·prompt version을 기록한다.
+- Agent runtime은 TD-023의 `pydantic-ai 2.17.0`, `openai 2.48.0`, Responses API v1, `gpt-5.6-terra` 프로필과 timeout·비용·rate limit을 적용한다.
 
 ### 10.16 표 편집·첨부 계약
 
@@ -384,7 +385,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 | 요소 | 계약 |
 |---|---|
 | `AI 수정 요청` textarea | 표 구조·강조·표현에 대한 요청, 권위값 임의 변경 금지 |
-| 파일 첨부 | CSV, TSV, XLSX, XLS, 지원 이미지 |
+| 파일 첨부 | CSV 최대 10 MiB, XLSX 최대 25 MiB, PNG·JPEG 최대 15 MiB·20 MP |
 | 표 유형 | Template IR과 slot topology가 허용하는 선택지만 |
 | 셀 미리보기 | 적용 전 구조·값·단위·출처·권위 상태 확인 |
 | `적용` | 검증을 통과한 proposal만 활성 |
@@ -393,7 +394,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 
 1. 서버가 제한된 upload session과 S3 호환 저장소의 quarantine key를 발급한다.
 2. 파일 형식·크기·악성·암호화 여부를 격리 워커에서 검사한다.
-3. CSV·Excel은 typed cell과 구조를 파싱하고, 이미지는 OCR·표 구조 후보를 만들 수 있다.
+3. CSV·XLSX는 typed cell과 구조를 파싱한다. PNG·JPEG는 시각 참고 자료로만 사용하며 MVP에서 OCR·표 구조 추출은 하지 않는다.
 4. 기존 MappingSet 권위값과 비교한다.
 5. 새 숫자가 검증 Evidence 또는 Excel 권위 원천과 연결되지 않으면 `참고 자료`로만 표시하고 적용을 차단한다.
 6. 허용된 표 label·열 표시·정렬·강조만 즉시 proposal로 만들 수 있다.
@@ -403,7 +404,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 
 #### 표 값 규칙
 
-- Excel 계산값은 TD-004 Aspose.Cells 결과만 사용한다.
+- Excel 계산값은 TD-004 ClosedXML 결과만 사용한다.
 - 표 행·열은 TD-005 Keyed Table binding과 topology를 따른다.
 - 필수 row·column key를 삭제하거나 중복되게 만들 수 없다.
 - 실제값·추정값·컨센서스의 기간·단위·연결 기준을 유지한다.
@@ -529,8 +530,8 @@ MVP는 공동 프로젝트·동시 공동 편집을 지원하지 않는다. 같�
 ```
 
 - lease는 heartbeat로 유지한다.
-- 비정상 종료 시 일정 시간 후 회수한다.
-- 정확한 TTL과 heartbeat 주기는 미확정이다.
+- lease TTL은 120초, heartbeat 주기는 30초다.
+- 편집권 takeover는 서버 시각이 `lease_expires_at` 이상일 때만 허용한다.
 - stale version을 서버가 자동 병합하거나 마지막 요청으로 덮어쓰지 않는다.
 - 충돌 시 현재 탭의 저장되지 않은 text를 복사할 수 있게 제공한 뒤 최신 버전을 다시 불러온다.
 - 서버 version과 edit session 검사는 모든 수정·AI 적용·검증·승인 요청에서 반복한다.
@@ -550,7 +551,7 @@ MVP는 공동 프로젝트·동시 공동 편집을 지원하지 않는다. 같�
 - preview는 최종 승인 artifact가 아니며 watermark 또는 `미리보기` 상태를 명시한다.
 - 최종 검증을 통과하지 않은 preview를 최종 PDF로 다운로드할 수 없다.
 
-미리보기 viewer 라이브러리는 미확정이다. 어떤 viewer를 선택해도 저장된 PDF artifact와 TD-006 좌표 변환·TD-012 locator를 지원해야 한다.
+미리보기는 `pdfjs-dist` `6.1.200`을 사용한다. PDF는 same-origin range request로 읽고 canvas와 text layer를 함께 렌더링한다. 10페이지를 초과하면 현재 viewport 기준 앞뒤 2페이지만 유지한다. 저장된 PDF artifact와 TD-006 좌표 변환·TD-012 locator가 권위다.
 
 ### 10.24 검증 흐름
 
@@ -597,6 +598,7 @@ MVP는 공동 프로젝트·동시 공동 편집을 지원하지 않는다. 같�
 - 해결 후 이전 validation run을 수정하지 않고 새 run을 만든다.
 - hardcoded manual checkbox 세 개로 서버 검증을 대체하지 않는다.
 - warning 확인 기록에는 사용자, 시각, warning code와 report version을 저장한다.
+- 사용자 확인으로 통과할 수 있는 warning은 `FONT_SUBSTITUTED_WITHIN_METRIC_TOLERANCE`, `LOW_RESOLUTION_SOURCE_IMAGE`, `OPTIONAL_SOURCE_LINK_UNAVAILABLE`, `MINOR_DYNAMIC_PIXEL_DIFF`뿐이다. 다른 warning code는 서버 정책상 차단 또는 재검토 대상으로 처리한다.
 
 ### 10.25 최종 승인
 
@@ -694,7 +696,7 @@ Excel 단계 예:
 - S3 object key를 client에 권한 정보로 노출하거나 영구 URL로 사용하지 않는다.
 - URL 만료 시 같은 artifact ID로 새 download URL을 요청할 수 있다.
 - 다운로드 응답은 안전하게 정규화한 파일명과 `Content-Disposition: attachment`를 사용한다.
-- 파일명에는 기업·대상 기간·산출물 종류·보고서 version을 식별할 수 있는 값을 포함한다.
+- 파일명은 `{기업명}_{종목코드}_{YYYY}Q{분기}_실적Review_v{reportVersion}_{YYYYMMDD}.{pdf|xlsx}` 형식을 사용한다. 파일시스템 금지 문자는 `_`로 정규화한다.
 - 사용자가 반복 클릭해도 export job을 새로 만들지 않고 같은 ready artifact를 내려받는다.
 - 다운로드 감사 기록에 사용자, artifact, 시각과 report version을 남긴다.
 - 승인 version이 과거 version이어도 해당 artifact를 재현·다운로드할 수 있다.
@@ -904,12 +906,20 @@ PostgreSQL 최소 entity:
 
 원본·승인·최종 artifact는 덮어쓰지 않는다. 새 편집·검증·승인·내보내기는 새 논리 version 또는 attempt를 만든다.
 
+보존기간은 TD-022를 따른다.
+
+- report version과 최종 PDF·XLSX: 프로젝트 수명 + 30일
+- preview·thumbnail·validation diff: 생성 후 30일
+- AI proposal diff와 암호화된 원시 prompt·response: 생성 후 30일
+- 실패 export 파생물: 실패 후 7일
+- 완료되지 않은 upload: 생성 후 24시간
+
 ### 10.33 권한·보안 규칙
 
 1. 모든 report·version·job·artifact 요청에서 검증된 Google session과 project owner를 확인한다.
 2. client가 전달한 owner ID, `canEdit`, 승인 상태, validation 통과와 artifact key를 신뢰하지 않는다.
 3. report block content와 prompt·첨부 파일을 HTML로 실행하지 않는다.
-4. paste·AI output·CSV·Excel·OCR text를 허용 schema로 sanitize한다.
+4. paste·AI output·CSV·XLSX 값을 허용 schema로 sanitize한다.
 5. 업로드 PDF·Excel·이미지·폰트 parser를 web/API process에서 실행하지 않는다.
 6. 파일 워커는 TD-011의 non-root·read-only·network 제한을 적용한다.
 7. AI 입력에 포함된 문서 문장은 데이터로 취급하고 그 안의 역할 변경·명령을 따르지 않는다.
@@ -943,16 +953,16 @@ PostgreSQL 최소 entity:
 | Temporal | generation·validation·export workflow | 사용 |
 | Python PDF 워커 | PyMuPDF 분석, pikepdf/qpdf 패치, PDFium render | 사용 |
 | OpenCV 검증 워커 | TD-008 mask별 시각 검사 | 사용 |
-| .NET Excel 워커 | Aspose.Cells 재계산·XLSX 저장·검사 | 사용 |
+| .NET Excel 워커 | ClosedXML 재계산·XLSX 저장·검사 | 사용 |
 | PydanticAI | report draft와 AI proposal의 구조화 실행 | 사용 |
 | TD-012 Evidence API | 근거·locator·provenance | 사용 |
-| SpreadJS | report 기본 bundle | 로드하지 않음 |
+| React workbook grid | report 기본 bundle | 로드하지 않음 |
 | browser client export | PDF·XLSX 최종 생성 | 사용 금지 |
 | localStorage | 권위 보고서 본문·승인 상태 | 사용 금지 |
 | static public downloads | 사용자 최종 산출물 | 사용 금지 |
 | HTML 전체 page 재생성 | 원본 PDF 출력 renderer | 사용 금지 |
 
-SpreadJS는 Excel sheet를 직접 편집하는 valuation 화면의 UI다. report에서 Excel 계산 path를 보여주기 위해 SpreadJS 전체를 로드하지 않는다.
+React workbook grid는 Excel sheet를 직접 편집하는 valuation 화면의 UI다. report에서 Excel 계산 path를 보여주기 위해 React workbook grid 전체를 로드하지 않는다.
 
 ### 10.36 현재 프로토타입과 목표 구현의 차이
 
@@ -1042,7 +1052,7 @@ features/report/
 - Temporal status는 backend projection API를 통해 조회한다.
 - page resource는 필요 page 기준으로 지연 로드한다.
 - Evidence 원문 viewer와 AI·표·차트 modal은 필요할 때만 로드한다.
-- report bundle에 SpreadJS와 전체 PDF·OpenCV·Aspose runtime을 포함하지 않는다.
+- report bundle에 React workbook grid와 전체 PDF·OpenCV·ClosedXML runtime을 포함하지 않는다.
 
 ### 10.39 로딩·빈 상태·오류·예외 처리
 
@@ -1142,7 +1152,7 @@ features/report/
 - [ ] partial success에서 성공 파일을 다운로드하고 실패 파일만 재시도할 수 있다.
 - [ ] 만료 download URL을 artifact 재생성 없이 갱신할 수 있다.
 - [ ] 정적 `/public/downloads`와 client export를 사용하지 않는다.
-- [ ] report 화면에 SpreadJS·PDF native runtime·Aspose runtime을 bundle하지 않는다.
+- [ ] report 화면에 React workbook grid·PDF native runtime·ClosedXML runtime을 bundle하지 않는다.
 - [ ] 키보드·screen reader·모션 감소 환경에서 핵심 흐름을 완료할 수 있다.
 
 ### 10.43 자동 테스트 시나리오
@@ -1190,19 +1200,8 @@ features/report/
 | 접근성 | page nav, modal focus, separator keyboard, issue focus 이동 |
 | 회귀 | 기존 report desktop 시각 구조와 5개 page 기준선 |
 
-### 10.44 아직 필요한 제품·기술 결정
+### 10.44 확정된 구현 기본값과 운영 gate
 
-두 기준 문서가 아직 확정하지 않은 항목:
+구조화 editor·lease·viewer·Agent profile·생성 mode·첨부 제한·virtualization·보존기간·warning code·파일명은 TD-022와 TD-023으로 확정됐다. 구현은 이 문서의 값을 client에 다시 하드코딩하지 않고 server policy와 versioned configuration을 권위값으로 사용한다.
 
-1. 구조화 report text editor 라이브러리와 저장 schema
-2. edit session lease TTL·heartbeat·편집권 takeover 상세 정책
-3. PDF preview viewer·thumbnail 생성 방식
-4. AI proposal에 사용할 정확한 GPT model ID, timeout, 비용 한도와 사용자별 rate limit
-5. 빈 텍스트 영역 생성 mode의 MVP 포함 여부
-6. report table·chart 첨부 파일별 최대 크기와 이미지 OCR 지원 범위
-7. 원본 PDF page가 매우 많을 때 page resource virtualization 기준
-8. report version·preview·diff·실패 export artifact의 보존기간
-9. 승인 warning 중 사용자가 확인만으로 통과할 수 있는 code 목록
-10. 파일명 규칙의 한글·영문 표준과 조직별 표기
-
-인증은 TD-014·TD-018, job 상태 전달은 TD-016의 polling, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로 확정됐다. TD-001, TD-004, TD-007, TD-008, TD-011과 TD-012의 production gate는 해당 결정의 확정 전환 검증을 완료해야 해제된다. 이 불확정 사항이 남아 있어도 이 문서의 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙은 변경하지 않는다.
+남은 항목은 앱 계약 미결정이 아니라 production gate다. TD-001, TD-004, TD-007, TD-008, TD-011, TD-012의 AGPL-3.0 대응 소스 공개·third-party notice·운영 provider·worker sizing·법무 보존 검토를 배포 전에 완료해야 한다. 이 gate는 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙을 바꾸지 않는다.

@@ -124,9 +124,12 @@
       "required": [
         "questionKey",
         "text",
-        "category",
-        "falsificationCriteria",
-        "order"
+        "purpose",
+        "metrics",
+        "period",
+        "comparison",
+        "sourceTypes",
+        "priority"
       ],
       "properties": {
         "questionKey": {
@@ -137,25 +140,52 @@
           "minLength": 1,
           "maxLength": 500
         },
-        "category": {
-          "type": "string",
-          "enum": [
-            "company",
-            "industry",
-            "financial",
-            "risk",
-            "valuation",
-            "catalyst"
-          ]
-        },
-        "falsificationCriteria": {
+        "purpose": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 1000
+          "maxLength": 500
         },
-        "order": {
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "period": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "comparison": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "sourceTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "filing",
+              "company",
+              "news",
+              "industry",
+              "market_data"
+            ]
+          }
+        },
+        "priority": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1,
+          "maximum": 5
         }
       }
     },
@@ -174,7 +204,8 @@
             "inputVersionRefs",
             "metadata",
             "warnings",
-            "questions"
+            "questions",
+            "missingContext"
           ],
           "properties": {
             "schemaVersion": {
@@ -205,6 +236,16 @@
               "maxItems": 5,
               "items": {
                 "$ref": "#/$defs/ResearchQuestionProposal"
+              }
+            },
+            "missingContext": {
+              "type": "array",
+              "maxItems": 10,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
               }
             }
           }

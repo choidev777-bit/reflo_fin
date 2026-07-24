@@ -12,7 +12,7 @@
   "metadata": {
     "provider": "openai",
     "model": "configured-model-id",
-    "promptVersion": "hypothesis-v1",
+    "promptVersion": "hypothesis-v2",
     "outputSchemaId": "https://schemas.reflo.dev/worker/v1/agent-output.schema.json",
     "startedAt": "2026-07-24T10:00:00+09:00",
     "finishedAt": "2026-07-24T10:00:05+09:00",
@@ -25,24 +25,52 @@
   "questions": [
     {
       "questionKey": "q_01",
-      "text": "매출 성장률이 둔화되는가?",
-      "category": "financial",
-      "falsificationCriteria": "분기 매출 성장률이 기준치를 하회한다.",
-      "order": 0
+      "text": "2026년 하반기 삼성전기 카메라모듈 ASP는 전년 동기 대비 상승했는가?",
+      "purpose": "제품 가격 상승 여부 확인",
+      "metrics": [
+        "카메라모듈 ASP",
+        "제품 믹스"
+      ],
+      "period": "2026년 하반기",
+      "comparison": "전년 동기",
+      "sourceTypes": [
+        "company",
+        "filing"
+      ],
+      "priority": 1
     },
     {
       "questionKey": "q_02",
-      "text": "산업 수요가 예상보다 약한가?",
-      "category": "industry",
-      "falsificationCriteria": "공식 산업 지표가 전년 대비 감소한다.",
-      "order": 1
+      "text": "2026년 하반기 삼성전기 카메라모듈 출하량은 전년 동기 대비 회복됐는가?",
+      "purpose": "판매량 회복 여부 확인",
+      "metrics": [
+        "카메라모듈 출하량",
+        "가동률"
+      ],
+      "period": "2026년 하반기",
+      "comparison": "전년 동기",
+      "sourceTypes": [
+        "company",
+        "industry"
+      ],
+      "priority": 2
     },
     {
       "questionKey": "q_03",
-      "text": "밸류에이션 프리미엄이 유지되는가?",
-      "category": "valuation",
-      "falsificationCriteria": "동종기업 대비 프리미엄 근거가 확인되지 않는다.",
-      "order": 2
+      "text": "2026년 하반기 삼성전기 카메라모듈의 가격과 판매량 변화가 전년 동기 대비 영업이익률 개선으로 연결됐는가?",
+      "purpose": "가격·판매량 개선의 수익성 연결 여부 확인",
+      "metrics": [
+        "카메라모듈 매출",
+        "영업이익률"
+      ],
+      "period": "2026년 하반기",
+      "comparison": "전년 동기",
+      "sourceTypes": [
+        "filing",
+        "company"
+      ],
+      "priority": 3
     }
-  ]
+  ],
+  "missingContext": []
 }

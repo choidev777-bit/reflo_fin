@@ -24,31 +24,36 @@
 | TD-001 | PDF 생성 | 객체 보존형 하이브리드 패치 방식 채택 | 일단 확정 | 2026-07-22 |
 | TD-002 | PDF 폰트 | 관리형 폰트 매칭 후 미확보 폰트는 대체하여 초안 생성 | 확정 | 2026-07-22 |
 | TD-003 | Excel 입력 셀 | 노란색 배경과 파란색 글씨 조합으로 직접 입력 셀 판정 | 확정 | 2026-07-22 |
-| TD-004 | Excel 수식 재계산 | Aspose.Cells for .NET 기반 독립 계산 서비스 채택 | 일단 확정 | 2026-07-22 |
+| TD-004 | Excel 수식 재계산 | ClosedXML 0.105.0 기반 독립 계산 서비스 채택 | 확정 | 2026-07-25 |
 | TD-005 | PDF↔Excel 매핑 | 의미 슬롯 기반 Scalar·Table·Chart 데이터 매핑 채택 | 확정 | 2026-07-22 |
 | TD-006 | Template IR | Page·Block·Slot·Physical Object 계층의 버전형 JSON IR 채택 | 확정 | 2026-07-22 |
 | TD-007 | PDF 처리 라이브러리 | PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정 엔진 조합 채택 | 일단 확정 | 2026-07-23 |
 | TD-008 | PDF 시각 검증 | PDFium 288 DPI 렌더링과 OpenCV 마스크별 하이브리드 비교 채택 | 일단 확정 | 2026-07-23 |
-| TD-010 | 웹 Excel UI | SpreadJS React 표시·입력 UI와 Aspose.Cells 서버 권위 계산 구조 채택 | 일단 확정 | 2026-07-23 |
+| TD-010 | 웹 Excel UI | React 전용 workbook grid와 ClosedXML 서버 권위 계산 구조 채택 | 확정 | 2026-07-25 |
 | TD-011 | 파일·작업 실행 환경 | S3 호환 불변 객체 저장소, PostgreSQL 메타데이터, Temporal과 사전 가동 격리 워커 조합 채택 | 일단 확정 | 2026-07-23 |
 | TD-012 | Evidence 저장 | 원문 객체 저장소와 PostgreSQL 불변 Evidence·locator·provenance 분리 저장 방식 채택 | 일단 확정 | 2026-07-23 |
 | TD-013 | 컨센서스 공급자 | FnGuide JSON 기반 격리 공급자, 불변 스냅샷과 기준시점 선택 규칙 채택 | 일단 확정 | 2026-07-23 |
 | TD-014 | 인증·세션 | Google 로그인과 PostgreSQL 기반 불투명 server session 채택 | 확정 | 2026-07-24 |
 | TD-015 | 보고서 기준일 | 사용자 입력 date-only와 Asia/Seoul 일말 기준 권위 시각 채택 | 확정 | 2026-07-24 |
 | TD-016 | 작업 상태 전달 | visibility-aware polling을 MVP 기본 transport로 채택 | 확정 | 2026-07-24 |
-| TD-017 | AI Agent | PydanticAI와 OpenAI GPT provider 조합 채택 | 일단 확정 | 2026-07-24 |
+| TD-017 | AI Agent | PydanticAI와 OpenAI GPT provider 조합 채택 | 확정 | 2026-07-24 |
 | TD-018 | 인증·PostgreSQL 도구 | openid-client, node-postgres, node-pg-migrate 채택과 exact version 고정 | 확정 | 2026-07-25 |
+| TD-019 | 파일 입력 운영 정책 | 입력 한도, 악성 검사, 지원 형식, 매핑 보정과 취소 정책 확정 | 확정 | 2026-07-25 |
+| TD-020 | Validation 충분성 | 질문 충분성 판정, 조건부 확인과 decision 사유 규칙 확정 | 확정 | 2026-07-25 |
+| TD-021 | Valuation 수치·workbook grid | workbook read model, Decimal·반올림·민감도·현재주가 정책 확정 | 확정 | 2026-07-25 |
+| TD-022 | Report 편집·미리보기 | editor·PDF viewer, edit lease, import, 보존·경고·파일명 정책 확정 | 확정 | 2026-07-25 |
+| TD-023 | Agent 실행 profile | PydanticAI·OpenAI SDK, model, timeout·비용·보존 정책 확정 | 확정 | 2026-07-25 |
 
 ### 2.1 Delivery gate
 
 | gate | 대상 | 해제 조건 |
 |---|---|---|
 | 공통 구현 시작 | 없음 | TD-018 확정으로 Phase 0 도구 선택 완료 |
-| Excel worker 구현 | TD-004 | Aspose.Cells exact version·상용 라이선스 환경·기준 workbook 재계산 회귀 확인 |
-| PDF worker 구현 | TD-007, TD-008 | PyMuPDF·pikepdf·PDFium·OpenCV exact version, Artifex 라이선스 경계와 기준 PDF 자동 회귀 확인 |
-| SpreadJS 통합 | TD-010 | package version, 개발자 수, production·staging hostname, 지원 browser와 배포 라이선스 확인 |
-| Agent 통합 | TD-017 | PydanticAI·OpenAI SDK version, Agent별 model ID·prompt/schema version·timeout·비용 한도 확정 |
-| production 배포 | TD-001, TD-004, TD-007, TD-008, TD-010~TD-013, TD-017 | 각 결정의 확정 전환 조건, 법무·구매, 표본 회귀, 성능·복구·보존 정책 통과 |
+| Excel worker 구현 | TD-004 | `ClosedXML 0.105.0` 기준 workbook 재계산·왕복 저장·Excel 16.0 교차검증 완료 |
+| PDF worker 구현 | TD-007, TD-008 | PyMuPDF·pikepdf·PDFium·OpenCV exact version, AGPL-3.0 소스 제공 경로와 기준 PDF 자동 회귀 확인 |
+| React workbook grid 통합 | TD-010, TD-021 | fixture 기반 read model·편집 권한·keyboard·paste·local browser regression 확인 |
+| Agent 통합 | TD-017, TD-023 | 고정 package·model profile과 prompt/schema fixture 평가 통과 |
+| production 배포 | TD-001, TD-004, TD-007, TD-008, TD-010~TD-013, TD-017, TD-019~TD-023 | AGPL-3.0 대응 소스 공개, third-party 고지, 표본 회귀, 성능·복구·보존 정책 통과 |
 
 TD-002, TD-003, TD-005, TD-006, TD-014~TD-016과 TD-018은 별도 기술 선택 때문에 구현을 막지 않는다. 실제 구현의 test와 migration 완료 조건은 각 명세의 acceptance criteria로 관리한다.
 
@@ -183,7 +188,7 @@ TD-007에서 다음 역할 분담을 일단 확정했다.
 - HarfBuzz + FreeType: 한글 포함 글꼴 shaping과 glyph 처리
 - SVG 또는 PDF 벡터 출력: 표와 차트 생성
 
-MuPDF/PyMuPDF는 폐쇄형 상용 서비스 운영을 전제로 Artifex 상용 라이선스를 확보한다. 상세 책임 경계, 표본 검증 결과와 확정 전환 조건은 TD-007을 따른다.
+REFLO 전체를 AGPL-3.0으로 공개하고 네트워크 사용자에게 실제 배포 버전의 대응 소스를 제공한다. 따라서 MuPDF/PyMuPDF는 AGPL-3.0 조건으로 사용하며 별도 Artifex 상용 라이선스를 전제로 하지 않는다. 상세 책임 경계, 표본 검증 결과와 준수 조건은 TD-007을 따른다.
 
 ### 기술검증 계획
 
@@ -275,7 +280,7 @@ Excel에서 **노란색 배경과 파란색 글씨가 함께 적용된 셀을 �
 - 원본 Excel의 최종 표시 색상을 기준으로 배경색과 글자색을 판정한다.
 - 업로드 분석 결과에 판정된 직접 입력 셀의 시트명, 주소와 스타일 값을 저장한다.
 - 원본 수식 셀은 직접 입력 셀 목록과 별도로 보존하고 수식을 임의로 값으로 덮어쓰지 않는다.
-- 제공된 기준 Excel에서는 해당 스타일 조합으로 판정된 454개 셀을 직접 입력 셀로 인식해야 한다.
+- 현재 `fixtures/ISC_095340_Peer_PER_Valuation_v4.xlsx`에서는 해당 스타일 조합으로 판정된 606개 셀을 직접 입력 셀로 인식해야 한다.
 
 ---
 
@@ -283,23 +288,23 @@ Excel에서 **노란색 배경과 파란색 글씨가 함께 적용된 셀을 �
 
 ### 상태
 
-`일단 확정`
+`확정`
 
-Aspose.Cells 적용 방향과 주 엔진 채택은 확정했다. 상용 라이선스 환경 검증과 다양한 증권사 Excel 표본 회귀검사를 통과하면 `확정`으로 전환한다.
+현재 MVP fixture의 계산·왕복 저장·Excel 교차검증을 통과했다. 다른 workbook은 업로드 적합성 검사와 함수 allowlist를 통과한 경우에만 지원한다.
 
 ### 결정
 
-REFLO의 Excel 분석·입력·수식 재계산·결과 조회·XLSX 저장을 담당하는 주 엔진으로 **Aspose.Cells for .NET 기반 독립 계산 서비스**를 채택한다.
+REFLO의 Excel 분석·입력·수식 재계산·결과 조회·XLSX 저장을 담당하는 주 엔진으로 **ClosedXML 0.105.0 기반 독립 계산 서비스**를 채택한다.
 
 1. Microsoft Excel이 설치되지 않은 격리된 서버 워커에서 실행한다.
-2. 업로드한 원본 Excel은 불변 원본으로 보관하고 작업 사본만 Aspose.Cells로 연다.
-3. 사용자 입력값을 셀 주소에 기록한 후 Aspose.Cells 계산 엔진으로 수식을 재계산한다.
+2. 업로드한 원본 Excel은 불변 원본으로 보관하고 작업 사본만 ClosedXML로 연다.
+3. 사용자 입력값을 셀 주소에 기록한 후 ClosedXML 계산 엔진으로 수식을 재계산한다.
 4. 반복 입력 세션에서는 calculation chain을 활성화해 영향받는 계산을 효율적으로 갱신한다.
 5. 계산 결과 조회와 최종 XLSX 저장에 같은 엔진을 사용해 이중 계산 엔진 간 불일치를 방지한다.
 6. `openpyxl`과 Open XML 처리는 구조 검사·보조 분석 용도로만 허용하며 수식 정답 엔진으로 사용하지 않는다.
 7. LibreOffice와 자체 구현 수식 엔진은 주 계산 엔진으로 사용하지 않는다.
 8. Microsoft Excel COM 자동화는 검증 기준값 생성에만 사용할 수 있으며 운영 서버 계산 엔진으로 사용하지 않는다.
-9. 브라우저의 workbook 표시와 사용자 입력 UI는 TD-010 SpreadJS가 담당하지만 계산 정답과 최종 저장 책임은 Aspose.Cells에서 이동하지 않는다.
+9. 브라우저의 workbook 표시와 사용자 입력 UI는 TD-010 React workbook grid가 담당하지만 계산 정답과 최종 저장 책임은 ClosedXML에서 이동하지 않는다.
 
 ### 처리 구조
 
@@ -307,7 +312,7 @@ REFLO의 Excel 분석·입력·수식 재계산·결과 조회·XLSX 저장을 �
 Excel 업로드
   → 파일 형식·암호화·외부 링크·매크로·함수 호환성 검사
   → 불변 원본과 작업 사본 생성
-  → Aspose.Cells 계산 세션 로드
+  → ClosedXML 계산 세션 로드
   → TD-003 입력 셀과 수식 셀 분류
   → 사용자 또는 시스템 입력값 기록
   → 수식 재계산
@@ -320,51 +325,50 @@ PDF 구성요소와 Excel 셀·범위의 영구 매핑 방식은 별도 기술 �
 
 ### 기준 표본 검증 결과
 
-검증 파일: `리노공업_1Q26_PER_Valuation_Model_v2.xlsx`
+검증 파일: `fixtures/ISC_095340_Peer_PER_Valuation_v4.xlsx`
 
-- 시트 12개
-- 사용자 직접 입력 셀 454개
-- 수식 셀 185개
-- 사용 함수 9종: `ABS`, `AVERAGE`, `COUNTIF`, `IF`, `INDEX`, `MATCH`, `MEDIAN`, `ROUND`, `SUM`
-- 외부 링크, 매크로, 데이터 연결과 피벗 없음
+- 시트 13개
+- 수식 셀 178개
+- 사용 함수 10종: `ABS`, `AVERAGE`, `COUNT`, `IF`, `IFERROR`, `INDEX`, `MATCH`, `MEDIAN`, `ROUND`, `SUM`
+- 외부 링크, 매크로, chart, 데이터 연결과 피벗 없음
 
-Microsoft Excel 16.0의 계산 결과를 기준값으로 Aspose.Cells for .NET 26.4.0을 비교했다.
+Microsoft Excel에 저장된 계산 cache와 Excel 16.0 재계산 결과를 기준으로 ClosedXML 0.105.0을 비교했다.
 
 | 검증 항목 | 결과 |
 |---|---:|
-| 원본 수식 결과 비교 | 185 / 185 일치 |
-| 대표 입력 시나리오 | 20개 |
-| 시나리오별 전체 수식 비교 | 3,700 / 3,700 일치 |
-| 입력별 변경 출력 개수 | 20 / 20 일치 |
-| 재계산 시간 중앙값 | 3.435ms |
-| 재계산 시간 p95 | 6.896ms |
-| 재계산 시간 최대값 | 13.860ms |
+| 원본 수식 결과 비교 | 178 / 178 일치 |
+| 왕복 저장 semantic mismatch | 0개 |
+| 왕복 저장 package feature mismatch | 0개 |
 | 수식 문자열 변경 | 0개 |
-| 저장 전후 수식 수 | 185개 유지 |
-| 저장 전후 차트 수 | 4개 유지 |
-| Aspose 저장본 Excel 재개방 | 성공 |
+| 저장 전후 수식 수 | 178개 유지 |
+| 저장 전후 병합·검증·조건부서식 | 98개·6개·3개 유지 |
+| ClosedXML 저장본 Excel 재개방 | 성공 |
 | Excel 재개방 후 수식 오류 | 0개 |
+| 대표 입력 변경 후 Forward EPS | `5,662.36798509316` |
+| 대표 입력 변경 후 Target PER | `54.24150809148` |
+| 대표 입력 변경 후 목표주가 | `307,000원` |
+| Excel 16.0 교차검증 | 위 대표 출력 전체 일치 |
 
-각 대표 입력 시나리오는 원본 Excel을 새로 연 독립 작업 사본에서 실행해 이전 시나리오의 값이 다음 검증에 남지 않도록 했다.
+대표 입력 변경은 `08_Forward_EPS!D16`과 `09_Target_PER!B10`에 각각 `+0.01`을 적용했다. ClosedXML 재계산·저장·재열기 결과와 Excel 16.0 `CalculateFullRebuild` 결과가 일치했다. 원본 fixture는 변경하지 않았다.
 
 ### 운영 규칙
 
-- 배포 버전은 검증한 Aspose.Cells 버전으로 고정한다.
-- Aspose.Cells 버전을 변경하면 전체 Excel 회귀검사를 다시 수행한다.
+- 배포 버전은 검증한 ClosedXML 0.105.0으로 고정한다.
+- ClosedXML 버전을 변경하면 전체 Excel 회귀검사를 다시 수행한다.
+- 저장은 `EvaluateFormulasBeforeSaving=true`, `ValidatePackage=true`를 사용하고 저장본을 다시 열어 필수 출력과 구조를 검사한다.
 - 업로드 시 사용 함수, 외부 링크, 매크로, 배열수식, 순환참조와 데이터 연결을 검사한다.
 - 미지원 함수나 기능이 발견되어도 원본을 변경하지 않으며 호환성 경고 또는 지원 불가 상태를 반환한다.
 - 입력값, 계산 엔진 버전, 계산 시각, 결과 해시와 오류를 계산 실행 기록에 저장한다.
 - 매크로는 실행하지 않는다.
 - 외부 링크는 기존 서비스 범위에 따라 지원하지 않는다.
 
-### 완전 확정 조건
+### 확장 지원 조건
 
-1. 상용 라이선스 환경에서 평가판의 `Evaluation Warning` 시트 없이 저장되는지 검증
-2. 최소 5개 이상 증권사, 총 20~30개 실제 분석 Excel 회귀검사
-3. 동적 배열, 이름 정의, 복잡한 조회, 순환참조 등 목표 지원 범위별 호환성 검사
-4. 대용량 모델의 로드·반복 계산·저장 시간과 메모리 사용량 측정
-5. 동시 계산 워커의 격리, 제한시간, 취소와 장애 복구 검증
-6. 상용 라이선스 비용과 배포 방식 확정
+1. 최소 5개 이상 증권사, 총 20~30개 실제 분석 Excel 회귀검사
+2. 동적 배열, 이름 정의, 복잡한 조회, 순환참조 등 목표 지원 범위별 호환성 검사
+3. 대용량 모델의 로드·반복 계산·저장 시간과 메모리 사용량 측정
+4. 동시 계산 워커의 격리, 제한시간, 취소와 장애 복구 검증
+5. ClosedXML과 모든 직접 의존성의 license notice를 배포 산출물에 포함
 
 ---
 
@@ -400,7 +404,7 @@ Excel 셀·범위
 4. 한 슬롯은 하나의 권위 원천만 가진다. 다른 후보 셀은 검증 원천으로만 등록한다.
 5. 하나의 Excel 지표는 여러 PDF 슬롯에서 재사용할 수 있다.
 6. 표와 차트는 개별 셀 나열보다 행·열 키와 series 정의가 있는 구조 매핑을 우선한다.
-7. PDF는 Aspose.Cells 재계산이 완료된 값을 읽는다. 수식 문자열이나 저장된 과거 캐시 값을 결과로 사용하지 않는다.
+7. PDF는 ClosedXML 재계산이 완료된 값을 읽는다. 수식 문자열이나 저장된 과거 캐시 값을 결과로 사용하지 않는다.
 8. Mapping 계층에서는 비즈니스 계산을 수행하지 않는다. 단위 변환, 배율, 반올림, 부호, 빈칸, 접두·접미어와 표시 형식만 허용한다.
 9. PDF의 스타일과 좌표는 Template IR이 소유하고 Excel은 값과 데이터 구조만 제공한다.
 10. 모든 매핑은 버전 관리하며 승인된 버전을 실행 중 임의 변경하지 않는다.
@@ -555,7 +559,7 @@ PDF에 필요한 데이터가 기존 Excel에 없거나 여러 비연속 범위�
 
 1. 모든 필수 슬롯에 binding 또는 명시적인 고정·Evidence·사용자 판단 규칙이 존재하는지 확인
 2. 셀과 범위가 존재하고 예상 타입·크기·머리글과 일치하는지 확인
-3. Aspose.Cells 재계산 결과에 수식 오류, 외부 링크 또는 순환참조 문제가 없는지 확인
+3. ClosedXML 재계산 결과에 수식 오류, 외부 링크 또는 순환참조 문제가 없는지 확인
 4. 같은 의미 지표의 권위 원천과 검증 원천이 허용 오차 안에서 일치하는지 확인
 5. 표의 행·열 키가 고유하고 PDF slot topology와 호환되는지 확인
 6. 차트 category와 모든 series 길이가 일치하는지 확인
@@ -844,7 +848,7 @@ mask는 rect 또는 path로 저장하고 관련 block·object ID를 연결한다
 
 `일단 확정`
 
-라이브러리 조합과 책임 경계는 확정했다. Artifex 상용 라이선스 확인과 최소 5개 증권사, 총 20~30개 PDF 회귀검사를 통과하면 `확정`으로 전환한다.
+라이브러리 조합, 책임 경계와 AGPL-3.0 사용 방침은 확정했다. 최소 5개 증권사, 총 20~30개 PDF 패치 회귀검사를 통과하면 `확정`으로 전환한다.
 
 ### 결정
 
@@ -939,7 +943,10 @@ pikepdf는 저장할 때 incremental update를 하나의 비증분 PDF로 합칠
 
 ### 라이선스와 버전 정책
 
-- MuPDF와 PyMuPDF는 폐쇄형 상용 서비스 운영을 전제로 Artifex 상용 라이선스를 확보한다. AGPL 의무를 충족하지 않는 상태로 상용 운영하지 않는다.
+- REFLO 저장소와 네트워크 서비스는 AGPL-3.0으로 공개하며 MuPDF와 PyMuPDF도 AGPL-3.0 조건으로 사용한다.
+- 배포 화면은 공개 저장소와 실제 배포 commit의 대응 소스를 받을 수 있는 `소스 코드` 링크를 제공한다.
+- `LICENSE`, PyMuPDF/MuPDF 저작권 고지와 third-party notice를 배포물에서 제거하지 않는다.
+- API key, session secret, 사용자 파일과 데이터베이스 내용은 소스 저장소에 포함하지 않는다.
 - pikepdf의 MPL-2.0과 qpdf의 Apache-2.0 고지 의무를 배포 산출물에 반영한다.
 - PyMuPDF와 포함된 MuPDF, pikepdf와 qpdf 버전 조합을 검증 프로필에 고정한다.
 - 라이브러리 버전을 변경하면 TD-007 구조 회귀검사와 TD-008 시각 회귀검사를 모두 다시 수행한다.
@@ -949,41 +956,40 @@ pikepdf는 저장할 때 incremental update를 하나의 비증분 PDF로 합칠
 
 기준 파일:
 
-- `리노공업_1Q26_실적리뷰_삼성증권.pdf`
-  - SHA-256: `2faccf2243198b2f2574506bbd1b7500f4909fc5c08a441706317219ed536a38`
+- `fixtures/ISC_1Q26_실적리뷰_삼성증권.pdf`
+  - SHA-256: `bf0c8d6809d8ecda2503c2db1396bb86ce1a83c3f7a318409c61c7aeca326a16`
   - Microsoft Word 2021 생성, PDF 1.7, A4 5페이지
   - tagged PDF이며 암호화, JavaScript와 AcroForm 없음
-- `리노공업_1Q26_PER_Valuation_Model_v2.xlsx`
-  - SHA-256: `dfd32e0364c3cabddfb0554913ca32281f95c5dd87c94b491a0f9d9a431e5c92`
-  - 12개 시트, 수식 셀 185개, line chart 4개
+- `fixtures/ISC_095340_Peer_PER_Valuation_v4.xlsx`
+  - SHA-256: `beb08debf740796cfbac9f9bbc61a2b636ae166b2e194f1aec99c87a8792b20d`
+  - 13개 시트, 수식 셀 178개, chart 없음
   - VBA, 외부 workbook link, connection과 pivot table 없음
 
 PDF 구조 분석:
 
-| 페이지 | 주요 성격 | `TJ` 수 | PDF 객체 특성 |
-|---|---|---:|---|
-| 1 | 표지, 본문, 요약 표 | 1,027 | 텍스트·사각형 중심, 이미지 2개와 Form XObject 1개 |
-| 2 | 분기 손익·부문 매출 표 | 970 | 텍스트와 389개 사각형, 이미지 없음 |
-| 3 | 재무제표·밸류 지표 | 1,444 | 텍스트와 466개 사각형, 이미지 없음 |
-| 4 | 공시 문구·주가 차트·목표가 이력 | 651 | 벡터 chart Form XObject 1개 |
-| 5 | 회사 정보와 인증 로고 | 59 | 고정 Form XObject와 이미지 1개 |
+| 페이지 | 추출 문자 수 | 주요 성격 |
+|---|---:|---|
+| 1 | 2,281 | 표지·본문·요약 표 |
+| 2 | 3,188 | 분기 손익·부문 표 |
+| 3 | 2,926 | 재무·밸류 표 |
+| 4 | 1,430 | 공시 문구·차트 영역 |
+| 5 | 161 | 회사 정보·인증 영역 |
 
-- 페이지 resource에서 서로 다른 폰트 객체 17개를 확인했다.
-- 그중 16개는 임베드되어 있고 `/ArialMT` TrueType resource 1개는 미임베드 상태다.
-- 다수 폰트가 subset이므로 새 한글 문장에 필요한 glyph가 있다는 보장이 없다. TD-002 관리형 폰트와 대체 정책이 필요하다.
-- 4페이지 차트 Form XObject는 약 959개 line operator와 28개 text operator로 구성된다. 이 객체는 내부 선분을 개별 수정하지 않고 전체 Form XObject를 교체하는 편이 안전하다.
-- 2·3페이지 표는 raster image가 아니라 검색·선택 가능한 PDF 텍스트와 벡터 사각형으로 구성되어 operand 또는 셀 단위 operator 교체가 가능하다.
-- 모든 XObject는 이 표본 안에서 한 번씩만 참조됐지만, 일반 구현은 다른 PDF의 shared XObject를 전제로 clone-on-write를 지원해야 한다.
+- page resource 전체에서 서로 다른 font 16개, image 3개와 Form XObject 3개를 확인했다.
+- pikepdf 10.10.0이 71,389개 content instruction을 오류 없이 parse했다.
+- pikepdf 왕복 저장 뒤 pdfplumber의 text·font·bbox signature가 모두 일치했다.
+- PDFium 288 DPI 렌더링에서 5페이지 모두 difference bbox가 없고 최대 channel 차이는 0이었다.
+- 이 결과는 원본 보존·분석·저장 경계를 검증한다. 숫자·한글 문장·표·차트 실제 교체는 아래 확정 전환 조건에서 별도로 검증한다.
 
 Excel과 PDF의 대응:
 
 | PDF 영역 | Excel 기준 영역 | 패치 단위 |
 |---|---|---|
 | 1페이지 핵심 투자지표·Valuation summary | `00_요약`, `09_Target_PER` | Scalar·Table |
-| 2페이지 요약 손익 계산서 | `01_분기실적!A6:L23` | Keyed Table |
-| 2페이지 부문별 매출 | `02_부문매출!A6:L19` | Keyed Table |
-| 3페이지 재무제표·밸류 지표 | `03_재무제표`, `04_밸류지표` | Keyed Table |
-| 4페이지 목표주가 이력 | `05_목표주가이력!A6:H15` | Chart-series·Table |
+| 실적 추이·추정 변경 | `01_실적추이`, `02_추정변경` | Keyed Table |
+| 목표주가·peer valuation | `03_목표주가`, `04_피어실적`, `05_피어밸류` | Scalar·Keyed Table |
+| 재무·Forward EPS | `06_재무요약`, `08_Forward_EPS` | Keyed Table·Scalar |
+| 검증·Target PER | `07_출처검증`, `09_Target_PER` | Scalar·Table |
 
 이 표본은 PyMuPDF/MuPDF가 의미·좌표를 분석하고 pikepdf/qpdf가 태그와 원본 stream 구조를 보존하며 패치하는 역할 분리가 적합함을 보여 준다. 다만 실제 수정·저장 성공률과 성능은 아래 확정 전환 검증에서 측정한다.
 
@@ -991,7 +997,7 @@ Excel과 PDF의 대응:
 
 다음을 모두 만족하면 상태를 `확정`으로 전환한다.
 
-1. Artifex 상용 라이선스의 서버·워커·배포 범위를 법무·구매 검토로 확인한다.
+1. 배포 URL에서 `LICENSE`, 공개 저장소와 실제 배포 commit의 대응 소스 접근을 검증한다.
 2. 최소 5개 증권사, 총 20~30개 PDF에 대해 숫자, 한글 문장, 표와 차트 패치를 수행한다.
 3. `in_place_glyph_replace`, `operator_replace`, `form_xobject_replace`, `block_vector_replace`를 각각 최소 한 번 이상 검증한다.
 4. 고정 영역은 TD-001의 렌더링 일치율과 좌표 오차 기준을 통과한다.
@@ -1011,7 +1017,7 @@ Excel과 PDF의 대응:
 - Form XObject 내부의 복잡한 차트를 선분 단위로 직접 갱신하는 방식
 - 원본 PDF를 덮어쓰거나 원본 hash 없이 결과만 저장하는 방식
 - 동일 `Document` 객체를 여러 thread에서 동시에 처리하는 방식
-- MuPDF 상용 라이선스 또는 AGPL 준수 방침 없이 폐쇄형 서비스에 배포하는 방식
+- AGPL-3.0 대응 소스와 고지 없이 PyMuPDF/MuPDF 기반 서비스를 배포하는 방식
 
 ---
 
@@ -1226,51 +1232,50 @@ baseline image와 검증 image는 원본 PDF hash와 renderProfile hash를 함�
 
 ### 상태
 
-`일단 확정`
+`확정`
 
-UI 엔진과 서버 계산 엔진의 책임 경계는 확정했다. SpreadJS 상용·SaaS 배포 라이선스 확인, 실제 증권사 Excel 재현 검증과 성능 목표를 통과하면 `확정`으로 전환한다.
+MVP는 범용 Excel 편집기가 아니라 검증된 workbook을 읽고 허용 셀만 수정하는 UI다. 따라서 상용 spreadsheet component 없이 server read model 기반 React workbook grid를 사용한다.
 
 ### 배경
 
 REFLO는 업로드한 분석 Excel의 실제 sheet 구조, 값, 수식, 스타일, 병합, 숨김 상태, 표와 차트를 브라우저에서 보여 주고 TD-003에서 판정한 사용자 직접 입력 셀만 편집하게 해야 한다. 일반 data grid는 행 중심 데이터 표시에는 적합하지만 기존 workbook의 sheet·cell 중심 구조와 Excel 서식을 그대로 표현하는 데 추가 구현이 많이 필요하다.
 
-TD-004의 Aspose.Cells는 서버에서 Excel 파일을 분석하고 수식을 재계산하며 최종 XLSX를 저장하는 엔진이다. 브라우저에서 사용자가 실제 sheet처럼 선택, 입력, 복사·붙여넣기와 sheet 이동을 수행하게 하는 UI는 별도 기술이 필요하다.
+TD-004의 ClosedXML은 서버에서 Excel 파일을 분석하고 수식을 재계산하며 최종 XLSX를 저장하는 엔진이다. 브라우저는 XLSX를 직접 해석하지 않고 서버가 만든 versioned workbook read model만 표시한다.
 
 ### 결정
 
-REFLO의 웹 Excel UI로 **SpreadJS React를 채택하고, Aspose.Cells for .NET을 유일한 권위 계산·저장 엔진으로 유지**한다.
+REFLO의 웹 Excel UI로 **React 전용 workbook grid를 채택하고, ClosedXML 0.105.0을 유일한 권위 계산·저장 엔진으로 유지**한다.
 
-1. SpreadJS는 workbook·worksheet 표시, sheet tab, cell selection, 입력, 복사·붙여넣기, formula bar와 화면 내 chart 표시를 담당한다.
-2. Aspose.Cells는 원본·작업 사본 로드, TD-003 입력 셀 판정, 값 기록, 수식 재계산, 오류 검사와 최종 XLSX 저장을 담당한다.
-3. SpreadJS의 계산 결과는 최종 값, PDF 연결 값, 검증 결과 또는 저장 결과의 정답으로 사용하지 않는다.
+1. React workbook grid는 worksheet 표시, sheet tab, cell selection, 허용 셀 입력, 복사·붙여넣기와 formula bar를 담당한다.
+2. ClosedXML은 원본·작업 사본 로드, TD-003 입력 셀 판정, 값 기록, 수식 재계산, 오류 검사와 최종 XLSX 저장을 담당한다.
+3. 브라우저는 수식을 계산하지 않으며 최종 값, PDF 연결 값, 검증 결과 또는 저장 결과의 정답을 만들지 않는다.
 4. 브라우저는 셀 색상을 다시 해석해 편집 권한을 결정하지 않고 서버가 제공한 versioned `editableCellSet`만 신뢰한다.
 5. 수식, 검증된 실제값, 시스템 입력값과 권한이 없는 셀은 읽기 전용으로 표시한다.
-6. 사용자 입력은 cell delta로 서버에 전송하고 Aspose.Cells 재계산이 성공한 뒤 반환된 영향 셀 delta로 화면을 갱신한다.
+6. 사용자 입력은 cell delta로 서버에 전송하고 ClosedXML 재계산이 성공한 뒤 반환된 영향 셀 delta로 화면을 갱신한다.
 7. 원본 XLSX는 불변으로 유지하고 모든 입력과 계산은 프로젝트별 작업 사본에만 반영한다.
-8. 최종 내보내기는 SpreadJS의 client export가 아니라 TD-004 Aspose.Cells 작업 사본으로 수행한다.
+8. 최종 내보내기는 client export가 아니라 TD-004 ClosedXML 작업 사본으로 수행한다.
 
 ### 선택 이유
 
-- SpreadJS는 React에서 workbook, 다중 sheet, 병합, 서식, 이름 정의, formula, table, chart와 Excel import·export를 제공해 기존 workbook을 직접 다루는 UI에 적합하다.
-- 일반 data grid보다 Excel 동작을 별도로 재구현해야 하는 범위가 작아 초기 구현 시간과 장기 유지보수 위험이 낮다.
-- cell·row·column·sheet 단위의 보호와 편집 제어 API를 제공해 TD-003 입력 셀 목록을 화면 권한으로 투영할 수 있다.
-- 큰 workbook용 최적화 기능과 React integration을 제공하며 현재 REFLO의 React 19·Next.js 16 프런트엔드 구성과 연결할 수 있다.
-- 화면 엔진과 계산 정답 엔진을 분리하면 UI 제품의 formula 호환 범위가 최종 Excel 값과 PDF 숫자를 바꾸지 않는다.
+- MVP는 row·column 삽입, formula 작성, 임의 서식, workbook 구조 변경과 client XLSX export를 지원하지 않아 범용 spreadsheet component가 필요하지 않다.
+- server read model이 sheet·cell·style·merge·editable set을 명시하므로 browser와 계산 엔진의 해석 차이를 줄일 수 있다.
+- 상용 UI 라이선스, hostname key와 평가판 watermark가 없고 필요한 interaction만 React로 검증할 수 있다.
+- 화면과 계산 정답 엔진을 분리하므로 UI 구현이 최종 Excel 값과 PDF 숫자를 바꾸지 않는다.
 
 ### 책임 분리
 
 | 책임 | 주 엔진 | 규칙 |
 |---|---|---|
 | XLSX 원본 보존 | 파일 저장소 | 사용자 업로드 원본 hash와 파일을 변경하지 않음 |
-| workbook 적합성 검사 | Aspose.Cells | 외부 링크, 함수, 수식, 병합, chart와 숨김 sheet 검사 |
-| 입력 셀 판정 | Aspose.Cells + TD-003 | 최종 표시 배경·글자색 기준으로 server에서 판정 |
-| workbook 화면 표시 | SpreadJS React | 원본 workbook의 sheet·cell·style·merge·chart를 브라우저에 표시 |
+| workbook 적합성 검사 | ClosedXML | 외부 링크, 함수, 수식, 병합, chart와 숨김 sheet 검사 |
+| 입력 셀 판정 | ClosedXML + TD-003 | 최종 표시 배경·글자색 기준으로 server에서 판정 |
+| workbook 화면 표시 | React workbook grid | server read model의 sheet·cell·style·merge·chart snapshot을 표시 |
 | 편집 권한 | REFLO backend | `editableCellSet`과 workflow 상태를 기준으로 결정 |
-| 사용자 입력 UX | SpreadJS React | selection, editor, keyboard, copy·paste와 validation message |
-| 수식 재계산 | Aspose.Cells + TD-004 | 모든 권위 결과와 오류를 계산 |
+| 사용자 입력 UX | React workbook grid | selection, editor, keyboard, copy·paste와 validation message |
+| 수식 재계산 | ClosedXML + TD-004 | 모든 권위 결과와 오류를 계산 |
 | 영향 셀 갱신 | REFLO API | 재계산된 sparse cell delta를 UI에 반환 |
-| 최종 XLSX 저장 | Aspose.Cells | 프로젝트 작업 사본을 저장·검사·내보내기 |
-| PDF 연결 값 | TD-005 MappingSet | Aspose.Cells 재계산 완료 값만 조회 |
+| 최종 XLSX 저장 | ClosedXML | 프로젝트 작업 사본을 저장·검사·내보내기 |
+| PDF 연결 값 | TD-005 MappingSet | ClosedXML 재계산 완료 값만 조회 |
 
 ### 화면 구성
 
@@ -1291,20 +1296,21 @@ REFLO의 웹 Excel UI로 **SpreadJS React를 채택하고, Aspose.Cells for .NET
 
 ```text
 원본 XLSX 업로드
-  → Aspose.Cells 적합성 검사
+  → ClosedXML 적합성 검사
   → 불변 원본 + 프로젝트 작업 사본 생성
   → TD-003 editableCellSet과 cell metadata 생성
   → workbookVersion 발급
-  → SpreadJS가 동일 original hash의 workbook을 표시
+  → API가 versioned workbook read model 생성
+  → React grid가 동일 original hash의 read model 표시
   → backend metadata로 cell permission 적용
   → 사용자 입력 대기
 ```
 
-- 브라우저가 표시하는 workbook과 Aspose.Cells가 연 작업 사본은 동일한 `originalWorkbookHash`에서 시작해야 한다.
-- workbook import가 끝나기 전에는 편집을 허용하지 않는다.
-- Aspose.Cells 적합성 검사를 통과하지 않은 파일을 SpreadJS 화면에서 임시로 편집하게 하지 않는다.
-- 일반 화면에서는 visible sheet의 used range를 우선 표시하고 필요하지 않은 보조 UI module은 지연 로드한다.
-- client import 결과에서 지원되지 않거나 다르게 표현된 Excel 기능은 숨기지 않고 호환성 경고와 영향 범위를 표시한다.
+- 브라우저 read model과 ClosedXML 작업 사본은 동일한 `originalWorkbookHash`와 `workbookVersion`을 가져야 한다.
+- read model 로드가 끝나기 전에는 편집을 허용하지 않는다.
+- ClosedXML 적합성 검사를 통과하지 않은 파일을 grid에서 임시 편집하게 하지 않는다.
+- visible sheet의 used range를 우선 전송하며 큰 sheet는 row·column window로 나눠 요청한다.
+- 지원되지 않거나 단순화된 Excel 기능은 호환성 경고와 영향 범위를 표시한다.
 
 ### 편집 권한 모델
 
@@ -1357,7 +1363,7 @@ REFLO의 웹 Excel UI로 **SpreadJS React를 채택하고, Aspose.Cells for .NET
 1. client가 허용 cell, type와 기본 validation을 검사한다.
 2. 빠른 연속 입력은 약 `150~250ms` 범위에서 하나의 batch로 묶을 수 있다.
 3. backend가 사용자, project, workbook version, request ID와 cell permission을 다시 검사한다.
-4. Aspose.Cells 작업 사본에 batch 전체를 하나의 transaction 단위로 적용한다.
+4. ClosedXML 작업 사본에 batch 전체를 하나의 transaction 단위로 적용한다.
 5. 수식을 재계산하고 formula error, 순환참조, 필수 출력과 참조 무결성을 검사한다.
 6. 성공하면 새 `workbookVersion`, 저장된 입력값과 영향받은 계산 셀의 sparse delta를 반환한다.
 7. 실패하면 batch 전체를 적용 전 상태로 되돌리고 cell별 오류를 반환한다.
@@ -1374,9 +1380,8 @@ REFLO의 웹 Excel UI로 **SpreadJS React를 채택하고, Aspose.Cells for .NET
 
 ### 계산 권위와 화면 동작
 
-- SpreadJS client formula auto-calculation은 기본적으로 비활성 또는 수동 mode로 둔다.
-- 사용자가 입력한 셀 값은 즉시 editor에 유지하되 관련 formula 결과는 Aspose.Cells 응답 전까지 이전 값과 `계산 중` 상태로 표시한다.
-- client formula engine을 선택적으로 사용하더라도 `미리보기`로만 표시하며 서버 결과와 다르면 즉시 서버 값으로 교체하고 불일치 telemetry를 기록한다.
+- client formula engine은 두지 않는다.
+- 사용자가 입력한 셀 값은 즉시 editor에 유지하되 관련 formula 결과는 ClosedXML 응답 전까지 이전 값과 `계산 중` 상태로 표시한다.
 - PDF, valuation, validation과 최종 XLSX는 client preview 값을 읽지 않는다.
 - formula 문자열은 화면에 읽기 전용으로 표시할 수 있지만 client에서 수정하거나 새 formula를 입력할 수 없다.
 - 서버 계산 실패 시 성공한 것처럼 client 값만 남기지 않고 입력 이전 상태로 복구한다.
@@ -1393,13 +1398,13 @@ MVP는 공동 편집을 지원하지 않지만 같은 사용자가 여러 browse
 
 ### 성능 정책
 
-- workbook 전체를 React component state로 복제하지 않고 SpreadJS workbook instance가 소유하게 한다.
-- React는 선택 셀 metadata, server status와 version 같은 작은 application state만 관리한다.
+- workbook 전체를 하나의 React component state로 복제하지 않고 sheet별 normalized cache와 viewport slice로 관리한다.
+- React는 현재 sheet, 선택 셀 metadata, viewport, server status와 version만 활성 상태로 관리한다.
 - cell selection·scroll event를 매번 전역 상태나 서버로 전송하지 않는다.
-- Excel I/O, chart와 불필요한 designer module은 필요 시 dynamic import한다.
+- XLSX I/O는 browser bundle에 넣지 않는다. chart는 server가 제공한 SVG 또는 image snapshot만 필요 시 로드한다.
 - visible sheet를 우선 활성화하고 무거운 hidden·background sheet UI는 생성하지 않는다.
 - 변경 시 전체 workbook JSON이나 XLSX를 왕복하지 않고 sparse typed delta만 전송한다.
-- Aspose.Cells 계산 session을 반복 입력 동안 재사용하고 매 입력마다 원본 XLSX를 다시 열지 않는다.
+- ClosedXML 계산 session을 반복 입력 동안 재사용하고 매 입력마다 원본 XLSX를 다시 열지 않는다.
 - 계산 응답도 전체 sheet가 아니라 영향받은 cell·table·chart delta만 반환한다.
 - chart는 관련 series가 변경된 경우에만 갱신한다.
 - multi-cell 화면 갱신은 paint·event를 suspend한 뒤 batch 적용하고 한 번만 다시 그린다.
@@ -1409,10 +1414,10 @@ MVP는 공동 편집을 지원하지 않지만 같은 사용자가 여러 browse
 
 다음은 자동으로 품질을 낮춰 표시하지 않고 경고 또는 진행 차단 대상으로 분류한다.
 
-- SpreadJS import가 보존하지 못하는 workbook feature
-- Aspose.Cells와 SpreadJS에서 date serial, number format, error value 또는 formula cached value가 다름
+- React read model이 표현하지 못하는 workbook feature
+- ClosedXML 작업 사본과 React read model에서 date serial, number format, error value 또는 formula cached value가 다름
 - sheet name, used range, merge, hidden state, chart series 또는 named range 불일치
-- client 화면에서 보이는 값과 Aspose.Cells 권위 값 불일치
+- client 화면에서 보이는 값과 ClosedXML 권위 값 불일치
 - editableCellSet에 없는 셀 변경 시도
 - stale workbook version, 중복되지 않은 out-of-order 요청 또는 계산 session 손실
 - formula error, 순환참조, 외부 링크와 지원하지 않는 함수
@@ -1425,57 +1430,50 @@ client 표시 불일치는 원본 또는 server 작업 사본을 수정해 맞�
 - 변경 요청의 project 소유권과 cell permission은 검증된 로그인 session으로 server에서 다시 확인한다.
 - formula, external link, DDE, macro와 임의 script는 browser 입력을 통해 추가할 수 없다.
 - pasted HTML은 style과 executable content를 제거하고 typed cell value만 허용한다.
-- 다운로드는 server가 저장·검사한 Aspose.Cells 작업 사본에 대해서만 허용한다.
-- SpreadJS license key는 제품 방식에 따라 client에 배치될 수 있으므로 비밀 credential로 사용하지 않으며 backend authorization과 분리한다.
+- 다운로드는 server가 저장·검사한 ClosedXML 작업 사본에 대해서만 허용한다.
 
 ### 대안 검토
 
 | 대안 | 검토 결과 |
 |---|---|
-| Syncfusion React Spreadsheet | Excel형 UI, formula와 virtualization을 제공하는 유력 대안이지만 별도 import/export service와 Aspose.Cells 간 이중 서버·계산 경계가 늘어남 |
+| SpreadJS | Excel형 UI와 XLSX I/O는 강하지만 상용·SaaS 배포 라이선스와 hostname key가 필요해 오픈소스·단기 배포 조건과 맞지 않음 |
+| Syncfusion React Spreadsheet | Excel형 UI와 formula를 제공하지만 별도 라이선스·import/export·ClosedXML 간 이중 계산 경계가 늘어남 |
 | Handsontable + HyperFormula | cell 입력과 grid 성능은 좋지만 기존 workbook의 chart·shape·이름 정의·복잡한 style 재현을 REFLO가 추가 구현해야 함 |
 | AG Grid Enterprise | 대규모 행 중심 데이터에는 강하지만 기존 Excel workbook을 그대로 편집하는 spreadsheet UI가 아니므로 요구사항과 맞지 않음 |
 | Univer | open-source core와 formula worker가 장점이나 XLSX import/export, chart, printing 등 필요한 기능의 Pro·server 의존성과 제품 성숙도를 별도 검증해야 함 |
 | Jspreadsheet | 가벼운 입력 grid에는 적합하지만 실제 증권사 workbook의 고충실도 재현과 서버 권위 동기화를 추가 검증해야 함 |
-| 자체 Canvas/WebGL grid | 특정 성능을 극대화할 수 있지만 Excel selection, merge, format, accessibility, clipboard와 chart를 장기간 직접 구현해야 하므로 채택하지 않음 |
+| 자체 Canvas/WebGL grid | 특정 성능은 높지만 MVP fixture 크기에는 과도하다. 우선 semantic HTML/CSS grid로 구현하고 계측 후에만 검토 |
 | Microsoft Excel for the web embedding | 실제 Excel 호환성은 높지만 외부 Microsoft 저장소·인증·문서 서버 경계와 REFLO의 자체 파일·권한 모델이 강하게 결합됨 |
 
 ### 라이선스와 버전 정책
 
-- SpreadJS 개발자 라이선스와 상용·SaaS domain 또는 hostname 배포 라이선스의 비용과 범위를 구매 전에 확인한다.
-- production, staging, preview deployment와 사용자에게 제공되는 hostname을 모두 라이선스 검토 범위에 포함한다.
-- 평가판 watermark 또는 만료 key가 production bundle에 포함되지 않게 build 검사를 추가한다.
-- 검증을 통과한 SpreadJS 정확한 version을 package lock에 고정한다.
-- SpreadJS major·minor version을 변경하면 workbook 재현, cell permission, clipboard, formula 표시와 성능 회귀검사를 다시 수행한다.
-- client bundle에는 REFLO가 사용하는 module만 포함하고 Designer Ribbon, collaboration, AI와 pivot add-on은 MVP에 포함하지 않는다.
+- React grid는 REFLO AGPL-3.0 소스의 일부이며 상용 key나 watermark를 사용하지 않는다.
+- ClosedXML 0.105.0과 직접 의존성의 MIT·third-party notice를 배포 산출물에 포함한다.
+- ClosedXML version을 변경하면 workbook 재현, cell permission, formula 계산과 저장 회귀검사를 다시 수행한다.
+- client bundle에는 XLSX parser, formula engine, designer, collaboration, AI와 pivot module을 포함하지 않는다.
 
 ### 허용하지 않는 방식
 
-- HTML table 또는 일반 data grid를 Excel과 같아 보이도록 스타일링해 실제 workbook UI로 사용하는 방식
+- workbook 전체 편집기를 흉내 내며 지원하지 않는 Excel 기능을 제공하는 것처럼 표시하는 방식
 - browser가 셀의 노란 배경·파란 글씨를 다시 판정해 편집 권한을 결정하는 방식
-- SpreadJS formula 결과를 Aspose.Cells 검증 없이 PDF나 최종 Excel 값으로 사용하는 방식
+- client 계산 결과를 ClosedXML 검증 없이 PDF나 최종 Excel 값으로 사용하는 방식
 - client가 보낸 formula result, editable flag 또는 sheet protection을 server가 신뢰하는 방식
 - 입력할 때마다 전체 XLSX를 client와 server 사이에서 다시 업로드·다운로드하는 방식
 - 수식 셀, 검증된 실제값, hidden system sheet 또는 workbook 구조를 browser에서 수정하는 방식
 - paste 대상의 일부만 조용히 적용하고 나머지를 버리는 방식
 - client export 파일을 최종 산출물로 제공하는 방식
 - 호환되지 않는 Excel 기능을 사용자에게 알리지 않고 삭제하거나 단순화하는 방식
-- SpreadJS와 Aspose.Cells 계산값이 다를 때 client 값을 우선하는 방식
+- React read model과 ClosedXML 값이 다를 때 client 값을 우선하는 방식
 
-### 확정 전환 조건
+### 구현 acceptance criteria
 
-다음을 모두 만족하면 상태를 `확정`으로 전환한다.
-
-1. SpreadJS 상용·SaaS 배포 라이선스의 개발자 수, production·staging hostname과 갱신 조건을 확인한다.
-2. 기준 `리노공업_1Q26_PER_Valuation_Model_v2.xlsx`의 12개 sheet, style, merge, formula, chart 4개와 hidden state를 허용 기준 안에서 재현한다.
-3. TD-003의 직접 입력 셀 454개 중 workflow가 허용한 셀만 편집되고 우회 입력, formula 입력과 보호 셀 paste가 차단된다.
-4. 기존 formula 셀 185개와 20개 입력 시나리오에서 화면 표시값이 TD-004 Aspose.Cells 결과와 일치한다.
-5. number, percentage, date, blank, negative value, Korean text와 multi-cell paste의 typed value 변환을 검증한다.
-6. active sheet 최초 표시 시간, scroll·selection 응답성, input-to-authoritative-result latency의 p50·p95와 browser peak memory를 측정해 운영 목표를 정한다.
-7. baseline workbook과 최소 3배 used-cell stress workbook에서 긴 작업이 main thread를 과도하게 차단하지 않는다.
-8. stale version, 중복 request, out-of-order response, 계산 실패와 session 복구에서 값이 중복 적용되거나 유실되지 않는다.
-9. SpreadJS import/export 호환성 표본과 Aspose.Cells 권위 snapshot의 sheet·cell·style·chart 차이를 자동 보고한다.
-10. Chrome과 Edge의 지원 version에서 keyboard, IME 한글 입력, clipboard, zoom과 accessibility 기본 동작을 검증한다.
+1. 기준 `fixtures/ISC_095340_Peer_PER_Valuation_v4.xlsx`의 13개 sheet, style, 98개 merge, 178개 formula와 hidden state를 read model로 재현한다.
+2. TD-003의 직접 입력 셀 중 workflow가 허용한 셀만 편집되고 우회 입력, formula 입력과 보호 셀 paste가 차단된다.
+3. 화면 표시값이 TD-004 ClosedXML 결과와 일치한다.
+4. number, percentage, date, blank, negative value, Korean text와 multi-cell paste의 typed value 변환을 검증한다.
+5. active sheet 최초 표시 시간, scroll·selection 응답성, input-to-authoritative-result latency와 browser peak memory를 측정한다.
+6. stale version, 중복 request, out-of-order response, 계산 실패와 session 복구에서 값이 중복 적용되거나 유실되지 않는다.
+7. Chrome과 Edge에서 keyboard, IME 한글 입력, clipboard, zoom과 accessibility 기본 동작을 로컬 서버 화면으로 검증한다.
 
 ---
 
@@ -1594,7 +1592,7 @@ ReportWorkflow
 | `pdf-analysis` | Python PDF worker | PyMuPDF 분석, Template IR 입력 생성 |
 | `pdf-render` | Python PDF worker | pikepdf/qpdf 수정, PDFium 렌더링 |
 | `pdf-visual-verify` | Python CV worker | OpenCV 마스크 비교 |
-| `excel-calc` | .NET worker | Aspose.Cells 로드·재계산·저장 |
+| `excel-calc` | .NET worker | ClosedXML 로드·재계산·저장 |
 | `research-network` | network 허용 worker | DART·IR·KRX·ECOS·FnGuide 컨센서스·뉴스 수집 |
 | `evidence-validation` | 검증 worker | 원문 재확인, 정규화와 Evidence 생성 |
 | `llm` | agent worker | PydanticAI agent 실행 |
@@ -1604,7 +1602,7 @@ ReportWorkflow
 
 ### 워커 격리와 자원 정책
 
-- API·web process 안에서 PDF parser, PDFium, OpenCV, Aspose.Cells와 업로드 폰트를 직접 실행하지 않는다.
+- API·web process 안에서 PDF parser, PDFium, OpenCV, ClosedXML과 업로드 폰트를 직접 실행하지 않는다.
 - activity worker에 PostgreSQL credential을 제공하지 않는다. domain과 projection 변경은 service-authenticated Internal Worker API만 수행한다.
 - 워커 container는 non-root, read-only root filesystem, privilege escalation 금지, capability 제거와 runtime default seccomp를 기본으로 한다.
 - host path와 Docker socket을 mount하지 않는다.
@@ -1613,7 +1611,7 @@ ReportWorkflow
 - 파일 처리 워커는 기본적으로 외부 network egress를 차단한다.
 - `research-network`만 allowlist와 egress proxy를 통해 외부에 접근한다. private·loopback·link-local 주소와 cloud metadata endpoint는 차단한다.
 - CPU, memory, process 수, 열린 파일 수와 임시 disk quota를 worker 종류별로 제한한다.
-- PDFium document handle, Aspose workbook instance와 임시 파일을 작업 간 공유하지 않는다.
+- PDFium document handle, ClosedXML workbook instance와 임시 파일을 작업 간 공유하지 않는다.
 - 서로 다른 PDF 페이지는 별도 process에서 병렬화할 수 있지만 같은 handle을 여러 thread가 공유하지 않는다.
 - memory limit 초과 또는 비정상 종료는 해당 작업 실패로 격리하고 worker node 전체 장애로 확산시키지 않는다.
 
@@ -1962,7 +1960,7 @@ FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산�
 
 ### 스냅샷과 기준시점
 
-성공한 HTTP 응답의 원본 bytes를 불변 artifact로 저장하고 다음 metadata를 분리한다.
+성공한 HTTP 응답의 원본 body bytes를 불변 artifact로 저장한다. 응답 header는 `Date`, `ETag`, `Last-Modified`, `Content-Type`, `Cache-Control`, `Expires`, `Vary` allowlist만 원형 보존하고 credential·cookie 관련 header는 저장하지 않는다. 다음 metadata를 분리한다.
 
 - provider, endpoint와 canonical parameter hash
 - `retrieved_at`, provider가 명시한 `observed_at`, `observed_at_precision`
@@ -1983,11 +1981,13 @@ FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산�
 
 ### 호출·장애 정책
 
-- 호스트별 동시 요청 1개와 최소 요청 간격을 적용한다.
-- `429`, `5xx`, timeout만 제한 횟수로 exponential backoff와 jitter를 적용한다.
+- 호스트별 동시 요청 1개와 최소 요청 간격은 단일 process가 아니라 모든 research worker가 공유하는 분산 semaphore와 rate limiter로 강제한다. 최소 간격과 일일 호출 한도는 FnGuide 허가 문서의 조건을 server configuration으로 반영한다.
+- `429`, `5xx`, timeout만 제한 횟수로 exponential backoff와 jitter를 적용한다. `Retry-After`가 있으면 허용된 최대 대기시간 안에서 우선 적용하고, 한도를 넘으면 재시도하지 않고 `PROVIDER_UNAVAILABLE`로 종료한다.
 - 일반 `4xx`, Content-Type 변경, JSON schema·metric header 불일치는 재시도하지 않고 `SOURCE_FORMAT_CHANGED` 또는 `PROVIDER_UNAVAILABLE`로 종료한다.
 - HTTPS와 승인 host만 허용하고 다른 host redirect를 거부한다.
 - 성공 응답만 캐시한다. cache key에는 endpoint, 전체 canonical parameter와 collector version을 포함한다.
+- FnGuide 허가 문서의 자동수집, 캐시, 원본 저장, 보존기간, 정규화·파생 계산, 고객 보고서 표시·배포 범위, 호출 한도와 허가 철회일을 versioned provider policy로 등록한다. 실행과 snapshot에는 적용한 `provider_policy_version`과 retention class를 기록한다.
+- 세전이익과 추정기관수는 승인된 추가 공급 경로가 없으면 `미확보`로 유지한다. 관련 값, 비교와 품질 설명을 보고서에 추정하거나 대체 생성하지 않는다.
 - 마지막 정상 snapshot 사용 시 snapshot 시각과 stale 정도를 표시하고 사용자 확인을 받는다.
 - snapshot이 없으면 사용자 Excel·PDF 업로드를 요청하고, 그것도 없으면 실제 실적 분석은 계속하되 컨센서스 비교만 제외한다.
 
@@ -2017,9 +2017,9 @@ FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산�
 
 ### 확정 전환 조건
 
-1. FnGuide 허가 문서의 자동수집·저장·가공·보고서 표시 범위와 호출 한도를 운영 policy에 등록한다.
+1. FnGuide 허가 문서의 자동수집·캐시·원본 저장·보존기간·가공·고객 보고서 표시·배포 범위, 호출 한도와 철회 조건을 versioned provider policy에 등록한다.
 2. 원본 response artifact, `consensus_snapshot`과 정규화 값을 PostgreSQL·객체 저장소에 append-only로 저장한다.
-3. Temporal activity에 provider별 concurrency, timeout, retry, circuit breaker와 cache를 연결한다.
+3. Temporal activity에 모든 worker가 공유하는 provider별 분산 concurrency·rate limit, timeout, `Retry-After` 기반 retry, circuit breaker와 cache를 연결한다.
 4. 연결·별도 기업, 컨센서스 미제공 기업, 0·null 값, provider 정정과 endpoint 형식 변경 회귀검사를 통과한다.
 5. 세전이익·추정기관수가 필요한 템플릿에 대해 추가 공급 경로 또는 표시 제외 규칙을 승인한다.
 6. 보고서 `cutoff_at` 선택, date-only look-ahead 차단, stale 사용자 승인과 report snapshot 고정을 통합 테스트한다.
@@ -2086,9 +2086,9 @@ transport를 바꾸더라도 job ID, `operationStatus`, phase, progress, heartbe
 
 ### 상태
 
-`일단 확정`
+`확정`
 
-Agent framework와 provider는 확정했다. Agent별 정확한 GPT model ID, model settings와 비용 한도는 평가 후 확정한다.
+Agent framework와 provider를 확정한다. Agent별 model ID, reasoning, token·timeout·비용·rate limit 기본값은 TD-023을 따른다.
 
 ### 결정
 
@@ -2099,6 +2099,7 @@ REFLO의 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft A
 3. model ID는 Agent별 server configuration으로 주입한다. 화면 코드와 prompt에 특정 model 문자열을 직접 고정하지 않는다.
 4. Agent 결과는 가능한 경우 Pydantic `output_type`으로 구조화하고 저장 전에 schema·도메인 검증을 통과시킨다.
 5. prompt, output schema, tool과 model configuration은 version을 저장해 같은 산출물의 생성 조건을 추적할 수 있게 한다.
+   Hypothesis Agent의 canonical prompt와 입출력 계약은 [`agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](./agents/HYPOTHESIS_AGENT_PROMPT_v2.md)를 단일 원본으로 사용하고 `prompt_version = hypothesis-v2`를 기록한다.
 6. output validation retry, HTTP retry와 `UsageLimits`는 서로 분리해 제한한다. 무제한 재시도와 무제한 tool call을 허용하지 않는다.
 7. 모델의 원시 reasoning은 사용자에게 표시하거나 권위 Evidence로 저장하지 않는다. 검증된 결과, 사용 모델·설정 version, token usage, latency와 사용자용 오류를 실행 기록에 남긴다.
 8. Agent 출력은 제안 또는 구조화 초안이며 Evidence, 권위 계산, 사용자 승인과 server validation을 우회할 수 없다.
@@ -2183,6 +2184,278 @@ Auth.js·Better Auth 같은 상위 인증 framework의 기본 session table을 �
 
 ---
 
+## TD-019. 파일 입력 운영 정책
+
+### 상태
+
+`확정`
+
+### 입력 한도
+
+MVP 기본값은 server configuration으로 관리하고 upload session 응답의 `maxSizeBytes`와 화면 helper에 그대로 반영한다.
+
+| 입력 | 최대 크기 | 구조 한도 | upload session |
+|---|---:|---:|---:|
+| 이전 보고서 PDF | 50 MiB | 100 page | 15분 |
+| 분석 workbook `.xlsx` | 100 MiB | 50 sheet, 전체 used-range cell 2,000,000개, sheet당 500,000개 | 15분 |
+| 조사 자료 PDF | 50 MiB | 100 page | 15분 |
+| 조사 자료 `.xlsx` | 100 MiB | 분석 workbook과 같은 cell 한도 | 15분 |
+| 조사 자료 UTF-8 CSV | 10 MiB | 500,000 row | 15분 |
+| 조사 자료 UTF-8 TXT | 5 MiB | 200,000 line | 15분 |
+
+한도를 넘은 파일은 parser에 전달하지 않고 `FILE_TOO_LARGE` 또는 `FILE_STRUCTURE_LIMIT_EXCEEDED`로 차단한다. used-range가 서식만 적용된 빈 tail 때문에 비정상적으로 커도 자동 축소하지 않고 사용자에게 workbook 정리를 요청한다.
+
+조사 plan 하나에는 사용자 파일 최대 10개와 공개 URL 최대 20개를 연결할 수 있다. DOCX·PPTX와 legacy Office 형식은 MVP에서 받지 않는다.
+
+### 악성 검사·quarantine
+
+1. 모든 직접 업로드는 quarantine object에 저장한다.
+2. MIME, magic byte, container 구조와 SHA-256을 먼저 검사한다.
+3. 악성 검사는 `ClamAV 1.4.5 LTS`를 격리 scan worker에서 실행한다. production image는 version tag와 image digest를 함께 고정한다.
+4. signature는 `freshclam` 또는 내부 mirror로 갱신한다. 마지막 성공 갱신이 24시간을 넘으면 새 upload acceptance를 차단한다.
+5. 불완전 upload는 24시간, 악성·형식·구조 검사 실패 object는 7일 뒤 삭제한다. 보안 사고 조사 hold가 있으면 별도 보존한다.
+6. accepted 원본은 project 보존정책을 따른다. quarantine object를 accepted key로 rename하지 않고 새 immutable artifact로 commit한다.
+
+### 지원·거절 범위
+
+- PDF는 암호화되지 않은 단일 일반 PDF만 받는다.
+- 전자서명 PDF는 원본 보존만으로 해결되지 않는다. 콘텐츠 변경이 서명을 무효화하므로 활성 template 입력으로 거절한다.
+- PDF portfolio, embedded file, XFA, 실행 action, multimedia와 지원하지 않는 annotation subtype은 거절한다.
+- Excel은 `.xlsx`만 받는다. 암호화 workbook, `.xlsm`, `.xls`, external link, DDE와 macro 입력은 MVP에서 거절한다.
+- 지원하지 않는 기능을 제거하거나 평탄화해 통과시키지 않는다.
+
+### 매핑 보정·취소
+
+- 자동 매핑이 실패한 slot은 서버가 검증한 workbook range 후보만 사용자에게 보여준다.
+- 사용자는 PDF slot 하나와 후보 range 하나를 연결하고 preview를 확인할 수 있다. 임의 formula, 임의 sheet 구조 변경과 raw address 문자열 저장은 허용하지 않는다.
+- 유효 후보가 없으면 파일 교체 또는 운영자 지원으로 보낸다. 필수 slot은 미매핑 상태로 다음 단계에 진행할 수 없다.
+- queued·running inspection은 사용자가 취소할 수 있다. 취소는 현재 job을 terminal `cancelled`로 만들고 temporary output을 게시하지 않는다.
+- 취소한 job 자체를 재개하지 않는다. 같은 accepted file version으로 새 idempotency key를 사용해 새 inspection을 시작한다. 완료·commit된 inspection은 취소할 수 없다.
+
+### 검증 기준
+
+- 한도 경계값, MIME 위장, zip bomb, macro, embedded file, 암호화와 ClamAV EICAR fixture를 자동 검사한다.
+- TD-011 제한시간과 resource quota 안에서 기준 PDF·XLSX와 최대 한도 stress fixture를 처리한다.
+- 취소 직후 worker 종료, temporary artifact cleanup, 동일 file version 재실행과 중복 commit 방지를 검증한다.
+
+---
+
+## TD-020. Validation 충분성·사용자 결정
+
+### 상태
+
+`확정`
+
+### 질문 충분성
+
+Validation service가 다음 deterministic rule version으로 질문별 상태를 계산한다. Agent가 상태를 임의 확정하지 않는다.
+
+| 상태 | 판정 |
+|---|---|
+| `sufficient` | 계획의 필수 지표·기간·비교 기준이 모두 검증 Evidence로 covered되고 핵심 숫자는 권위 원천 또는 독립 재계산을 통과하며 unresolved conflict·stale·반려 필수 결과가 없음 |
+| `qualified` | 최소 한 개 검증 Evidence와 핵심 지표 coverage는 있으나 단일 원천, 간접 원천 또는 비핵심 보조 지표 누락 중 하나가 있음. unresolved conflict·핵심 숫자 실패는 없음 |
+| `insufficient` | 필수 지표·기간·scope 누락, 검증 Evidence 부재, 핵심 숫자 실패, unresolved conflict, stale 또는 반려로 필수 coverage가 깨짐 |
+| `reinvestigating` | 대체 자료 수집·재검증 job이 active |
+
+`sufficient`는 별도 override가 없다. `qualified`만 사용자가 `ACCEPT_QUALIFIED` decision과 5~500자 이유를 남겨 다음 단계에 사용할 수 있다. `insufficient`와 `reinvestigating`은 사용자 확인으로 우회할 수 없다.
+
+### decision 사유
+
+- 반려, 반려 철회, 재조사, conflict source 선택과 조건부 근거 확인의 사유는 trim 후 5~500자다.
+- client와 OpenAPI, application service, PostgreSQL CHECK가 같은 범위를 사용한다.
+- 상태 변경은 append-only decision이다. 이전 decision row를 수정·삭제하지 않는다.
+
+### 하위 무효화 문구
+
+승인 뒤 decision을 변경해 downstream 결과가 존재하면 다음 공통 확인문을 사용한다.
+
+> 이 결정을 변경하면 밸류에이션과 보고서가 재검증 필요 상태로 전환됩니다. 기존 승인본과 내보낸 파일은 보존됩니다.
+
+사용자가 확인한 뒤에만 새 validation version을 만들고 영향받는 최신 downstream projection을 `revalidation_required`로 바꾼다.
+
+---
+
+## TD-021. Valuation 수치·React workbook grid 통합
+
+### 상태
+
+`확정`
+
+### package·license
+
+| 역할 | package | version |
+|---|---|---:|
+| workbook UI | REFLO React workbook grid | repository version |
+| server Decimal | `decimal.js` | `10.6.0` |
+| 권위 Excel 계산 | `ClosedXML` | `0.105.0` |
+
+- grid는 validation·valuation route에서만 load하며 XLSX parser와 formula engine을 client bundle에 포함하지 않는다.
+- workbook은 권한 검사된 same-origin API가 반환한 versioned JSON read model로 불러온다. client JSON을 권위 저장 format으로 사용하지 않는다.
+- localhost, staging과 production에서 같은 AGPL-3.0 소스를 사용하며 별도 distribution key는 없다.
+- 지원 browser는 desktop Chrome·Edge·Firefox 최신 2개 major와 Safari 최신 major다. CI는 Chromium을 기본 회귀 대상으로 사용하고 release candidate에서 Edge·Firefox·Safari manual smoke test를 수행한다.
+
+### 입력·Decimal·반올림
+
+- Target PER 직접 입력은 `0.1` 이상 `100.0` 이하, 소수 첫째 자리까지 허용한다.
+- 목표주가 직접 입력은 `1`원 이상 `1,000,000,000`원 이하의 정수다. 서버가 역산 PER을 계산하고 사용자가 그 값을 다시 승인한다.
+- binary float 계산을 금지한다. Next.js application 계산은 `decimal.js`, Excel 결과는 ClosedXML의 numeric 결과를 invariant decimal string으로 정규화해 사용한다.
+- workbook number format과 MappingSet `display.rounding`이 있으면 이를 우선한다.
+- 둘 다 없을 때 fallback은 `ROUND_HALF_UP`이다. 목표주가는 1,000원 단위, PER은 0.01배, 상승여력은 0.1% 단위로 표시한다.
+- 저장값은 반올림 전 decimal string이다. 표시 반올림값을 계산 입력으로 재사용하지 않는다.
+
+### 민감도·현재주가·계산 session
+
+- 민감도는 5×5다. EPS axis는 기준 EPS의 `-10%, -5%, 0%, +5%, +10%`, PER axis는 기준 PER의 `-2.0, -1.0, 0, +1.0, +2.0`배다.
+- PER axis가 `0.1` 미만이면 `0.1`로 clamp하고 중복 axis는 제거한다. 제거 후 행·열 수를 response에 그대로 반환한다.
+- 현재주가는 KRX의 기준일 종가 immutable snapshot이다. 기준일이 휴장일이면 직전 거래일 종가를 사용하고 실제 거래일을 표시한다.
+- MVP에서 사용자가 현재주가만 수동 갱신하지 않는다. 기준일 변경은 setup에서 새 version과 downstream 무효화를 만든다.
+- calculation session은 최근 성공 workbook checkpoint를 15분 idle 동안 유지하고 60분에 강제 종료한다. 종료 뒤에는 최신 immutable checkpoint에서 새 session을 만든다.
+
+### MVP 범위
+
+Valuation AI proposal은 MVP에서 제외한다. UI는 하드코딩 제안을 표시하지 않는다. 별도 Agent profile·schema·평가가 승인된 뒤 optional feature로 추가한다.
+
+### 반응형
+
+- 1024px 이상은 React workbook grid의 cell 직접 편집을 제공한다.
+- 640~1023px은 grid 선택과 별도 선택-cell 입력 panel을 함께 제공한다.
+- 640px 미만은 grid를 읽기 전용으로 유지하고 허용 cell을 순서형 입력 목록으로 제공한다.
+- 모든 폭에서 같은 server editable set과 ClosedXML 계산 계약을 사용한다.
+
+---
+
+## TD-022. Report 편집·미리보기·운영 정책
+
+### 상태
+
+`확정`
+
+### editor·저장
+
+| 역할 | package | version |
+|---|---|---:|
+| editor core | `@tiptap/core` | `3.29.0` |
+| React adapter | `@tiptap/react` | `3.29.0` |
+| 기본 extension 묶음 | `@tiptap/starter-kit` | `3.29.0` |
+
+- editor는 client-only이며 `immediatelyRender: false`로 초기화한다.
+- 허용 schema는 paragraph, text, hardBreak, bulletList, orderedList, listItem과 bold·italic mark다. heading은 Template IR block type이 소유하므로 사용자가 임의 생성하지 않는다.
+- paste와 Agent output은 허용 schema로 sanitize한다. 임의 HTML, style, link, image node와 script는 버린다.
+- Tiptap JSON과 DOM은 권위 저장값이 아니다. adapter가 기존 `replace_text`·`replace_block_text` typed operation과 안정적 text offset으로 변환한다.
+- 서버 권위는 report block text, block revision과 typed operation log다. editor package를 바꿔도 wire contract는 유지한다.
+
+### PDF preview
+
+- browser viewer는 `pdfjs-dist@6.1.200`을 client-only로 사용한다.
+- PDF.js worker는 같은 package version으로 고정하고 `GlobalWorkerOptions.workerSrc`를 workbook과 무관한 전용 chunk로 설정한다.
+- 서버가 만든 PDF artifact만 viewer에 전달한다. URL은 same-origin, 짧은 만료, byte range와 project owner 검사를 지원한다.
+- canvas, text layer와 page coordinate transform을 함께 사용해 선택·검색·Evidence highlight를 지원한다.
+- page가 10개를 넘으면 viewport 기준 현재 page 앞뒤 2개만 render하고 나머지는 고정 크기 placeholder로 유지한다. thumbnail도 보이는 범위부터 lazy render한다.
+
+### edit lease
+
+- lease TTL은 120초다.
+- active editor는 30초마다 heartbeat를 보낸다. 성공 response가 lease를 다시 120초로 연장한다.
+- browser hidden 상태에서도 active editor heartbeat는 유지한다. offline이면 저장 성공을 표시하지 않는다.
+- server 시각이 `expiresAt` 이상일 때만 takeover를 허용한다. takeover는 원자적으로 기존 session을 `expired` 처리하고 새 session을 만든다.
+- 명시적 닫기·로그아웃은 lease를 즉시 반환한다. 평문 lease token은 저장하지 않는다.
+
+### 생성 mode·첨부
+
+- MVP는 승인된 outline에서 AI 초안을 생성하는 한 가지 mode만 제공한다. 빈 텍스트 영역 생성 mode는 제외한다.
+- 표 import는 UTF-8 CSV 최대 10 MiB 또는 `.xlsx` 최대 25 MiB다.
+- 차트·그림 import는 PNG·JPEG 최대 15 MiB, 최대 20 megapixel이다.
+- PDF import와 image OCR은 MVP에서 제외한다. image는 새 숫자의 Evidence가 아니라 사용자가 확인한 시각 자료로만 연결한다.
+- 모든 import는 TD-019 quarantine·ClamAV 검사를 통과해야 한다.
+
+### 보존
+
+| 대상 | 보존 |
+|---|---|
+| report version·승인 PDF·XLSX | project 수명 + 삭제 요청 뒤 30일 recovery window |
+| preview PDF·thumbnail·visual diff | 생성 후 30일 |
+| AI proposal raw diff | 생성 후 30일 |
+| 실패 export·실패 import artifact | 7일 |
+| 불완전 upload | 24시간 |
+
+legal hold와 보안 사고 hold가 있으면 자동 삭제보다 우선한다.
+
+### 확인 가능한 warning
+
+사용자가 확인만으로 통과할 수 있는 code는 다음 네 개다.
+
+- `FONT_SUBSTITUTED_WITHIN_METRIC_TOLERANCE`
+- `LOW_RESOLUTION_SOURCE_IMAGE`
+- `OPTIONAL_SOURCE_LINK_UNAVAILABLE`
+- `MINOR_DYNAMIC_PIXEL_DIFF`
+
+고정·보호 영역 변경, overflow, 숫자·Evidence·rating·가정 불일치, stale input과 font metric 허용치 초과는 확인으로 우회할 수 없는 blocking issue다.
+
+### 파일명
+
+최종 파일명은 다음 형식이다.
+
+```text
+{기업명}_{종목코드}_{YYYY}Q{분기}_실적Review_v{reportVersion}_{YYYYMMDD}.{pdf|xlsx}
+```
+
+금지 문자는 `_`로 바꾸고 연속 `_`는 하나로 합친다. 확장자를 포함해 120자 이내로 자르고 같은 이름이 충돌하면 report version ID의 앞 8자를 붙인다. 조직별 임의 파일명 template은 MVP에서 제공하지 않는다.
+
+---
+
+## TD-023. Agent 실행 profile
+
+### 상태
+
+`확정`
+
+### package·API
+
+| 역할 | package·API | version·값 |
+|---|---|---|
+| Agent framework | `pydantic-ai` | `2.17.0` |
+| OpenAI Python SDK | `openai` | `2.48.0` |
+| OpenAI API | Responses API | `v1` |
+| 기본 model | OpenAI GPT | `gpt-5.6-terra` |
+
+공식 model guidance가 intelligence와 비용 균형 용도로 권고하는 `gpt-5.6-terra`를 기본값으로 사용한다. model alias를 임의의 `latest` 문자열로 바꾸지 않는다. 각 실행은 `agent_profile_version`, prompt version, output schema version, provider가 반환한 model ID와 token usage를 저장한다.
+
+### 초기 profile
+
+| Agent | reasoning | input token 상한 | output token 상한 | timeout | 실행당 비용 상한 |
+|---|---|---:|---:|---:|---:|
+| Hypothesis | `medium` | 50,000 | 8,000 | 120초 | USD 1 |
+| Research·Validation 보조 추론 | `medium` | 120,000 | 16,000 | 300초 | USD 4 |
+| Report Outline·Draft | `medium` | 200,000 | 32,000 | 300초 | USD 8 |
+| Report text proposal | `low` | 40,000 | 8,000 | 120초 | USD 1 |
+
+비용 상한은 server가 요청 전 예상치와 실행 중 usage를 함께 검사한다. 상한 초과 결과를 부분 성공으로 게시하지 않는다. 사용자당 Agent mutation은 시간당 20회, report text proposal은 10분당 10회, 프로젝트당 active Agent job은 2개로 제한한다.
+
+### raw prompt·응답 보존
+
+- 원시 prompt·응답은 암호화 artifact로 30일 보존한다.
+- project owner와 명시적으로 권한을 받은 운영자만 감사 사유를 남기고 열람할 수 있다.
+- application log에는 원문, Evidence quote, 사용자 업로드 내용과 provider response body를 남기지 않는다.
+- model·prompt·schema·usage·오류 code·hash만 포함한 redacted trace는 180일 보존한다.
+- 30일이 지나면 raw artifact를 삭제해도 승인 output, Pydantic structured result, provenance와 hash는 유지한다.
+- OpenAI API 전송 전 secret, session token, 불필요한 개인정보와 다른 프로젝트 자료를 제거한다.
+
+### 변경 gate
+
+model, reasoning, prompt 또는 schema 변경은 새 `agent_profile_version`과 고정 fixture 평가를 만든다. 구조 validation, prompt injection, 숫자 보존, 지지·반박 균형, 비용·timeout 회귀를 통과한 profile만 활성화한다.
+
+### 참고
+
+- OpenAI model guidance: <https://developers.openai.com/api/docs/guides/latest-model>
+- GPT-5.6 Terra: <https://developers.openai.com/api/docs/models/gpt-5.6-terra>
+- ClosedXML: <https://github.com/ClosedXML/ClosedXML>
+- GNU AGPL v3.0: <https://www.gnu.org/licenses/agpl-3.0.html>
+- Tiptap React: <https://tiptap.dev/docs/editor/getting-started/install/react>
+- PDF.js: <https://mozilla.github.io/pdf.js/>
+- ClamAV LTS: <https://docs.clamav.net/faq/faq-eol.html>
+
+---
+
 ## 3. 변경 이력
 
 | 날짜 | 변경 내용 |
@@ -2191,12 +2464,12 @@ Auth.js·Better Auth 같은 상위 인증 framework의 기본 session table을 �
 | 2026-07-22 | TD-002 확정. 원본 폰트가 없어도 대체 폰트로 전체 초안을 생성하고 경고하며, 폰트 업로드는 선택 절차로 제공 |
 | 2026-07-22 | TD-002 보완. 내장 폰트, 관리형 저장소, 고객 등록 폰트, 대체 폰트 순서와 임의 웹 다운로드 금지 정책 명시 |
 | 2026-07-22 | TD-003 확정. 노란색 배경과 파란색 글씨 조합을 Excel 사용자 직접 입력 셀로 판정 |
-| 2026-07-22 | TD-004 일단 확정. Aspose.Cells for .NET 독립 계산 서비스를 Excel 주 재계산 엔진으로 채택하고 표본 검증 결과 기록 |
+| 2026-07-22 | TD-004 당시 결정(후속 개정으로 폐기). Aspose.Cells for .NET 독립 계산 서비스를 Excel 주 재계산 엔진으로 채택하고 표본 검증 결과 기록 |
 | 2026-07-22 | TD-005 확정. 의미 슬롯 기반 Scalar·Keyed Table·Chart-series PDF↔Excel 매핑, 구조 해시, MappingSet과 `_REFLO_BRIDGE` 정책 명시 |
 | 2026-07-22 | TD-006 확정. Page·Block·Slot·Physical Object 계층, 원본 PDF 좌표·source locator·patch strategy·validation mask를 포함하는 버전형 Template IR 채택 |
 | 2026-07-23 | TD-007 일단 확정. 리노공업 PDF·Excel 표본 구조 분석을 바탕으로 PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정·최종 저장 엔진 조합 채택 |
 | 2026-07-23 | TD-008 일단 확정. PDFium 288 DPI·불투명 sRGB 렌더링과 OpenCV validation mask별 RGB 절대차·연결요소·좌표 edge 검사를 채택하고 SSIM은 진단용으로 제한 |
-| 2026-07-23 | TD-010 일단 확정. SpreadJS React를 웹 Excel 표시·입력 UI로 채택하고 Aspose.Cells를 유일한 서버 권위 계산·검증·최종 XLSX 저장 엔진으로 유지 |
+| 2026-07-23 | TD-010 당시 결정(후속 개정으로 폐기). SpreadJS React를 웹 Excel 표시·입력 UI로 채택하고 Aspose.Cells를 유일한 서버 권위 계산·검증·최종 XLSX 저장 엔진으로 유지 |
 | 2026-07-23 | TD-011 일단 확정. S3 호환 불변 객체 저장소, PostgreSQL 파일 메타데이터, Temporal workflow와 사전 가동 격리 워커를 채택하고 queue·timeout·retry·취소 정책 명시 |
 | 2026-07-23 | TD-012 일단 확정. 원문·대형 파생물은 객체 저장소, Evidence·locator·validation·provenance는 PostgreSQL에 append-only로 보존하는 구조 채택 |
 | 2026-07-23 | TD-013 일단 확정. FnGuide JSON 공급자 격리, 명시적 연결·별도 기준, 불변 원본·정규화 snapshot, look-ahead 방지와 보고서 snapshot 고정 규칙을 채택하고 리노공업 live smoke test 통과 |
@@ -2205,3 +2478,6 @@ Auth.js·Better Auth 같은 상위 인증 framework의 기본 session table을 �
 | 2026-07-24 | TD-016 확정. 3초 visibility-aware polling과 terminal stop·error backoff를 MVP 상태 전달 방식으로 채택 |
 | 2026-07-24 | TD-017 일단 확정. PydanticAI와 OpenAI GPT provider 조합을 채택하고 정확한 model·비용 한도는 평가 후 고정 |
 | 2026-07-25 | TD-018 확정. `openid-client@6.8.4`, `pg@8.22.0`, `node-pg-migrate@9.0.0`, `@types/pg@8.20.0`을 채택하고 package lock에 고정 |
+| 2026-07-25 | TD-019~TD-023 당시 확정. 파일 운영 한도·검사, Validation 충분성, Valuation 수치·SpreadJS, Report editor·viewer·lease, Agent 실행 profile의 구현 기본값을 고정했으며 TD-021의 UI 기술은 후속 개정으로 교체 |
+| 2026-07-25 | AGPL-3.0 공개 방침 확정. PyMuPDF/MuPDF를 AGPL 조건으로 유지하고 상용 라이선스 구매 gate 제거 |
+| 2026-07-25 | TD-004·TD-010·TD-021 개정. Aspose.Cells·SpreadJS를 ClosedXML 0.105.0·React workbook grid로 교체하고 ISC fixture 및 Excel 16.0 교차검증 결과 기록 |

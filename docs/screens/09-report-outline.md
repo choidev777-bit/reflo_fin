@@ -20,7 +20,7 @@
 | 현재 실제 화면 파일 | `source-react/app/page.tsx`, `source-react/app/process.tsx`, `source-react/app/globals.css` |
 | 현재 주요 컴포넌트 | `Home`, `PlannedProcessPage`, `FinalDecision`, `ScreenHead`, `EvidenceDrawer` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 5장, 14장, 15장, 16장, 19장 |
-| 관련 기술 결정 | TD-001, TD-002, TD-005~TD-008, TD-011, TD-012, TD-014~TD-017 |
+| 관련 기술 결정 | TD-001, TD-002, TD-005~TD-008, TD-011, TD-012, TD-014~TD-017, TD-022, TD-023 |
 | 구현 상태 | route만 분리되어 있고 화면·데이터·저장은 공용 Client Component의 하드코딩 프로토타입 |
 
 ### 1.2 판단 우선순위
@@ -854,12 +854,12 @@ PostgreSQL에 최소 다음 논리 entity를 저장한다.
 | Template IR | 페이지·block·slot·고정 구조 권위값 | 필수 |
 | MappingSet | 표·차트·Excel 연결 권위값 | 필수 |
 | Evidence 저장 구조 | 원문·locator·provenance | 필수 |
-| SpreadJS | 없음 | 전체 workbook UI를 이 화면에 로드하지 않음 |
-| Aspose.Cells | 직접 없음 | 확정 계산 결과를 서버가 읽어 제공 |
+| React workbook grid | 없음 | 전체 workbook UI를 이 화면에 로드하지 않음 |
+| ClosedXML | 직접 없음 | 확정 계산 결과를 서버가 읽어 제공 |
 | PyMuPDF·pikepdf·PDFium·OpenCV | 직접 없음 | 워커의 preview·초안·검증 단계에서만 실행 |
 | PDF worker | 직접 호출 금지 | API·Temporal 경계로만 실행 |
 
-브라우저 bundle에 SpreadJS, Aspose.Cells, PDF parser, renderer, OpenCV 또는 Agent runtime을 포함하지 않는다.
+브라우저 bundle에 React workbook grid, ClosedXML, PDF parser, renderer, OpenCV 또는 Agent runtime을 포함하지 않는다.
 
 ## 24. 반응형·접근성 계약
 
@@ -924,16 +924,16 @@ PostgreSQL에 최소 다음 논리 entity를 저장한다.
 - 고정 페이지 표시
 - 반박 Evidence를 포함한 배치 확인
 
-### 26.2 별도 제품·기술 결정이 필요한 항목
+### 26.2 확정된 범위와 구현 산출물
 
 1. Report Outline Agent의 canonical prompt와 Pydantic output schema
 2. 제목·본문 방향의 Template IR slot별 최대 글자 수 계산 방식
 3. outline 구성 미리보기 artifact 형식과 갱신 SLA
-4. 빈 텍스트 구조 생성 mode를 MVP에 추가할지 여부
-5. optional·repeatable block과 사용자 구조 변경을 향후 지원할지 여부
-6. 인증·세션·CSRF 구현 기술
+4. 빈 텍스트 구조 생성 mode는 TD-022에 따라 MVP에서 제외
+5. optional·repeatable block과 사용자 구조 변경은 MVP에서 제외
+6. 인증·세션·CSRF는 TD-014·TD-018 적용
 
-초안 생성 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 항목이 미확정이어도 페이지 수·구조 불변, 검증 데이터만 사용, page 확인·전체 승인, version 고정과 초안 생성 계약은 유지한다.
+1~3은 제품 결정을 기다리는 항목이 아니라 구현 시 versioned prompt·schema·renderer 설정으로 납품할 산출물이다. Agent runtime은 TD-023, 초안 생성 진행 상태는 TD-016의 polling을 적용한다. 페이지 수·구조 불변, 검증 데이터만 사용, page 확인·전체 승인, version 고정과 초안 생성 계약은 유지한다.
 
 ## 27. 구현 순서
 
@@ -975,7 +975,7 @@ PostgreSQL에 최소 다음 논리 entity를 저장한다.
 - [ ] 중복 승인 클릭이 하나의 ReportWorkflow만 생성한다.
 - [ ] 초안 생성은 화면을 벗어나도 계속되고 프로젝트 목록에서 상태를 확인할 수 있다.
 - [ ] 초안 생성 완료 후 실제 report route를 열 수 있다.
-- [ ] 화면에서 SpreadJS, Aspose.Cells, PDF parser와 Agent runtime을 직접 로드하지 않는다.
+- [ ] 화면에서 React workbook grid, ClosedXML, PDF parser와 Agent runtime을 직접 로드하지 않는다.
 - [ ] keyboard만으로 아코디언, 입력, 원문 drawer, 페이지 확인과 전체 승인을 수행할 수 있다.
 - [ ] desktop·tablet·mobile에서 내용이 잘리지 않고 최소 target 크기를 유지한다.
 

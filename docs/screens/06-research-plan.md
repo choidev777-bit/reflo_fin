@@ -24,7 +24,7 @@
 | 현재 실제 UI 위치 | `source-react/app/process.tsx`의 `ResearchPlan`, `PlannedProcessPage` |
 | 현재 주요 스타일 | `source-react/app/globals.css`의 `.rf-purpose-*`, `.rf-plan-*`, `.rf-source-*`, `.rf-dialog-*` |
 | 기준 요구사항 | 서비스 동작 명세 2장, 3장, 4장, 5장, 11장, 16장, 17장, 19장 |
-| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-017 |
+| 관련 기술 결정 | TD-003, TD-004, TD-005, TD-010~TD-019, TD-023 |
 | 구현 상태 | 하드코딩 plan과 브라우저 메모리 상태만 존재, 실제 저장·업로드·수집·작업 API 미구현 |
 
 ### 6.2 화면 목적과 책임
@@ -52,7 +52,6 @@
 - STEP 02의 PDF·Excel 적합성 검사가 통과했다.
 - 사용할 workbook version과 구조 hash가 유효하다.
 - STEP 03의 조사 질문 3~5개가 사용자 승인 상태다.
-- 승인 질문 중 반증 질문이 최소 1개 존재한다.
 
 | 진입 상황 | 처리 |
 |---|---|
@@ -194,8 +193,9 @@ route 진입
 |---|---|---|
 | 순번 | 현재 표시 순서 | `01`부터 2자리, question ID로 사용하지 않음 |
 | 질문 | 승인된 question text | 이 화면에서 직접 편집하지 않음 |
-| 반증 여부 | `falsificationQuestion` | 필요한 경우 `반증 질문` metadata로 표시 |
-| 확인 대상 | metrics·events·statements | 추상 질문이 아닌 관찰 가능한 항목 |
+| 목적 | `purpose` | 질문이 확인하는 하위 주장 |
+| 확인 대상 | `metrics`·`period`·`comparison` | 추상 질문이 아닌 관찰 가능한 지표·기간·비교 기준 |
+| 제안 출처 | `suggestedSourceTypes` | Agent 초기 제안이며 최종 source binding이 아님 |
 | 출처 | 질문별 source bindings | 이름만이 아니라 source ID와 대상 기업·자료 범위 저장 |
 | 수집 방식 | `code`, `research_agent`, `code_then_agent` | 사용자에게 이해 가능한 `코드 수집`, `AI 해석`, `코드 수집 후 AI 해석`으로 표시 |
 | 예상 결과 | `number`, `table`, `statement`, `event`, `comparison` | 복수 선택 가능 |
@@ -206,7 +206,6 @@ route 진입
 
 - checkbox는 질문 card 전체 label 안에서 44px hit area를 유지한다.
 - 포함 질문은 최소 3개, 최대 5개여야 한다.
-- 포함 질문 중 반증 질문이 최소 1개여야 한다.
 - 질문을 제외해 위 조건이 깨지면 즉시 되돌리거나 해당 card 아래에 오류를 표시하고 승인 버튼을 비활성화한다.
 - 질문 자체의 수정·추가·삭제는 STEP 03으로 이동해 새 question version을 승인해야 한다.
 - 포함하지 않은 질문은 삭제하지 않고 plan version에 `included=false`로 저장한다.
@@ -256,7 +255,7 @@ EXCEL 탭은 논리 제목 세 개를 임의로 보여주는 목록이 아니라
 - 연결·별도는 DART·IR·workbook 기준을 먼저 맞춘다. 기본값으로 연결을 강제하거나 값이 나오는 기준을 임의 선택하지 않는다.
 - source policy는 사용자가 승인할 수 있지만 권위 원천과 비교 원천의 역할을 뒤집을 수 없다.
 
-Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata만 표시하므로 SpreadJS를 로드하지 않는다.
+Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata만 표시하므로 React workbook grid를 로드하지 않는다.
 
 ### 6.11 출처·사용자 자료 계약
 
@@ -276,7 +275,7 @@ Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata�
 
 #### 사용자 파일
 
-- 화면은 서버가 응답한 MIME·확장자 allowlist만 파일 선택기에 반영한다. `.pdf`, `.xlsx`, `.csv`, `.docx`, `.pptx`, `.txt`는 초기 지원 후보이며, 실제 허용 목록은 6.28의 parser 지원 범위가 확정되기 전 client에 hardcode하지 않는다.
+- 화면은 서버가 응답한 MIME·확장자 allowlist만 파일 선택기에 반영한다. MVP allowlist는 PDF 최대 50 MiB, XLSX 최대 100 MiB, CSV 최대 10 MiB, UTF-8 TXT 최대 5 MiB다. DOCX·PPTX·legacy Office 형식은 제외한다.
 - legacy binary `.xls`, `.doc`, `.ppt`, 실행 파일, macro 실행과 암호화 파일은 parser·보안 정책이 명시적으로 허용하지 않는 한 제외한다.
 - 한 파일 최대 크기와 plan당 파일 수는 서버 정책을 응답으로 제공하고 client·server 양쪽에서 검사한다.
 - 파일명은 표시용이며 object key나 권한 판단에 사용하지 않는다.
@@ -366,7 +365,10 @@ Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata�
 | `questionId` | STEP 03에서 발급한 stable ID |
 | `order` | 승인 질문 순서 |
 | `text` | 승인 version의 질문 문구 |
-| `falsificationQuestion` | 반증 질문 여부 |
+| `purpose` | 질문이 확인하는 하위 주장 |
+| `metrics` | 수집할 관찰 지표 |
+| `period`, `comparison` | 대상 기간과 비교 기준 |
+| `suggestedSourceTypes` | Hypothesis Agent의 초기 source type 제안 |
 | `included` | 이번 plan 포함 여부 |
 | `collectionTargets` | 지표·사건·문장과 예상 결과 유형 |
 | `sourceBindingIds` | 질문별 최종 출처 binding |
@@ -419,15 +421,14 @@ module 전역 변수, `window` custom event와 hardcoded 배열을 권위 상태
 승인 dialog를 열기 전에 client에서 빠르게 검사하고, 승인·실행 API가 같은 규칙을 server에서 다시 검사한다.
 
 1. 포함 질문이 3~5개다.
-2. 포함 질문 중 반증 질문이 최소 1개다.
-3. 모든 포함 질문에 source가 하나 이상 있다.
-4. 각 질문의 지표·사건·문장과 예상 결과 유형이 비어 있지 않다.
-5. source별 수집 방식이 기준 문서의 code·Research Agent 역할과 일치한다.
-6. 모든 필수 Excel target이 포함되어 있다.
-7. Excel target의 metric, period, unit과 연결·별도 기준이 확정되어 있다.
-8. 미래 추정치와 수식 셀이 자동 입력 대상으로 포함되지 않았다.
-9. FnGuide는 actual source가 아닌 comparison source로만 연결된다.
-10. 모든 사용자 파일이 검사 통과 상태다.
+2. 모든 포함 질문에 source가 하나 이상 있다.
+3. 각 질문의 목적·지표·기간·비교 기준과 예상 결과 유형이 비어 있지 않다.
+4. source별 수집 방식이 기준 문서의 code·Research Agent 역할과 일치한다.
+5. 모든 필수 Excel target이 포함되어 있다.
+6. Excel target의 metric, period, unit과 연결·별도 기준이 확정되어 있다.
+7. 미래 추정치와 수식 셀이 자동 입력 대상으로 포함되지 않았다.
+8. FnGuide는 actual source가 아닌 comparison source로만 연결된다.
+9. 모든 사용자 파일이 검사 통과 상태다.
 11. 모든 URL이 허용 scheme·public network·길이·개수 규칙을 통과한다.
 12. plan이 참조하는 question set, workbook, MappingSet과 cutoff version이 최신이다.
 13. 이미 동일 plan version의 active job이 존재하지 않는다.
@@ -692,8 +693,8 @@ approved plan version은 최소 다음 참조를 고정한다.
 | Validation Agent·결정적 코드 | 후보 독립 검증 | 같은 workflow의 후속 phase, 검증 전 결과 노출 금지 |
 | FnGuideConsensusProvider | 승인 endpoint와 snapshot policy | 컨센서스 source가 포함된 경우 사용 |
 | TD-012 Evidence 저장 | source version·locator·provenance 생성 | 수집·검증 worker에서 사용 |
-| Aspose.Cells | STEP 02가 만든 workbook metadata의 권위 | 이 route 요청에서 workbook을 다시 열거나 재계산하지 않음 |
-| SpreadJS | 없음 | cell metadata 목록이므로 번들에 포함하지 않음 |
+| ClosedXML | STEP 02가 만든 workbook metadata의 권위 | 이 route 요청에서 workbook을 다시 열거나 재계산하지 않음 |
+| React workbook grid | 없음 | cell metadata 목록이므로 번들에 포함하지 않음 |
 | PDF patch·PDFium·OpenCV | 없음 | 보고서 생성·검증 단계 기술이므로 호출하지 않음 |
 
 무거운 worker와 provider SDK를 route client bundle에 포함하지 않는다.
@@ -802,10 +803,10 @@ approved plan version은 최소 다음 참조를 고정한다.
 - [ ] 로그인 사용자는 본인 프로젝트의 plan만 조회·수정·실행할 수 있다.
 - [ ] 선행 단계가 미완료이거나 무효면 올바른 canonical route 또는 복구 안내를 제공한다.
 - [ ] HYPOTHESIS와 EXCEL 탭의 순서·시각 구조·keyboard 동작이 유지된다.
-- [ ] 승인 질문 3~5개와 반증 질문 여부가 실제 question set version에서 표시된다.
+- [ ] 승인 질문 3~5개와 목적·지표·기간·비교 기준이 실제 question set version에서 표시된다.
 - [ ] 각 포함 질문에 확인 대상, 출처, 수집 방식과 예상 결과 유형이 표시된다.
 - [ ] 상단 공용 출처 변경이 선택 질문에 bulk 적용되고 질문별 최종 source set이 별도로 저장된다.
-- [ ] 포함 질문은 3~5개이며 반증 질문 최소 1개와 source 최소 1개 규칙을 지킨다.
+- [ ] 포함 질문은 3~5개이며 질문마다 source 최소 1개 규칙을 지킨다.
 - [ ] Excel 탭이 실제 sheet·cell·metric·period·unit·scope를 표시한다.
 - [ ] 미래 추정치·수식·외부 link 셀을 자동 입력 대상으로 포함하지 않는다.
 - [ ] 필수 Excel target은 제외할 수 없고 optional target만 명시적으로 변경할 수 있다.
@@ -822,7 +823,7 @@ approved plan version은 최소 다음 참조를 고정한다.
 - [ ] queued·running·succeeded 상태에서 STEP 05의 적절한 화면으로 이동한다.
 - [ ] upstream version 변경 시 기존 결과를 자동 변경하지 않고 재검증 필요 상태를 표시한다.
 - [ ] mobile, keyboard, screen reader와 reduced motion 환경에서 핵심 동작이 가능하다.
-- [ ] 이 route bundle에 SpreadJS, Aspose.Cells, PDF patch·PDFium·OpenCV와 worker SDK가 포함되지 않는다.
+- [ ] 이 route bundle에 React workbook grid, ClosedXML, PDF patch·PDFium·OpenCV와 worker SDK가 포함되지 않는다.
 - [ ] 동작하지 않는 추가·삭제·가짜 진행 UI가 남아 있지 않다.
 
 ### 6.27 자동 테스트 시나리오
@@ -833,7 +834,7 @@ approved plan version은 최소 다음 참조를 고정한다.
 | E2E | 비로그인 진입, Google 로그인, 원래 URL 복귀 |
 | E2E | 선행 단계 미완료·stale workbook·stale question version의 복구 route |
 | E2E | HYPOTHESIS·EXCEL tab 클릭과 좌우 방향키 전환 |
-| E2E | 질문 포함·제외, 3개 미만·반증 질문 없음 차단 |
+| E2E | 질문 포함·제외, 3개 미만·source 없음 차단 |
 | E2E | 공용 source bulk 적용과 질문별 개별 source 유지 |
 | E2E | source 없음 질문의 승인 차단과 focus 이동 |
 | E2E | 실제 Excel target metadata·필수·optional 상태 표시 |
@@ -862,15 +863,13 @@ approved plan version은 최소 다음 참조를 고정한다.
 | 반응형 | desktop, tablet, mobile tab·card·dialog·footer layout |
 | 시각 회귀 | 현재 STEP 04 HYPOTHESIS·EXCEL의 핵심 레이아웃과 REFLO lime 상태 신호 유지 |
 
-### 6.28 아직 필요한 제품·기술 결정
+### 6.28 확정된 구현 기본값
 
-화면 동작은 이 명세로 구현할 수 있지만 다음 항목은 구현 전에 기준 문서 또는 운영 정책에서 수치·목록을 확정해야 한다.
+1. plan당 사용자 파일은 최대 10개, 공개 URL은 최대 20개다. 파일별 제한과 parser 범위는 6.10 및 TD-019를 따른다.
+2. 승인 질문의 필수 source category는 versioned `SourcePolicy`가 결정한다. Research Agent는 TD-023 프로필로 optional source 후보의 순위와 이유만 제안하며 `promptVersion`을 기록한다.
+3. 필수 source 하나라도 최종 실패하면 전체 job은 `failed`다. optional source 실패는 `partial` warning으로 남기고 사용자 확인 후 STEP 05를 허용한다.
+4. progress weight는 계획 고정 10%, 파일 검사 20%, 공개 source 수집 40%, 정규화·근거화 20%, 마무리 10%다. 서버는 policy version과 단조 증가 progress를 반환한다.
+5. 사용자 오류 code는 `SOURCE_AUTH_REQUIRED`, `SOURCE_NOT_FOUND`, `SOURCE_RATE_LIMITED`, `SOURCE_CUTOFF_VIOLATION`, `SOURCE_UNSUPPORTED_MEDIA`, `SOURCE_MALWARE_DETECTED`, `SOURCE_ENCRYPTED`, `SOURCE_PARSE_FAILED`, `SOURCE_TIMEOUT`, `SOURCE_REQUIRED_FAILED`를 사용한다.
+6. 수집 완료 뒤 자동 이동하지 않는다. 상태 화면에서 사용자가 `조사 결과 검증`을 선택해 STEP 05로 이동한다.
 
-1. 사용자 자료의 파일당 최대 크기, plan당 파일·URL 최대 개수
-2. `.docx`, `.pptx`, `.csv`, `.txt` parser와 legacy Office 형식 지원 범위
-3. 질문별 source 추천을 만드는 규칙의 code·Agent 책임과 prompt version
-4. source별 필수·optional 실패가 전체 job을 막는 정확한 정책
-5. job progress weight와 사용자에게 노출할 정형 오류 code 전체 목록
-6. 수집 완료 뒤 STEP 05로 자동 이동할지 사용자의 `수집 상태 보기` 선택을 기다릴지에 대한 최종 UX 정책
-
-Google OAuth·세션·CSRF 구현은 TD-014·TD-018로 확정했다. 미확정 수치나 source 정책을 client hardcode로 확정하지 않는다. 운영 policy가 정해지기 전에는 서버가 제공하는 제한과 오류 code를 화면이 표시하는 구조로 구현한다.
+Google OAuth·세션·CSRF는 TD-014·TD-018, 파일 검사는 TD-019, Agent runtime은 TD-023을 적용한다. client는 이 수치와 목록을 다시 하드코딩하지 않고 서버 policy 응답을 표시한다.

@@ -548,6 +548,7 @@ erDiagram
         uuid resource_version_id PK, FK
         char generated_from_input_revision
         uuid generation_id FK
+        jsonb missing_context
     }
     HYPOTHESIS_QUESTION_IDENTITY {
         uuid stable_question_id PK
@@ -559,8 +560,11 @@ erDiagram
         uuid stable_question_id FK
         int display_order
         text question_text
-        text observable_metric
-        boolean is_falsification
+        text purpose
+        jsonb metrics
+        text target_period
+        text comparison_basis
+        jsonb suggested_source_types
         text origin
     }
 ```
@@ -569,9 +573,9 @@ erDiagram
 |---|---|---|
 | `hypothesis_version` | `resource_version_id`, `provisional_rating`, `thesis`, `input_revision`, `updated_from_version_id` | rating은 `BUY`, `HOLD`, `SELL` 또는 null; thesis 길이와 텍스트 규칙은 API schema와 동일. |
 | `hypothesis_generation` | `generation_id`, `project_id`, `job_id`, `agent_run_id`, `input_revision`, `generation_status`, `output_question_set_version_id`, `created_at` | 같은 input revision·request의 중복 생성을 idempotency로 막는다. |
-| `hypothesis_question_set_version` | `resource_version_id`, `generated_from_input_revision`, `generation_id`, `question_count`, `falsification_count` | 질문 편집·정렬·제외도 새 set version. |
+| `hypothesis_question_set_version` | `resource_version_id`, `generated_from_input_revision`, `generation_id`, `question_count`, `missing_context` | 질문 편집·정렬·제외도 새 set version. |
 | `hypothesis_question_identity` | `stable_question_id`, `project_id`, `created_at` | 질문의 version 간 identity; 텍스트·순서·포함 상태를 이 table에 두지 않는다. |
-| `hypothesis_question` | `question_row_id`, `question_set_version_id`, `stable_question_id`, `display_order`, `question_text`, `observable_metric`, `is_falsification`, `origin`, `included` | stable ID FK; `UNIQUE (question_set_version_id, stable_question_id)`와 `(question_set_version_id, display_order)`; 물리 삭제 대신 새 set에서 `included=false`. |
+| `hypothesis_question` | `question_row_id`, `question_set_version_id`, `stable_question_id`, `display_order`, `question_text`, `purpose`, `metrics`, `target_period`, `comparison_basis`, `suggested_source_types`, `origin`, `included` | stable ID FK; `UNIQUE (question_set_version_id, stable_question_id)`와 `(question_set_version_id, display_order)`; 제안 출처는 STEP 04의 최종 source binding과 구분하고 물리 삭제 대신 새 set에서 `included=false`. |
 
 가설 단계 approval은 `approval_event.primary_version_id = hypothesis_version`으로 만들고 `approval_input`에 `hypothesis`, `question_set`, `setup`, `template_ir`, `workbook`을 고정한다.
 
@@ -580,7 +584,7 @@ erDiagram
 | table | 핵심 column | constraint·규칙 |
 |---|---|---|
 | `research_plan_version` | `resource_version_id`, `plan_status`, `question_set_version_id`, `workbook_version_id`, `mapping_set_version_id`, `cutoff_at`, `collector_version`, `normalizer_version`, `provider_policy_version` | 승인된 plan은 input version과 collector 정책을 고정. |
-| `research_plan_question` | `plan_question_id`, `research_plan_version_id`, `stable_question_id`, `display_order`, `included`, `collection_target`, `expected_result_type` | 승인 시 포함 질문 3~5개와 반증 질문 1개 이상을 server에서 검사. |
+| `research_plan_question` | `plan_question_id`, `research_plan_version_id`, `stable_question_id`, `display_order`, `included`, `collection_target`, `expected_result_type` | 승인 시 포함 질문 3~5개, 질문별 collection target과 source 존재를 server에서 검사. |
 | `research_source_binding` | `source_binding_id`, `research_plan_version_id`, `source_type`, `source_role`, `collection_method`, `provider_code`, `authority_rank`, `policy_json` | source role은 `authority`, `comparison`, `context`; FnGuide actual authority 금지 규칙 적용. |
 | `research_plan_question_source` | `plan_question_id`, `source_binding_id`, `display_order` | PK `(plan_question_id, source_binding_id)`. |
 | `research_plan_excel_target` | `excel_target_id`, `research_plan_version_id`, `workbook_version_id`, `stable_sheet_id`, `cell_address`, `metric_code`, `period_code`, `unit_code`, `scope_code`, `value_kind`, `required`, `included`, `excluded_reason` | 미래 추정치·formula·external link를 자동 입력 target으로 허용하지 않는다. |
@@ -662,7 +666,7 @@ stale
 | `validation_version` | `resource_version_id`, `research_plan_version_id`, `research_result_version_id`, `evidence_set_version_id`, `workbook_version_id`, `validation_status`, `unresolved_conflict_count`, `required_missing_count` | stage aggregate; 새 결정마다 새 version을 생성한다. |
 | `validation_question_result` | `question_result_id`, `validation_version_id`, `stable_question_id`, `answer_summary`, `sufficiency_status`, `support_count`, `contradict_count`, `neutral_count` | 질문별 한 줄 답변과 충분성 projection. |
 | `validation_question_evidence` | `question_result_id`, `evidence_version_id`, `stance`, `display_order` | stance는 `supporting`, `contradicting`, `neutral`. |
-| `validation_decision` | `decision_id`, `project_id`, `from_validation_version_id`, `to_validation_version_id`, `target_type`, `target_evidence_version_id`, `target_conflict_id`, `action`, `selected_evidence_version_id`, `reason`, `created_by_user_id`, `created_at`, `supersedes_decision_id` | target FK 둘 중 정확히 하나만 존재; append-only; reason 5~500자; action은 reject·restore·reinvestigate·select_source. |
+| `validation_decision` | `decision_id`, `project_id`, `from_validation_version_id`, `to_validation_version_id`, `target_type`, `target_evidence_version_id`, `target_conflict_id`, `action`, `selected_evidence_version_id`, `reason`, `created_by_user_id`, `created_at`, `supersedes_decision_id` | target FK 둘 중 정확히 하나만 존재; append-only; reason 5~500자; action은 accept_qualified·reject·restore·reinvestigate·select_source. `accept_qualified`는 TD-020의 qualified 질문에만 허용. |
 | `evidence_conflict` | `conflict_id`, `project_id`, `metric_code`, `period_code`, `scope_code`, `conflict_status`, `created_at` | 서로 다른 원문 값을 한 Evidence로 합치지 않는다. |
 | `evidence_conflict_candidate` | `conflict_id`, `evidence_version_id`, `candidate_role` | PK `(conflict_id, evidence_version_id)`. |
 | `conflict_decision` | `conflict_decision_id`, `conflict_id`, `validation_version_id`, `selected_evidence_version_id`, `reason`, `created_by_user_id`, `created_at`, `supersedes_decision_id` | 선택하지 않은 후보도 보존. |
@@ -795,7 +799,7 @@ erDiagram
 | `calculation_run` | `calculation_run_id`, `project_id`, `job_id`, `input_workbook_version_id`, `output_workbook_version_id`, `calculation_status`, `engine_name`, `engine_version`, `result_hash`, `formula_error_count`, `duration_ms`, `started_at`, `completed_at` | 같은 input hash·engine version의 정상 결과 재사용 가능; browser 계산값은 저장 권위가 아니다. |
 | `calculation_error` | `calculation_error_id`, `calculation_run_id`, `stable_sheet_id`, `cell_address`, `error_code`, `message_key`, `details_json` | stack·민감 원문 대신 정형 오류. |
 
-SpreadJS는 `workbook_version` artifact를 표시하고 `editable_cell_set`으로 허용된 변경만 보낸다. 서버는 Aspose.Cells 결과로 새 workbook artifact·version을 만들며 SpreadJS export를 최종 XLSX로 사용하지 않는다.
+React workbook grid는 `workbook_version` read model을 표시하고 `editable_cell_set`으로 허용된 변경만 보낸다. 서버는 ClosedXML 결과로 새 workbook artifact·version을 만들며 client export를 최종 XLSX로 사용하지 않는다.
 
 ### 9.3 valuation
 
@@ -901,10 +905,10 @@ report version마다 모든 본문을 복제하지 않는다. 변경된 block re
 
 | table | 핵심 column | constraint·규칙 |
 |---|---|---|
-| `report_edit_session` | `edit_session_id`, `report_id`, `report_version_id`, `user_id`, `lease_token_hash`, `session_status`, `lease_expires_at`, `heartbeat_at`, `created_at`, `closed_at`, `taken_over_from_session_id` | report당 active lease 하나의 partial unique; 평문 lease token 저장 금지. |
+| `report_edit_session` | `edit_session_id`, `report_id`, `report_version_id`, `user_id`, `lease_token_hash`, `session_status`, `lease_expires_at`, `heartbeat_at`, `created_at`, `closed_at`, `taken_over_from_session_id` | report당 active lease 하나의 partial unique; TTL 120초·heartbeat 30초; 서버 시각이 만료시각 이상일 때만 takeover; 평문 lease token 저장 금지. |
 | `report_edit_operation` | `edit_operation_id`, `report_id`, `base_report_version_id`, `result_report_version_id`, `edit_session_id`, `client_mutation_id`, `operation_sequence`, `operation_type`, `operation_payload_json`, `inverse_payload_json`, `created_by_user_id`, `created_at` | `UNIQUE (report_id, client_mutation_id)`; expected version 불일치 시 저장 거부; typed operation만 허용. |
 | `report_ai_proposal` | `proposal_id`, `project_id`, `base_report_version_id`, `target_block_id`, `agent_run_id`, `proposal_type`, `proposed_operations_json`, `diff_artifact_id`, `validation_status`, `proposal_status`, `applied_report_version_id`, `created_at` | 생성만으로 본문 변경 금지; apply도 최신 version·edit lease·숫자·근거 보존 재검사. |
-| `report_import` | `report_import_id`, `project_id`, `base_report_version_id`, `upload_session_id`, `artifact_id`, `import_type`, `inspection_job_id`, `import_status`, `mapping_proposal_json` | 첨부 표·차트·이미지는 quarantine 검사 후에만 proposal로 사용. |
+| `report_import` | `report_import_id`, `project_id`, `base_report_version_id`, `upload_session_id`, `artifact_id`, `import_type`, `inspection_job_id`, `import_status`, `mapping_proposal_json` | CSV 10 MiB, XLSX 25 MiB, PNG·JPEG 15 MiB·20 MP까지만 허용; quarantine 검사 후 proposal로 사용; 이미지 OCR은 MVP 제외. |
 
 ### 11.4 preview·validation·approval
 
@@ -1202,24 +1206,22 @@ MVP ERD에는 다음을 넣지 않는다.
 - 외부 검색 index와 vector DB를 권위 저장소로 사용하는 구조
 - 원본 PDF·Excel byte의 PostgreSQL 저장
 - Temporal history 복제 table
-- SpreadJS 전체 workbook state 저장
+- browser의 전체 workbook state 저장
 - DOCX export
 - soft delete만으로 모든 보존 의무가 끝났다고 보는 구조
 
 필요해지면 기존 immutable version과 project ownership을 깨지 않는 별도 migration으로 추가한다.
 
-## 21. 구현 전 남은 결정
+## 21. 확정된 구현값과 운영 gate
 
-다음은 ERD 방향을 바꾸지는 않지만 column 크기·retention·운영 설정을 확정해야 하는 항목이다.
+session TTL은 TD-014, artifact TTL과 report lease는 TD-022, Agent model·token·비용·timeout은 TD-023으로 확정됐다. 구현 schema는 `retention_class`, `lease_expires_at`, versioned Agent profile을 통해 이 값을 적용한다.
 
-1. session rotation 주기와 revoked session 보존기간; idle 7일·absolute 30일 TTL은 TD-014로 확정
-2. source type별 원문·인용문·snapshot 보존 권한과 삭제 정책
-3. temporary·preview·diff·실패 export·agent raw response artifact의 TTL
-4. report edit session lease TTL·heartbeat·takeover 세부값
-5. Agent별 GPT model ID, token·비용·timeout 한도
-6. Evidence quote·report text의 최대 길이와 전문 검색 방식
-7. audit·job event의 장기 보존기간과 partition 도입 시점
-8. PostgreSQL RLS 추가 여부
+다음은 ERD 구현을 막지 않는 production 운영·법무 gate다.
+
+1. source type별 원문·인용문·snapshot의 법적 보존 권한과 삭제 예외
+2. Evidence quote·report text의 운영 최대 길이와 전문 검색 성능 보정
+3. audit·job event의 장기 보존기간과 partition 도입 시점
+4. PostgreSQL RLS 추가 적용 여부
 
 ## 22. 완료 조건
 
@@ -1235,7 +1237,7 @@ MVP ERD에는 다음을 넣지 않는다.
 - [ ] Source version과 locator로 당시 원문 위치를 재현할 수 있다.
 - [ ] Evidence 정정과 conflict 선택이 append-only로 남는다.
 - [ ] Evidence → Excel 입력 → 계산 결과 → 보고서 block provenance 경로가 끊기지 않는다.
-- [ ] SpreadJS 값이 아니라 Aspose.Cells 계산 결과가 workbook version을 만든다.
+- [ ] browser 값이 아니라 ClosedXML 계산 결과가 workbook version을 만든다.
 - [ ] report autosave가 stale version을 덮어쓰지 않고 typed operation으로 새 version을 만든다.
 - [ ] exact report version의 validation만 승인에 사용할 수 있다.
 - [ ] 승인 report의 PDF·XLSX artifact를 과거 version에서도 재현·다운로드할 수 있다.
