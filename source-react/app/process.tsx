@@ -38,7 +38,6 @@ const companies = [
     { name: "ISC", code: "095340", market: "KOSDAQ", sector: "IT 제조업 · 반도체 검사부품" },
     { name: "리노공업", code: "058470", market: "KOSDAQ", sector: "IT 제조업 · 반도체 검사부품" },
 ];
-let currentProjectCompany = "";
 const evidenceMap: Record<string, {
     type: string;
     title: string;
@@ -232,12 +231,13 @@ function ProjectSetup({ company, setCompany, year, setYear, quarter, setQuarter,
     const matches = query.trim().length > 0 ? companies.filter((item) => `${item.name}${item.code}`.toLowerCase().includes(query.trim().toLowerCase())) : [];
     return <div className="spec-screen spec-project-setup"><ScreenHead step="01" title="기업 · 작성 정보 입력" copy="분석할 기업을 선택한 뒤 분기·기준일·리포트 유형·기업 분야를 직접 설정하세요."/><section className="spec-panel spec-project-form"><div className="spec-field full"><label>기업명 <b>*</b></label><div className={`spec-company-search ${selected ? "selected" : ""}`}><span>⌕</span><input value={query} onChange={(event) => { setQuery(event.target.value); setCompany(""); }} placeholder="기업명 또는 종목코드를 입력하세요" autoFocus/><button type="button">검색</button></div>{query && !selected && <div className="spec-company-results"><small>{matches.length ? `${matches.length}개 기업` : "검색 결과가 없습니다"}</small>{matches.map((item) => <button key={item.code} onClick={() => { setCompany(item.name); setQuery(item.name); }}><i>{item.name.slice(0, 1)}</i><span><strong>{item.name}</strong><small>{item.code} · {item.market}</small></span><b>선택</b></button>)}</div>}</div>{selected ? <><div className="spec-company-meta-grid"><div className="spec-field"><label>종목코드</label><input value={selected.code} readOnly/></div><div className="spec-field"><label>거래소</label><input value={selected.market} readOnly/></div></div><div className="spec-form-grid"><div className="spec-field"><label>분석 대상 연도 <b>*</b></label><select value={year} onChange={(event) => setYear(event.target.value)}><option value="">연도 선택</option><option>2026</option><option>2025</option></select></div><div className="spec-field"><label>분기 <b>*</b></label><select value={quarter} onChange={(event) => setQuarter(event.target.value)}><option value="">분기 선택</option><option>1분기</option><option>2분기</option><option>3분기</option><option>4분기</option></select></div><div className="spec-field"><label>보고서 기준일 <b>*</b></label><input type="date" value={date} onClick={(event) => event.currentTarget.showPicker?.()} onChange={(event) => setDate(event.target.value)}/></div><div className="spec-field"><label>리포트 유형 <b>*</b></label><select value={reportType} onChange={(event) => setReportType(event.target.value)}><option value="">유형 선택</option><option>실적 Review</option><option>기업 분석</option><option>산업 분석</option><option>이슈 리포트</option></select></div><div className="spec-field"><label>기업 분야 <b>*</b></label><select value={analysisStructure} onChange={(event) => setAnalysisStructure(event.target.value)}><option value="">기업 분야 선택</option><option>IT 제조업</option><option>반도체</option><option>전자부품</option><option>소프트웨어·인터넷</option><option>통신</option><option>2차전지</option></select></div></div><p className="spec-info-note">선택한 리포트 유형과 기업 분야에 따라 뒤 단계의 조사 질문·표·차트 구성이 달라집니다.</p></> : <div className="spec-empty-state"><i>01</i><div><strong>기업 선택이 먼저 필요합니다.</strong><p>1~2글자만 입력해도 후보 기업이 표시됩니다. 기업을 선택한 뒤 나머지 설정을 진행하세요.</p></div></div>}</section></div>;
 }
-function FileUpload({ pdf, setPdf, excel, setExcel, onContinue }: {
+function FileUpload({ pdf, setPdf, excel, setExcel, onContinue, company }: {
     pdf: string;
     setPdf: (value: string) => void;
     excel: string;
     setExcel: (value: string) => void;
     onContinue: () => void;
+    company: string;
 }) {
     const ready = pdf && excel;
     const [checkProgress, setCheckProgress] = useState<number | null>(null);
@@ -245,8 +245,7 @@ function FileUpload({ pdf, setPdf, excel, setExcel, onContinue }: {
     const [showCompanyMismatch, setShowCompanyMismatch] = useState(false);
     const [showPdfAnalysis, setShowPdfAnalysis] = useState(false);
     const [showOriginalPdf, setShowOriginalPdf] = useState(false);
-    const company = currentProjectCompany;
-    const selectedCompany = companies.find((item) => item.name === currentProjectCompany);
+    const selectedCompany = companies.find((item) => item.name === company);
     const detectedPdfCompany = useMemo(() => {
         const normalizedFileName = pdf.toLowerCase().replace(/\s+/g, "");
         return companies.find((item) => normalizedFileName.includes(item.name.toLowerCase().replace(/\s+/g, "")) || normalizedFileName.includes(item.code));
@@ -1346,12 +1345,18 @@ function Valuation({ openEvidence }: {
     const forecastNumber = (metric: ForecastMetric, period: ForecastPeriod) => Number(forecastInputs[metric][period]) || 0;
     const fy26ForwardEps = Math.round(forecastNumber("netIncome", "fy26e") * forecastEpsRatios.fy26e);
     const forwardEps = Math.round(forecastNumber("netIncome", "fy27e") * forecastEpsRatios.fy27e);
-    const [per, setPer] = useState("14.2");
-    const [targetPriceInput, setTargetPriceInput] = useState(String(Math.round(forwardEps * 14.2)));
+    const [perInput, setPerInput] = useState("14.2");
+    const [manualTargetPriceInput, setManualTargetPriceInput] = useState(String(Math.round(forwardEps * 14.2)));
     const [targetPriceSource, setTargetPriceSource] = useState<"per" | "price">("per");
     const [approved, setApproved] = useState(false);
     const [valuationTab, setValuationTab] = useState<"excel" | "decision">("excel");
     const [showSensitivity, setShowSensitivity] = useState(false);
+    const targetPriceInput = targetPriceSource === "per"
+        ? (Number.isFinite(Number(perInput)) && Number(perInput) > 0 && forwardEps > 0 ? String(Math.round(forwardEps * Number(perInput))) : "")
+        : manualTargetPriceInput;
+    const per = targetPriceSource === "price"
+        ? (Number.isFinite(Number(manualTargetPriceInput)) && Number(manualTargetPriceInput) > 0 && forwardEps > 0 ? (Number(manualTargetPriceInput) / forwardEps).toFixed(2).replace(/\.?0+$/, "") : "")
+        : perInput;
     const perNumber = Number(per);
     const isPerValid = Number.isFinite(perNumber) && perNumber > 0;
     const targetPriceNumber = Number(targetPriceInput);
@@ -1380,28 +1385,16 @@ function Valuation({ openEvidence }: {
     };
     const updateTargetPer = (rawValue: string) => {
         const nextValue = rawValue.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
-        const nextNumber = Number(nextValue);
-        setPer(nextValue);
+        setPerInput(nextValue);
         setTargetPriceSource("per");
-        setTargetPriceInput(Number.isFinite(nextNumber) && nextNumber > 0 ? String(Math.round(forwardEps * nextNumber)) : "");
         setApproved(false);
     };
     const updateTargetPrice = (rawValue: string) => {
         const nextValue = rawValue.replace(/[^0-9]/g, "");
-        setTargetPriceInput(nextValue);
+        setManualTargetPriceInput(nextValue);
         setTargetPriceSource("price");
         setApproved(false);
     };
-    useEffect(() => {
-        if (targetPriceSource !== "per") return;
-        const nextPer = Number(per);
-        setTargetPriceInput(Number.isFinite(nextPer) && nextPer > 0 && forwardEps > 0 ? String(Math.round(forwardEps * nextPer)) : "");
-    }, [forwardEps, per, targetPriceSource]);
-    useEffect(() => {
-        if (targetPriceSource !== "price") return;
-        const nextTargetPrice = Number(targetPriceInput);
-        setPer(Number.isFinite(nextTargetPrice) && nextTargetPrice > 0 && forwardEps > 0 ? (nextTargetPrice / forwardEps).toFixed(2).replace(/\.?0+$/, "") : "");
-    }, [forwardEps, targetPriceInput, targetPriceSource]);
     useEffect(() => {
         if (!showSensitivity)
             return;
@@ -1672,11 +1665,11 @@ export function PlannedProcessPage({ setView, step, setStep, company, setCompany
         window.addEventListener("reflo:file-check", syncFileCheck);
         return () => window.removeEventListener("reflo:file-check", syncFileCheck);
     }, []);
-    useEffect(() => {
-        setFileCheckPassed(false);
-    }, [company]);
-    currentProjectCompany = company;
     const selectedCompany = companies.find((item) => item.name === company);
+    const updateCompany = (value: string) => {
+        setCompany(value);
+        setFileCheckPassed(false);
+    };
     const canNext = step === 0 ? Boolean(selectedCompany && year && quarter && date && reportType && analysisStructure) : step === 1 ? Boolean(pdf && excel && fileCheckPassed) : step === 3 ? Boolean(hypothesis.trim()) : step === 12 ? false : true;
     const nextLabels = ["다음", "다음", "다음", "다음", "다음", "다음", "다음", "다음", "다음", "다음", "다음", "완료", ""];
     const currentStepPosition = Math.max(0, steps.findIndex((item) => item.step === step));
@@ -1701,5 +1694,77 @@ export function PlannedProcessPage({ setView, step, setStep, company, setCompany
         }
         setStep(step === 9 ? 11 : step + 1);
     };
-    return <div className="planned-process-page"><header className="spec-app-header"><button className="spec-back-project" onClick={() => setView("projects")}><span>‹</span> 프로젝트로 돌아가기</button><nav><button className="active">Process</button><button onClick={() => setView("report")}>Report</button></nav><div className="spec-project-context">{date && <span><b>보고서 기준일</b><small>{date}</small></span>}<button className="spec-workflow-button" onClick={() => setWorkflowOpen(true)}><i><b/><b/><b/></i><span>작업 흐름</span></button></div></header><div className="spec-workspace"><aside className="spec-sidebar"><div className="spec-sidebar-project"><span>RESEARCH PROJECT</span><strong>{projectName || selectedCompany?.name || "새 리서치"}</strong><small>{projectMeta}</small><div><i><b style={{ width: `${workflowProgress}%` }}/></i><span>{workflowProgress}%</span></div></div><nav>{groupOrder.map((group) => <section key={group}><h3>{group}</h3>{steps.filter((item) => item.group === group).map((item) => { const index = item.step; return <button key={item.no} className={`${step === index ? "active" : ""} ${step > index ? "done" : ""}`} onClick={() => setStep(index)}><i>{step > index ? "✓" : item.no}</i><span><b>{item.title}</b><small>{item.short}</small></span>{step === index && <em />}</button>; })}</section>)}</nav></aside><main className="spec-main">{step === 0 && <ProjectSetup company={company} setCompany={setCompany} year={year} setYear={setYear} quarter={quarter} setQuarter={setQuarter} date={date} setDate={setDate} reportType={reportType} setReportType={setReportType} analysisStructure={analysisStructure} setAnalysisStructure={setAnalysisStructure}/>}{step === 1 && <FileUpload pdf={pdf} setPdf={setPdf} excel={excel} setExcel={setExcel} onContinue={() => setStep(3)}/>}{step === 3 && <HypothesisSetup opinion={opinion} setOpinion={setOpinion} hypothesis={hypothesis} setHypothesis={setHypothesis}/>}{step === 4 && <ResearchPlan files={sourceFiles} setFiles={setSourceFiles}/>}{step === 5 && <ResearchValidation/>}{step === 8 && <ExcelUpdate />}{step === 9 && <Valuation openEvidence={setEvidence}/>}{step === 10 && <EvidenceReview openEvidence={setEvidence}/>}{step === 11 && <FinalDecision opinion={opinion} hypothesis={hypothesis} openEvidence={setEvidence}/>}</main></div><footer className="spec-bottom-bar"><div><span className="spec-saved"><i /> 자동 저장됨</span><button onClick={save}>임시 저장</button>{step < 12 && step !== 1 && <button className="spec-next" disabled={!canNext} onClick={next}>{nextLabels[step]} <b aria-hidden="true">›</b></button>}</div></footer>{reportModeOpen && <div className="spec-report-mode-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setReportModeOpen(false)}><section className="spec-report-mode-dialog" role="dialog" aria-modal="true" aria-labelledby="report-mode-title"><header><div><span>REPORT GENERATION</span><h2 id="report-mode-title">리포트 생성 방식 선택</h2><p>검증된 데이터와 출처 연결은 두 방식 모두 동일하게 유지됩니다.</p></div><button onClick={() => setReportModeOpen(false)} aria-label="생성 방식 팝업 닫기">×</button></header><div><button className={reportMode === "draft" ? "selected" : ""} onClick={() => setReportMode("draft")}><i>AI</i><span><b>AI 초안과 함께 생성</b><small>검증된 근거로 본문 초안을 작성합니다. 생성 후 문장을 자유롭게 편집할 수 있습니다.</small><em>빠르게 초안을 시작할 때</em></span><strong>{reportMode === "draft" ? "✓" : ""}</strong></button><button className={reportMode === "structure" ? "selected" : ""} onClick={() => setReportMode("structure")}><i>T</i><span><b>빈 텍스트 영역으로 생성</b><small>표와 차트만 배치하고 본문은 직접 작성할 수 있도록 비워둡니다.</small><em>빠르게 초안을 시작할 때</em></span><strong>{reportMode === "structure" ? "✓" : ""}</strong></button></div><footer><span>선택 후 바로 편집 화면으로 이동합니다.</span><button onClick={() => setReportModeOpen(false)}>취소</button><button disabled={!reportMode} onClick={() => { setReportModeOpen(false); setView("report"); }}>선택하고 리포트 생성 →</button></footer></section></div>}{workflowOpen && <div className="spec-workflow-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setWorkflowOpen(false)}><section className="spec-workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-title"><header><div><span>RESEARCH WORKFLOW</span><h2 id="workflow-title">전체 작업 흐름</h2><p>현재 위치와 앞뒤 단계를 한눈에 확인할 수 있습니다.</p></div><button onClick={() => setWorkflowOpen(false)} aria-label="작업 흐름 닫기">×</button></header><div className="spec-workflow-groups">{groupOrder.map((group) => <section key={group}><h3>{group}</h3><div>{steps.filter((item) => item.group === group).map((item) => { const index = item.step; const state = index < step ? "done" : index === step ? "current" : "upcoming"; return <button key={item.no} className={state} disabled aria-disabled="true"><i>{state === "done" ? "✓" : item.no}</i><span><b>{item.title}</b><small>{item.short}</small></span><em>{state === "done" ? "완료" : state === "current" ? "현재" : "예정"}</em></button>; })}</div></section>)}</div><footer><span className="done"><i/> 완료</span><span className="current"><i/> 현재 단계</span><span className="upcoming"><i/> 예정</span></footer></section></div>}{evidence && <EvidenceDrawer source={evidence} close={() => setEvidence("")}/>}{toast && <div className="spec-toast">✓ {toast}</div>}</div>;
+    return <div className="planned-process-page">
+        <header className="spec-app-header">
+            <button className="spec-back-project" onClick={() => setView("projects")}><span>‹</span> 프로젝트로 돌아가기</button>
+            <nav><button className="active">Process</button><button onClick={() => setView("report")}>Report</button></nav>
+            <div className="spec-project-context">
+                {date && <span><b>보고서 기준일</b><small>{date}</small></span>}
+                <button className="spec-workflow-button" onClick={() => setWorkflowOpen(true)}><i><b/><b/><b/></i><span>작업 흐름</span></button>
+            </div>
+        </header>
+        <div className="spec-workspace">
+            <aside className="spec-sidebar">
+                <div className="spec-sidebar-project">
+                    <span>RESEARCH PROJECT</span>
+                    <strong>{projectName || selectedCompany?.name || "새 리서치"}</strong>
+                    <small>{projectMeta}</small>
+                    <div><i><b style={{ width: `${workflowProgress}%` }}/></i><span>{workflowProgress}%</span></div>
+                </div>
+                <nav>{groupOrder.map((group) => <section key={group}>
+                    <h3>{group}</h3>
+                    {steps.filter((item) => item.group === group).map((item) => {
+                        const index = item.step;
+                        return <button key={item.no} className={`${step === index ? "active" : ""} ${step > index ? "done" : ""}`} onClick={() => setStep(index)}>
+                            <i>{step > index ? "✓" : item.no}</i>
+                            <span><b>{item.title}</b><small>{item.short}</small></span>
+                            {step === index && <em />}
+                        </button>;
+                    })}
+                </section>)}</nav>
+            </aside>
+            <main className="spec-main">
+                {step === 0 && <ProjectSetup company={company} setCompany={updateCompany} year={year} setYear={setYear} quarter={quarter} setQuarter={setQuarter} date={date} setDate={setDate} reportType={reportType} setReportType={setReportType} analysisStructure={analysisStructure} setAnalysisStructure={setAnalysisStructure}/>}
+                {step === 1 && <FileUpload pdf={pdf} setPdf={setPdf} excel={excel} setExcel={setExcel} onContinue={() => setStep(3)} company={company}/>}
+                {step === 3 && <HypothesisSetup opinion={opinion} setOpinion={setOpinion} hypothesis={hypothesis} setHypothesis={setHypothesis}/>}
+                {step === 4 && <ResearchPlan files={sourceFiles} setFiles={setSourceFiles}/>}
+                {step === 5 && <ResearchValidation/>}
+                {step === 8 && <ExcelUpdate />}
+                {step === 9 && <Valuation openEvidence={setEvidence}/>}
+                {step === 10 && <EvidenceReview openEvidence={setEvidence}/>}
+                {step === 11 && <FinalDecision opinion={opinion} hypothesis={hypothesis} openEvidence={setEvidence}/>}
+            </main>
+        </div>
+        <footer className="spec-bottom-bar"><div>
+            <span className="spec-saved"><i /> 자동 저장됨</span>
+            <button onClick={save}>임시 저장</button>
+            {step < 12 && step !== 1 && <button className="spec-next" disabled={!canNext} onClick={next}>{nextLabels[step]} <b aria-hidden="true">›</b></button>}
+        </div></footer>
+        {reportModeOpen && <div className="spec-report-mode-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setReportModeOpen(false)}>
+            <section className="spec-report-mode-dialog" role="dialog" aria-modal="true" aria-labelledby="report-mode-title">
+                <header><div><span>REPORT GENERATION</span><h2 id="report-mode-title">리포트 생성 방식 선택</h2><p>검증된 데이터와 출처 연결은 두 방식 모두 동일하게 유지됩니다.</p></div><button onClick={() => setReportModeOpen(false)} aria-label="생성 방식 팝업 닫기">×</button></header>
+                <div>
+                    <button className={reportMode === "draft" ? "selected" : ""} onClick={() => setReportMode("draft")}><i>AI</i><span><b>AI 초안과 함께 생성</b><small>검증된 근거로 본문 초안을 작성합니다. 생성 후 문장을 자유롭게 편집할 수 있습니다.</small><em>빠르게 초안을 시작할 때</em></span><strong>{reportMode === "draft" ? "✓" : ""}</strong></button>
+                    <button className={reportMode === "structure" ? "selected" : ""} onClick={() => setReportMode("structure")}><i>T</i><span><b>빈 텍스트 영역으로 생성</b><small>표와 차트만 배치하고 본문은 직접 작성할 수 있도록 비워둡니다.</small><em>빠르게 초안을 시작할 때</em></span><strong>{reportMode === "structure" ? "✓" : ""}</strong></button>
+                </div>
+                <footer><span>선택 후 바로 편집 화면으로 이동합니다.</span><button onClick={() => setReportModeOpen(false)}>취소</button><button disabled={!reportMode} onClick={() => { setReportModeOpen(false); setView("report"); }}>선택하고 리포트 생성 →</button></footer>
+            </section>
+        </div>}
+        {workflowOpen && <div className="spec-workflow-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setWorkflowOpen(false)}>
+            <section className="spec-workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-title">
+                <header><div><span>RESEARCH WORKFLOW</span><h2 id="workflow-title">전체 작업 흐름</h2><p>현재 위치와 앞뒤 단계를 한눈에 확인할 수 있습니다.</p></div><button onClick={() => setWorkflowOpen(false)} aria-label="작업 흐름 닫기">×</button></header>
+                <div className="spec-workflow-groups">{groupOrder.map((group) => <section key={group}>
+                    <h3>{group}</h3>
+                    <div>{steps.filter((item) => item.group === group).map((item) => {
+                        const index = item.step;
+                        const state = index < step ? "done" : index === step ? "current" : "upcoming";
+                        return <button key={item.no} className={state} disabled aria-disabled="true"><i>{state === "done" ? "✓" : item.no}</i><span><b>{item.title}</b><small>{item.short}</small></span><em>{state === "done" ? "완료" : state === "current" ? "현재" : "예정"}</em></button>;
+                    })}</div>
+                </section>)}</div>
+                <footer><span className="done"><i/> 완료</span><span className="current"><i/> 현재 단계</span><span className="upcoming"><i/> 예정</span></footer>
+            </section>
+        </div>}
+        {evidence && <EvidenceDrawer source={evidence} close={() => setEvidence("")}/>}
+        {toast && <div className="spec-toast">✓ {toast}</div>}
+    </div>;
 }

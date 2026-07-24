@@ -1008,6 +1008,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
   const [paragraphId, setParagraphId] = useState("");
   const [paragraphPrompt, setParagraphPrompt] = useState("");
   const [activeEditor, setActiveEditor] = useState({ visible: false, label: "문단" });
+  const [activeEditableElement, setActiveEditableElement] = useState<HTMLElement | null>(null);
   const [finalCheck, setFinalCheck] = useState(false);
   const [checks, setChecks] = useState([false, false, false]);
   const [validationPassed, setValidationPassed] = useState(false);
@@ -1075,6 +1076,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
   const activateEditableTarget = (target: HTMLElement) => {
     activeEditableRef.current?.classList.remove("ai-active-paragraph");
     activeEditableRef.current = target;
+    setActiveEditableElement(target);
     target.classList.add("ai-active-paragraph");
     const tableTitle = target.closest(".lino-edit-table-block")?.querySelector("h3")?.textContent;
     setActiveEditor({ visible: true, label: (tableTitle || target.textContent || "문단").trim().slice(0, 28) });
@@ -1104,6 +1106,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
       if (!origin.closest(".active-paragraph-ai")) {
         activeEditableRef.current?.classList.remove("ai-active-paragraph");
         activeEditableRef.current = null;
+        setActiveEditableElement(null);
         setActiveEditor((current) => ({ ...current, visible: false }));
       }
       return;
@@ -1166,6 +1169,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
   const toggleEditMode = () => {
     activeEditableRef.current?.classList.remove("ai-active-paragraph");
     activeEditableRef.current = null;
+    setActiveEditableElement(null);
     activeTableRef.current = null;
     setActiveEditor((current) => ({ ...current, visible: false }));
     setSelectionText("");
@@ -1182,6 +1186,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
     (document.activeElement as HTMLElement | null)?.blur?.();
     activeEditableRef.current?.classList.remove("ai-active-paragraph");
     activeEditableRef.current = null;
+    setActiveEditableElement(null);
     activeTableRef.current = null;
     setActiveEditor((current) => ({ ...current, visible: false }));
     setView(nextView);
@@ -1212,7 +1217,7 @@ function ReportPage({ setView }: { setView: (view: View) => void }) {
           {!editMode && <div className="view-mode-notice"><span>보기 모드</span> 원본 PDF 레이아웃을 보고 있습니다. 원문은 상단 <button onClick={() => setSource("리노공업 1Q26 실적리뷰")}>근거 보기</button>에서 확인하고, 내용을 수정하려면 <button onClick={() => setEditMode(true)}>편집 모드</button>를 켜주세요.</div>}
           {editMode && <div className="edit-mode-notice"><span>✦</span><p><strong>편집 모드가 켜졌습니다.</strong> 원본 PDF의 텍스트와 표를 직접 수정하거나 문단을 드래그해 AI로 다듬을 수 있습니다.</p></div>}
           <LinoReportEditor editable={editMode} targetPriceChartType={targetPriceChartType} />
-          {editMode && activeEditor.visible && activeEditableRef.current && createPortal(<button contentEditable={false} className="active-paragraph-ai" onMouseDown={(e) => e.preventDefault()} onClick={openActiveParagraphAi} aria-label={`${activeEditor.label} AI 수정`} title="이 영역 AI 수정"><span>✦</span><b>AI 수정</b></button>, activeEditableRef.current)}
+          {editMode && activeEditor.visible && activeEditableElement && createPortal(<button contentEditable={false} className="active-paragraph-ai" onMouseDown={(e) => e.preventDefault()} onClick={openActiveParagraphAi} aria-label={`${activeEditor.label} AI 수정`} title="이 영역 AI 수정"><span>✦</span><b>AI 수정</b></button>, activeEditableElement)}
           {false && <article className="report-document is-editing">
             <div className="report-a4-page report-cover-page">
             <header className="document-cover pdf-report-cover">
