@@ -20,7 +20,7 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - [REFLO_URL_SERVICE_BEHAVIOR_v1.md](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [REFLO_TECHNICAL_DECISIONS_v1.md](./REFLO_TECHNICAL_DECISIONS_v1.md)
 
-화면별 실제 구현 계약은 다음 문서에 URL 순서대로 누적한다.
+화면별 실제 구현 계약의 목차와 공통 원칙은 다음 인덱스에서 관리하고, 상세 명세는 `docs/screens/` 아래에 URL별로 분리한다.
 
 - [REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md](./REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
 
@@ -90,7 +90,8 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 #### 결과
 
-- `REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md`를 만들고 `/` 홈 명세를 첫 항목으로 작성했다.
+- `REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md`를 전체 목차·공통 원칙 인덱스로 만들었다.
+- `/` 홈 상세 명세는 `docs/screens/01-home.md`로 분리했다.
 - 기존 헤더·히어로·모달 디자인은 재사용하고 인증 상태와 실제 프로젝트 생성만 연결하도록 정리했다.
 - Google 로그인, 실제 `projectId`, 7단계 표시, 사용자 메뉴·로그아웃, 오류·보안·테스트 조건을 명시했다.
 - 홈에서 사용하지 않는 SpreadJS, Temporal, PDF·Excel 워커, Agent는 로드하지 않도록 명시했다.
