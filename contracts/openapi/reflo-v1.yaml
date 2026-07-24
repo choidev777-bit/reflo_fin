@@ -1,0 +1,5629 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: REFLO API
+  version: 1.0.0
+  license:
+    name: Proprietary
+  description: |
+    REFLO browser application API and Internal Worker API contract.
+    Public project routes never expose object-store keys or Temporal workflow IDs.
+  x-reflo-api-major: 1
+servers:
+  - url: /
+    description: Same-origin REFLO server
+tags:
+  - name: Auth
+    description: Google authentication and server session lifecycle.
+  - name: Companies
+    description: Supported-company discovery.
+  - name: Projects
+    description: User-owned project collection.
+  - name: Setup
+    description: Step 1 project setup.
+  - name: Files
+    description: Step 2 upload, inspection, and mapping.
+  - name: Hypothesis
+    description: Step 3 investment thesis and research questions.
+  - name: Research
+    description: Step 4 plan approval, collection, and ingestion jobs.
+  - name: Validation
+    description: Step 5 evidence review and workbook validation.
+  - name: Valuation
+    description: Step 6 authoritative PER valuation.
+  - name: ReportOutline
+    description: Step 7 template-constrained page outline.
+  - name: Report
+    description: Versioned report editing, validation, approval, and export.
+  - name: Artifacts
+    description: Authorized artifact download descriptors.
+  - name: InternalWorker
+    description: Workload-authenticated worker commands and reconciliation.
+security:
+  - sessionCookie: []
+paths:
+  /api/auth/session:
+    get:
+      tags: [Auth]
+      operationId: getAuthSession
+      summary: Return the current public or authenticated session
+      security: []
+      responses:
+        "200":
+          description: Session state
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/auth/google/start:
+    get:
+      tags: [Auth]
+      operationId: startGoogleLogin
+      summary: Start Google OAuth or OIDC login
+      security: []
+      parameters:
+        - name: returnTo
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/RelativeRoute"
+        - name: intent
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [projects, create-project]
+      responses:
+        "302":
+          description: Redirect to the Google authorization endpoint
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        default:
+          $ref: "#/components/responses/Error"
+      x-error-codes: [INVALID_RETURN_TO]
+  /api/auth/google/callback:
+    get:
+      tags: [Auth]
+      operationId: completeGoogleLogin
+      summary: Validate the Google callback and issue a server session
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 16
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the validated same-origin return path
+          headers:
+            Location:
+              schema:
+                $ref: "#/components/schemas/RelativeRoute"
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+      x-error-codes: [OAUTH_STATE_INVALID, OAUTH_CALLBACK_FAILED]
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the current session
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: Session revoked
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/companies/search:
+    get:
+      tags: [Companies]
+      operationId: searchCompanies
+      summary: Search supported companies by name or ticker
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 40
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 10
+      responses:
+        "200":
+          description: Company search result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanySearchResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-error-codes: [INVALID_COMPANY_QUERY, COMPANY_SEARCH_UNAVAILABLE]
+  /api/projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List projects owned by the current user
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated_desc, updated_asc, company_asc]
+            default: updated_desc
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Project page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-error-codes: [INVALID_PROJECT_QUERY, PROJECT_STATUS_UNAVAILABLE]
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project draft
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateProjectResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-error-codes: [INVALID_PROJECT_NAME, IDEMPOTENCY_CONFLICT, RATE_LIMITED]
+  /api/projects/{projectId}/process/setup:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Setup]
+      operationId: getProjectSetup
+      summary: Load the project setup workspace
+      responses:
+        "200":
+          description: Setup workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [PROJECT_NOT_FOUND, SETUP_LOAD_FAILED]
+    patch:
+      tags: [Setup]
+      operationId: saveProjectSetup
+      summary: Save an incomplete or complete setup draft
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupWriteRequest"
+      responses:
+        "200":
+          description: Setup draft saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes:
+        - INVALID_SETUP_FIELD
+        - STALE_PROJECT_VERSION
+        - DOWNSTREAM_INVALIDATION_CONFIRMATION_REQUIRED
+        - UNSUPPORTED_COMPANY
+  /api/projects/{projectId}/process/setup/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Setup]
+      operationId: completeProjectSetup
+      summary: Save the exact setup and complete step 1
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupWriteRequest"
+      responses:
+        "200":
+          description: Setup completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupCompleteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes:
+        - SETUP_INCOMPLETE
+        - STALE_PROJECT_VERSION
+        - DOWNSTREAM_INVALIDATION_CONFIRMATION_REQUIRED
+        - UNSUPPORTED_COMPANY
+  /api/projects/{projectId}/process/files:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Files]
+      operationId: getFilesWorkspace
+      summary: Load file slots, upload state, and inspection projection
+      responses:
+        "200":
+          description: Files workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FilesBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [FILES_PREREQUISITE_INCOMPLETE, FILES_STATE_LOAD_FAILED]
+  /api/projects/{projectId}/files/upload-sessions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Files]
+      operationId: createFileUploadSession
+      summary: Create a quarantine upload session for a required file role
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFileUploadRequest"
+      responses:
+        "201":
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [INVALID_FILE_TYPE, FILE_TOO_LARGE]
+  /api/projects/{projectId}/files/upload-sessions/{uploadId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/UploadId"
+    delete:
+      tags: [Files]
+      operationId: cancelFileUpload
+      summary: Cancel an uncommitted upload session
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Upload cancelled
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [UPLOAD_ALREADY_COMMITTED]
+  /api/projects/{projectId}/files/upload-sessions/{uploadId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/UploadId"
+    post:
+      tags: [Files]
+      operationId: completeFileUpload
+      summary: Verify uploaded bytes and start quarantine scanning
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadRequest"
+      responses:
+        "202":
+          description: Upload verification accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadStatusResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [CHECKSUM_MISMATCH, UPLOAD_EXPIRED]
+  /api/projects/{projectId}/validation:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Validation]
+      operationId: getValidationWorkspace
+      summary: Load the evidence-validation workspace
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [hypothesis, excel]
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Validation workspace
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationBootstrap"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [PREREQUISITE_INCOMPLETE, PLAN_REVALIDATION_REQUIRED]
+  /api/projects/{projectId}/validation/results/{resultId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ResultId"
+    get:
+      tags: [Validation]
+      operationId: getValidationResult
+      summary: Load one validation result and its evidence links
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResultResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [RESULT_NOT_FOUND]
+  /api/projects/{projectId}/evidence/{evidenceId}/viewer:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/EvidenceId"
+    get:
+      tags: [Validation]
+      operationId: getEvidenceViewer
+      summary: Resolve a safe viewer locator for source evidence
+      responses:
+        "200":
+          description: Evidence viewer locator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceViewerResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [EVIDENCE_NOT_FOUND, SOURCE_ACCESS_RESTRICTED]
+  /api/projects/{projectId}/validation/workbook:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Validation]
+      operationId: downloadValidationWorkbook
+      summary: Load the read-only SpreadJS workbook import descriptor
+      responses:
+        "200":
+          description: Read-only validation workbook descriptor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationWorkbookDescriptor"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [WORKBOOK_VERSION_MISMATCH]
+  /api/projects/{projectId}/validation/results/{resultId}/decisions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ResultId"
+    post:
+      tags: [Validation]
+      operationId: decideValidationResult
+      summary: Accept, reject, or request re-research for a result
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidationDecisionRequest"
+      responses:
+        "200":
+          description: Decision saved without a follow-up job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationMutationResponse"
+        "202":
+          description: Decision saved and follow-up work accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationMutationResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [STALE_VALIDATION_VERSION, INVALID_RESULT_TRANSITION]
+  /api/projects/{projectId}/validation/conflicts/{conflictId}/decision:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ConflictId"
+    post:
+      tags: [Validation]
+      operationId: decideValidationConflict
+      summary: Resolve an evidence conflict
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConflictDecisionRequest"
+      responses:
+        "200":
+          description: Conflict decision saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationMutationResponse"
+        "202":
+          description: Decision saved and recalculation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationMutationResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [CONFLICT_ALREADY_RESOLVED, STALE_VALIDATION_VERSION]
+  /api/projects/{projectId}/validation/drafts:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Validation]
+      operationId: saveValidationDraft
+      summary: Save validation notes and draft decisions
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidationDraftRequest"
+      responses:
+        "200":
+          description: Draft saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationMutationResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [INVALID_DECISION_REASON, STALE_VALIDATION_VERSION]
+  /api/projects/{projectId}/validation/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Validation]
+      operationId: completeValidationStep
+      summary: Pin the approved validation version and complete step 5
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteValidationRequest"
+      responses:
+        "200":
+          description: Validation step completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageCompleteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [STAGE_GATE_BLOCKED, WORKBOOK_UPDATE_IN_PROGRESS]
+  /api/projects/{projectId}/valuation:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Valuation]
+      operationId: getValuationWorkspace
+      summary: Load the PER valuation workspace
+      responses:
+        "200":
+          description: Valuation workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValuationBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VALUATION_PREREQUISITE_INCOMPLETE]
+  /api/projects/{projectId}/valuation/workbook:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Valuation]
+      operationId: downloadValuationWorkbook
+      summary: Download the authoritative valuation workbook
+      parameters:
+        - name: version
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Valuation workbook
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [WORKBOOK_VERSION_MISMATCH]
+  /api/projects/{projectId}/valuation/workbook/cells:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    patch:
+      tags: [Valuation]
+      operationId: updateValuationWorkbookCells
+      summary: Apply editable cell values and recalculate on the server
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkbookCellsUpdateRequest"
+      responses:
+        "200":
+          description: Recalculated cell delta
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookCellsUpdateResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [STALE_WORKBOOK_VERSION, READ_ONLY_CELL, FORMULA_CALCULATION_FAILED]
+  /api/projects/{projectId}/valuation/draft:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    put:
+      tags: [Valuation]
+      operationId: saveValuationDraft
+      summary: Save the valuation assumptions and authoritative result snapshot
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValuationDraftRequest"
+      responses:
+        "200":
+          description: Valuation draft saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValuationWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VALUATION_VERSION_CONFLICT, FORMULA_CALCULATION_FAILED]
+  /api/projects/{projectId}/valuation/approve:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Valuation]
+      operationId: approveValuation
+      summary: Approve the exact valuation version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveValuationRequest"
+      responses:
+        "200":
+          description: Valuation approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValuationWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [VALUATION_APPROVAL_BLOCKED, CALCULATION_STALE]
+  /api/projects/{projectId}/valuation/sensitivity:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Valuation]
+      operationId: calculateValuationSensitivity
+      summary: Calculate a non-persistent sensitivity matrix
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SensitivityRequest"
+      responses:
+        "200":
+          description: Sensitivity matrix
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SensitivityResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [SENSITIVITY_INPUT_INVALID]
+  /api/projects/{projectId}/valuation/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Valuation]
+      operationId: completeValuationStep
+      summary: Pin the approved valuation version and complete step 6
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteValuationRequest"
+      responses:
+        "200":
+          description: Valuation step completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageCompleteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [VALUATION_NOT_APPROVED, STALE_VALUATION_VERSION]
+  /api/projects/{projectId}/report-outline:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [ReportOutline]
+      operationId: getReportOutline
+      summary: Load the report-outline workspace and immutable template slots
+      responses:
+        "200":
+          description: Report-outline workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportOutlineBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [OUTLINE_PREREQUISITE_INCOMPLETE, OUTLINE_REVALIDATION_REQUIRED]
+    patch:
+      tags: [ReportOutline]
+      operationId: updateReportOutline
+      summary: Save editable page intent and evidence assignments
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportOutlineUpdateRequest"
+      responses:
+        "200":
+          description: Updated outline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportOutlineWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [OUTLINE_VERSION_CONFLICT, OUTLINE_SLOT_READ_ONLY, OUTLINE_VALUE_INVALID]
+  /api/projects/{projectId}/report-outline/generations:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [ReportOutline]
+      operationId: generateReportOutline
+      summary: Generate a proposal constrained by the template IR
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateReportOutlineRequest"
+      responses:
+        "202":
+          description: Outline generation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [OUTLINE_GENERATION_FAILED]
+  /api/projects/{projectId}/report-outline/pages/{pageId}/review:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/PageId"
+    post:
+      tags: [ReportOutline]
+      operationId: reviewReportOutlinePage
+      summary: Record the review state of one outline page
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewOutlinePageRequest"
+      responses:
+        "200":
+          description: Page review saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportOutlineWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [PAGE_OUTLINE_INVALID, OUTLINE_VERSION_CONFLICT]
+  /api/projects/{projectId}/report-outline/approve:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [ReportOutline]
+      operationId: approveReportOutline
+      summary: Approve the outline and start constrained report-draft generation
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveReportOutlineRequest"
+      responses:
+        "202":
+          description: Outline approved and draft generation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportOutlineApprovalAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [OUTLINE_APPROVAL_BLOCKED, REPORT_DRAFT_GENERATION_FAILED]
+  /api/projects/{projectId}/tasks/{taskId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [ReportOutline]
+      operationId: getProjectTask
+      summary: Poll a generic project task projection
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Task projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [TASK_NOT_FOUND]
+  /api/projects/{projectId}/evidence/{evidenceVersionId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/EvidenceVersionId"
+    get:
+      tags: [ReportOutline]
+      operationId: getEvidenceVersion
+      summary: Load one immutable evidence version
+      responses:
+        "200":
+          description: Evidence version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceVersionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [EVIDENCE_NOT_FOUND, SOURCE_ACCESS_RESTRICTED]
+  /api/projects/{projectId}/report:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Report]
+      operationId: getReportWorkspace
+      summary: Load report metadata, pages, current version, and edit capability
+      responses:
+        "200":
+          description: Report workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [REPORT_NOT_FOUND, REPORT_REVALIDATION_REQUIRED]
+  /api/projects/{projectId}/report/pages/{pageId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/PageId"
+    get:
+      tags: [Report]
+      operationId: getReportPage
+      summary: Load one report page with blocks and layout slots
+      responses:
+        "200":
+          description: Report page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPageResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [REPORT_PAGE_NOT_FOUND]
+  /api/projects/{projectId}/report/versions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Report]
+      operationId: listReportVersions
+      summary: List immutable report versions
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Report version list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportVersionListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+  /api/projects/{projectId}/report/versions/{versionId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/VersionId"
+    post:
+      tags: [Report]
+      operationId: restoreReportVersion
+      summary: Create a new head version from a prior immutable version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreReportVersionRequest"
+      responses:
+        "201":
+          description: Restored version created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSaveResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [REPORT_VERSION_CONFLICT, REPORT_VERSION_NOT_FOUND]
+  /api/projects/{projectId}/report/edit-sessions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportEditSession
+      summary: Acquire a time-limited report edit lease
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEditSessionRequest"
+      responses:
+        "201":
+          description: Edit lease acquired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [EDIT_SESSION_CONFLICT]
+  /api/projects/{projectId}/report/edit-sessions/{sessionId}/heartbeat:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Report]
+      operationId: heartbeatReportEditSession
+      summary: Extend an active report edit lease
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditSessionHeartbeatRequest"
+      responses:
+        "200":
+          description: Lease extended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [EDIT_SESSION_EXPIRED, EDIT_SESSION_NOT_OWNER]
+  /api/projects/{projectId}/report/edit-sessions/{sessionId}/takeover:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      tags: [Report]
+      operationId: takeoverReportEditSession
+      summary: Replace an expired or explicitly relinquished edit lease
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditSessionTakeoverRequest"
+      responses:
+        "200":
+          description: Lease transferred
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [EDIT_SESSION_ACTIVE, TAKEOVER_NOT_ALLOWED]
+  /api/projects/{projectId}/report/edit-sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SessionId"
+    delete:
+      tags: [Report]
+      operationId: closeReportEditSession
+      summary: Relinquish a report edit lease
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: Edit lease released
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [EDIT_SESSION_NOT_FOUND]
+  /api/projects/{projectId}/report/versions/{versionId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/VersionId"
+    patch:
+      tags: [Report]
+      operationId: saveReportOperations
+      summary: Apply typed operations and create a new immutable report version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveReportOperationsRequest"
+      responses:
+        "200":
+          description: New report version
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSaveResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [REPORT_VERSION_CONFLICT, EDIT_SESSION_CONFLICT, INVALID_REPORT_OPERATION, BLOCK_OVERFLOW]
+  /api/projects/{projectId}/report/ai-proposals:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportAiProposal
+      summary: Generate a non-mutating AI edit proposal
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAiProposalRequest"
+      responses:
+        "202":
+          description: Proposal generation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProposalAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [AI_PROPOSAL_INPUT_INVALID, AGENT_UNAVAILABLE]
+  /api/projects/{projectId}/report/ai-proposals/{proposalId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ProposalId"
+    get:
+      tags: [Report]
+      operationId: getReportAiProposal
+      summary: Poll a generated AI proposal and its typed diff
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: AI proposal projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiProposalProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [AI_PROPOSAL_NOT_FOUND]
+  /api/projects/{projectId}/report/ai-proposals/{proposalId}/apply:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ProposalId"
+    post:
+      tags: [Report]
+      operationId: applyReportAiProposal
+      summary: Validate and apply selected proposal operations
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyAiProposalRequest"
+      responses:
+        "200":
+          description: Proposal applied as a new report version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportSaveResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [PROPOSAL_STALE, PROTECTED_VALUE_CHANGED, UNVERIFIED_VALUE]
+  /api/projects/{projectId}/report/imports:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportImport
+      summary: Create a direct-upload session for a report attachment
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportImportRequest"
+      responses:
+        "201":
+          description: Report import upload session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportImportSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [INVALID_FILE_TYPE, FILE_TOO_LARGE]
+  /api/projects/{projectId}/report/imports/{importId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ImportId"
+    get:
+      tags: [Report]
+      operationId: getReportImport
+      summary: Poll parsing and ingestion of a report attachment
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Report import projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportImportProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [REPORT_IMPORT_NOT_FOUND]
+  /api/projects/{projectId}/report/imports/{importId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ImportId"
+    post:
+      tags: [Report]
+      operationId: completeReportImport
+      summary: Commit a report attachment upload and start safe ingestion
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadRequest"
+      responses:
+        "202":
+          description: Report attachment ingestion accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [CHECKSUM_MISMATCH, UPLOAD_EXPIRED, REPORT_IMPORT_NOT_FOUND]
+  /api/projects/{projectId}/report/blocks/{blockId}/provenance:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/BlockId"
+    get:
+      tags: [Report]
+      operationId: getReportBlockProvenance
+      summary: Load the evidence and version lineage for one report block
+      responses:
+        "200":
+          description: Block provenance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockProvenanceResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [REPORT_BLOCK_NOT_FOUND]
+  /api/projects/{projectId}/report/previews:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportPreview
+      summary: Render a preview for an exact report version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportPreviewRequest"
+      responses:
+        "202":
+          description: Preview render accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPreviewAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [REPORT_VERSION_NOT_FOUND, PREVIEW_ALREADY_RUNNING]
+  /api/projects/{projectId}/report/previews/{previewId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/PreviewId"
+    get:
+      tags: [Report]
+      operationId: getReportPreview
+      summary: Poll preview render status
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Preview projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPreviewProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [PREVIEW_NOT_FOUND]
+  /api/projects/{projectId}/report/validations:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportValidation
+      summary: Validate one exact report version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportValidationRequest"
+      responses:
+        "202":
+          description: Validation accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportValidationAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [REPORT_VERSION_NOT_FOUND, VALIDATION_ALREADY_RUNNING]
+  /api/projects/{projectId}/report/validations/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunId"
+    get:
+      tags: [Report]
+      operationId: getReportValidation
+      summary: Poll report validation and issue summary
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Report validation projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportValidationProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [VALIDATION_RUN_NOT_FOUND]
+  /api/projects/{projectId}/report/validations/{runId}/acknowledgements:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunId"
+    post:
+      tags: [Report]
+      operationId: acknowledgeReportValidationIssues
+      summary: Acknowledge non-blocking issues for one validation run
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcknowledgeValidationIssuesRequest"
+      responses:
+        "200":
+          description: Acknowledgements saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportValidationProjection"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VALIDATION_STALE, BLOCKING_ISSUE_NOT_ACKNOWLEDGEABLE]
+  /api/projects/{projectId}/report/versions/{versionId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/VersionId"
+    post:
+      tags: [Report]
+      operationId: approveReportVersion
+      summary: Approve a report version validated by the exact requested run
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveReportVersionRequest"
+      responses:
+        "200":
+          description: Report version approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportApprovalResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [VALIDATION_STALE, APPROVAL_VERSION_MISMATCH, UNVERIFIED_VALUE]
+  /api/projects/{projectId}/report/exports:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Report]
+      operationId: createReportExport
+      summary: Export an approved report version to PDF and/or XLSX
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportExportRequest"
+      responses:
+        "202":
+          description: Export accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportProjection"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [REPORT_NOT_APPROVED, EXPORT_ALREADY_RUNNING]
+  /api/projects/{projectId}/report/exports/{exportId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ExportId"
+    get:
+      tags: [Report]
+      operationId: getReportExport
+      summary: Poll per-format export status
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Export projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [EXPORT_NOT_FOUND]
+  /api/projects/{projectId}/report/exports/{exportId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ExportId"
+    post:
+      tags: [Report]
+      operationId: retryReportExport
+      summary: Retry only failed export formats
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryReportExportRequest"
+      responses:
+        "202":
+          description: Export retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportProjection"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [EXPORT_NOT_RETRYABLE]
+  /api/projects/{projectId}/report/exports/{exportId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ExportId"
+    post:
+      tags: [Report]
+      operationId: cancelReportExport
+      summary: Request cancellation of unfinished export formats
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelJobRequest"
+      responses:
+        "202":
+          description: Export cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportExportProjection"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [EXPORT_NOT_CANCELLABLE]
+  /api/projects/{projectId}/artifacts/{artifactId}/download:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/ArtifactId"
+    post:
+      tags: [Report]
+      operationId: createArtifactDownload
+      summary: Create a short-lived download URL for an authorized artifact
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ArtifactDownloadRequest"
+      responses:
+        "200":
+          description: Short-lived download locator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactDownloadResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [ARTIFACT_NOT_FOUND, ARTIFACT_NOT_READY]
+  /internal/v1/jobs/{jobId}/progress:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [InternalWorker]
+      operationId: recordJobProgress
+      summary: Record monotonic worker progress for a claimed job attempt
+      security:
+        - workloadIdentity: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalJobProgressRequest"
+      responses:
+        "200":
+          description: Progress accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalCommandResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-error-codes: [JOB_ATTEMPT_MISMATCH, JOB_TERMINAL, PROGRESS_REGRESSION]
+  /internal/v1/jobs/{jobId}/results:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [InternalWorker]
+      operationId: recordJobResults
+      summary: Register validated immutable result references for a job attempt
+      security:
+        - workloadIdentity: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalJobResultsRequest"
+      responses:
+        "200":
+          description: Result references accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalCommandResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-error-codes: [JOB_ATTEMPT_MISMATCH, RESULT_SCHEMA_INVALID, RESULT_HASH_CONFLICT]
+  /internal/v1/jobs/{jobId}/terminal:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [InternalWorker]
+      operationId: recordJobTerminal
+      summary: Apply a terminal job transition after results are registered
+      security:
+        - workloadIdentity: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalJobTerminalRequest"
+      responses:
+        "200":
+          description: Terminal transition accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalCommandResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-error-codes: [JOB_ATTEMPT_MISMATCH, RESULT_NOT_REGISTERED, TERMINAL_STATE_CONFLICT]
+  /internal/v1/reconciliation/jobs:
+    get:
+      tags: [InternalWorker]
+      operationId: listJobsForReconciliation
+      summary: List stale or uncertain jobs eligible for reconciliation
+      security:
+        - workloadIdentity: []
+      parameters:
+        - name: olderThan
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Reconciliation candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationJobListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-error-codes: [RECONCILIATION_QUERY_INVALID]
+  /internal/v1/reconciliation/jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [InternalWorker]
+      operationId: reconcileJob
+      summary: Reconcile database state with workflow and artifact state
+      security:
+        - workloadIdentity: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileJobRequest"
+      responses:
+        "200":
+          description: Reconciliation decision applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileJobResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-error-codes: [RECONCILIATION_CONFLICT, WORKFLOW_STATE_UNAVAILABLE]
+  /api/projects/{projectId}/file-inspections:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Files]
+      operationId: createFileInspection
+      summary: Start PDF, workbook, style, and mapping inspection
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInspectionRequest"
+      responses:
+        "202":
+          description: Inspection accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [FILE_NOT_ACCEPTED, STALE_FILE_VERSION]
+  /api/projects/{projectId}/file-inspections/{inspectionId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/InspectionId"
+    get:
+      tags: [Files]
+      operationId: getFileInspection
+      summary: Return the user-facing inspection projection
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Inspection projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [INSPECTION_NOT_FOUND]
+  /api/projects/{projectId}/file-inspections/{inspectionId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/InspectionId"
+    post:
+      tags: [Files]
+      operationId: retryFileInspection
+      summary: Retry a retryable inspection activity
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryJobRequest"
+      responses:
+        "202":
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [STALE_INSPECTION_INPUT, JOB_NOT_RETRYABLE]
+  /api/projects/{projectId}/mapping-sets/{mappingSetId}/revisions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MappingSetId"
+    post:
+      tags: [Files]
+      operationId: reviseMappingSet
+      summary: Save a validated mapping correction as a new version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MappingRevisionRequest"
+      responses:
+        "200":
+          description: Mapping revision created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MappingRevisionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [MAPPING_VERSION_CONFLICT, MAPPING_CHANGE_INVALID]
+  /api/projects/{projectId}/process/files/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Files]
+      operationId: completeFilesStep
+      summary: Pin passed file outputs and complete step 2
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FilesCompleteRequest"
+      responses:
+        "200":
+          description: Files step completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StageCompleteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes:
+        - INSPECTION_NOT_PASSED
+        - STALE_PROJECT_VERSION
+        - STALE_FILE_VERSION
+        - MAPPING_NOT_CONFIRMED
+  /api/projects/{projectId}/hypothesis:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Hypothesis]
+      operationId: getHypothesis
+      summary: Load the investment thesis and question-set workspace
+      responses:
+        "200":
+          description: Hypothesis workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HypothesisBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [HYPOTHESIS_PREREQUISITE_INCOMPLETE]
+    patch:
+      tags: [Hypothesis]
+      operationId: updateHypothesis
+      summary: Save the thesis or rating as a new hypothesis version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HypothesisUpdateRequest"
+      responses:
+        "200":
+          description: Updated hypothesis
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HypothesisWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VERSION_CONFLICT, INVALID_RATING, INVALID_THESIS]
+  /api/projects/{projectId}/hypothesis/generations:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Hypothesis]
+      operationId: createQuestionGeneration
+      summary: Generate a versioned research-question proposal
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateQuestionGenerationRequest"
+      responses:
+        "202":
+          description: Generation accepted
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionGenerationAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [INPUT_REVISION_CHANGED, AGENT_UNAVAILABLE]
+  /api/projects/{projectId}/hypothesis/generations/{generationId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/GenerationId"
+    get:
+      tags: [Hypothesis]
+      operationId: getQuestionGeneration
+      summary: Poll question generation status
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Generation projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionGenerationProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [GENERATION_NOT_FOUND]
+  /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/QuestionSetId"
+    post:
+      tags: [Hypothesis]
+      operationId: createResearchQuestion
+      summary: Add a question to a draft question set
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResearchQuestionRequest"
+      responses:
+        "200":
+          description: Updated question set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionSetResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [QUESTION_TEXT_INVALID, VERSION_CONFLICT]
+  /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/questions/{questionId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/QuestionSetId"
+      - $ref: "#/components/parameters/QuestionId"
+    patch:
+      tags: [Hypothesis]
+      operationId: updateResearchQuestion
+      summary: Update one research question
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateResearchQuestionRequest"
+      responses:
+        "200":
+          description: Updated question set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionSetResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [QUESTION_TEXT_INVALID, VERSION_CONFLICT]
+    delete:
+      tags: [Hypothesis]
+      operationId: deleteResearchQuestion
+      summary: Delete one question from a draft question set
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteResearchQuestionRequest"
+      responses:
+        "200":
+          description: Updated question set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionSetResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [QUESTION_COUNT_INVALID, VERSION_CONFLICT]
+  /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/order:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/QuestionSetId"
+    put:
+      tags: [Hypothesis]
+      operationId: reorderResearchQuestions
+      summary: Replace the question ordering
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderResearchQuestionsRequest"
+      responses:
+        "200":
+          description: Updated question set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionSetResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [QUESTION_ORDER_INVALID, VERSION_CONFLICT]
+  /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/approval:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/QuestionSetId"
+    post:
+      tags: [Hypothesis]
+      operationId: approveQuestionSet
+      summary: Approve the exact question-set and hypothesis inputs
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveQuestionSetRequest"
+      responses:
+        "200":
+          description: Approved question set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuestionSetResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [QUESTION_COUNT_INVALID, FALSIFICATION_REQUIRED, INPUT_REVISION_CHANGED]
+  /api/projects/{projectId}/research-plan:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Research]
+      operationId: getResearchPlan
+      summary: Load the research-plan workspace
+      responses:
+        "200":
+          description: Research-plan workspace
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchPlanBootstrap"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [PREREQUISITE_INCOMPLETE, PLAN_REVALIDATION_REQUIRED]
+    patch:
+      tags: [Research]
+      operationId: updateResearchPlan
+      summary: Save a new draft research-plan version
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchPlanUpdateRequest"
+      responses:
+        "200":
+          description: Updated research plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchPlanWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-idempotency-required: true
+      x-error-codes: [INVALID_PLAN_CHANGE, PLAN_VERSION_CONFLICT, PLAN_LOCKED_BY_ACTIVE_JOB]
+  /api/projects/{projectId}/research-plan/approve-and-start:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Research]
+      operationId: approveResearchPlanAndStart
+      summary: Approve immutable inputs and start the research workflow
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveResearchPlanRequest"
+      responses:
+        "202":
+          description: Research workflow accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchStartResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [PLAN_VALIDATION_FAILED, RESEARCH_JOB_ALREADY_ACTIVE, WORKFLOW_START_UNAVAILABLE]
+  /api/projects/{projectId}/research-jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [Research]
+      operationId: getResearchJob
+      summary: Poll research workflow progress
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Research job projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [JOB_NOT_FOUND]
+  /api/projects/{projectId}/research-jobs/{jobId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Research]
+      operationId: cancelResearchJob
+      summary: Request cancellation of a running research workflow
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelJobRequest"
+      responses:
+        "202":
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobProjection"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [JOB_NOT_CANCELLABLE]
+  /api/projects/{projectId}/research-jobs/{jobId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Research]
+      operationId: retryResearchJob
+      summary: Retry a failed research workflow from a safe boundary
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryJobRequest"
+      responses:
+        "202":
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [JOB_NOT_RETRYABLE]
+  /api/projects/{projectId}/source-uploads:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Research]
+      operationId: createSourceUpload
+      summary: Create a direct-upload session for a research source
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSourceUploadRequest"
+      responses:
+        "201":
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [INVALID_FILE_TYPE, FILE_TOO_LARGE]
+  /api/projects/{projectId}/source-uploads/{uploadId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/UploadId"
+    get:
+      tags: [Research]
+      operationId: getSourceUpload
+      summary: Poll source ingestion status
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Source upload projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceUploadProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [UPLOAD_NOT_FOUND]
+  /api/projects/{projectId}/source-uploads/{uploadId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/UploadId"
+    post:
+      tags: [Research]
+      operationId: completeSourceUpload
+      summary: Commit a source upload and start ingestion
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadRequest"
+      responses:
+        "202":
+          description: Source ingestion accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [CHECKSUM_MISMATCH, UPLOAD_EXPIRED]
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: reflo_session
+      description: HttpOnly, Secure, SameSite=Lax server session cookie.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Session-bound token required for authenticated mutation requests.
+    workloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: short-lived workload identity
+      description: Internal service identity with audience and workload-role validation.
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    InspectionId:
+      name: inspectionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    MappingSetId:
+      name: mappingSetId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    GenerationId:
+      name: generationId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    QuestionSetId:
+      name: questionSetId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    QuestionId:
+      name: questionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ResultId:
+      name: resultId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ConflictId:
+      name: conflictId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    EvidenceId:
+      name: evidenceId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    EvidenceVersionId:
+      name: evidenceVersionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    PageId:
+      name: pageId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ProposalId:
+      name: proposalId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ImportId:
+      name: importId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    BlockId:
+      name: blockId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    PreviewId:
+      name: previewId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ExportId:
+      name: exportId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+  headers:
+    RequestId:
+      description: Correlation ID assigned by the edge or application server.
+      schema:
+        type: string
+    ETag:
+      description: Projection or immutable version validator.
+      schema:
+        type: string
+    RetryAfter:
+      description: Number of seconds before a safe retry.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    Error:
+      description: Request failed
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotModified:
+      description: Projection has not changed since If-None-Match.
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+  schemas:
+    OpaqueId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    DecimalString:
+      type: string
+      pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      examples: ["12500.50"]
+    RelativeRoute:
+      type: string
+      pattern: "^/(?!/)[^\\r\\n]*$"
+      maxLength: 2048
+      examples: ["/projects"]
+    VersionNumber:
+      type: integer
+      minimum: 1
+    StageKey:
+      type: string
+      enum: [setup, files, hypothesis, research_plan, validation, valuation, report_outline]
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancel_requested, cancelled]
+    JobValidity:
+      type: string
+      enum: [current, obsolete]
+    Timestamp:
+      type: string
+      format: date-time
+    VersionRef:
+      type: object
+      additionalProperties: false
+      required: [versionId, version, lifecycleStatus, validityStatus, createdAt]
+      properties:
+        versionId:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        lifecycleStatus:
+          type: string
+          enum: [draft, approved, superseded]
+        validityStatus:
+          type: string
+          enum: [current, revalidation_required, obsolete]
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        hash:
+          type: string
+          minLength: 16
+          maxLength: 128
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId, retryable, details]
+      properties:
+        code:
+          type: string
+          pattern: "^[A-Z][A-Z0-9_]*$"
+        message:
+          type: string
+        requestId:
+          type: string
+        retryable:
+          type: boolean
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+        meta:
+          type: object
+          additionalProperties: true
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [hasNextPage]
+      properties:
+        nextCursor:
+          type: [string, "null"]
+        hasNextPage:
+          type: boolean
+    JobAccepted:
+      type: object
+      additionalProperties: false
+      required: [jobId, operationStatus, phase, progressPercent, retryable, pollUrl]
+      properties:
+        jobId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          enum: [queued, running]
+        phase:
+          type: string
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        retryable:
+          type: boolean
+        pollUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+        validationRoute:
+          $ref: "#/components/schemas/RelativeRoute"
+        acceptedAt:
+          $ref: "#/components/schemas/Timestamp"
+    InspectionAccepted:
+      type: object
+      additionalProperties: false
+      required: [inspectionId, operationStatus, outcome, validity, statusUrl]
+      properties:
+        inspectionId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        outcome:
+          type: string
+          const: pending
+        validity:
+          type: string
+          const: current
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    QuestionGenerationAccepted:
+      type: object
+      additionalProperties: false
+      required: [generationId, operationStatus, validity, statusUrl]
+      properties:
+        generationId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        validity:
+          type: string
+          const: current
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    ResearchStartResponse:
+      type: object
+      additionalProperties: false
+      required: [approvedPlanVersionId, job]
+      properties:
+        approvedPlanVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        job:
+          $ref: "#/components/schemas/JobAccepted"
+    TaskAccepted:
+      type: object
+      additionalProperties: false
+      required: [taskId, operationStatus, statusUrl]
+      properties:
+        taskId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    ReportOutlineApprovalAccepted:
+      type: object
+      additionalProperties: false
+      required: [outline, draftTask]
+      properties:
+        outline:
+          type: object
+          additionalProperties: false
+          required: [outlineId, version, status, approvedAt]
+          properties:
+            outlineId:
+              $ref: "#/components/schemas/OpaqueId"
+            version:
+              $ref: "#/components/schemas/VersionNumber"
+            status:
+              type: string
+              const: approved
+            approvedAt:
+              $ref: "#/components/schemas/Timestamp"
+        draftTask:
+          type: object
+          additionalProperties: false
+          required: [taskId, operationStatus, reportRoute]
+          properties:
+            taskId:
+              $ref: "#/components/schemas/OpaqueId"
+            operationStatus:
+              type: string
+              const: queued
+            reportRoute:
+              $ref: "#/components/schemas/RelativeRoute"
+    AiProposalAccepted:
+      type: object
+      additionalProperties: false
+      required: [proposalId, operationStatus, statusUrl]
+      properties:
+        proposalId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    ReportPreviewAccepted:
+      type: object
+      additionalProperties: false
+      required: [previewId, operationStatus, statusUrl]
+      properties:
+        previewId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    ReportValidationAccepted:
+      type: object
+      additionalProperties: false
+      required: [runId, operationStatus, statusUrl]
+      properties:
+        runId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    JobProjection:
+      type: object
+      additionalProperties: true
+      required: [jobId, operationStatus, validity, progressMode, progressPercent, retryable]
+      properties:
+        jobId:
+          $ref: "#/components/schemas/OpaqueId"
+        jobType:
+          type: string
+        operationStatus:
+          $ref: "#/components/schemas/JobStatus"
+        validity:
+          $ref: "#/components/schemas/JobValidity"
+        progressMode:
+          type: string
+          enum: [determinate, indeterminate]
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        phase:
+          type: [string, "null"]
+        message:
+          type: [string, "null"]
+        attempt:
+          type: integer
+          minimum: 1
+        heartbeatAt:
+          type: [string, "null"]
+          format: date-time
+        retryable:
+          type: boolean
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        resultRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/VersionRef"
+        links:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/RelativeRoute"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorBody"
+            - type: "null"
+    SessionUser:
+      type: object
+      additionalProperties: false
+      required: [id, email, name]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+          format: uri
+    SessionResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [authenticated]
+          properties:
+            authenticated:
+              const: false
+        - type: object
+          additionalProperties: false
+          required: [authenticated, user, csrfToken, expiresAt]
+          properties:
+            authenticated:
+              const: true
+            user:
+              $ref: "#/components/schemas/SessionUser"
+            csrfToken:
+              type: string
+              minLength: 32
+            expiresAt:
+              $ref: "#/components/schemas/Timestamp"
+    CompanySummary:
+      type: object
+      additionalProperties: false
+      required: [companyId, corpCode, name, ticker, exchange, industry, listed, mvpEligible]
+      properties:
+        companyId:
+          $ref: "#/components/schemas/OpaqueId"
+        corpCode:
+          type: string
+        name:
+          type: string
+        ticker:
+          type: string
+        exchange:
+          type: string
+          enum: [KOSPI, KOSDAQ]
+        industry:
+          type: string
+        listed:
+          type: boolean
+        mvpEligible:
+          type: boolean
+        ineligibilityReason:
+          type: [string, "null"]
+    CompanySearchResponse:
+      type: object
+      additionalProperties: false
+      required: [query, items]
+      properties:
+        query:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompanySummary"
+    ProjectSummary:
+      type: object
+      additionalProperties: true
+      required: [id, name, company, currentStage, status, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        name:
+          type: string
+        company:
+          $ref: "#/components/schemas/CompanySummary"
+        currentStage:
+          $ref: "#/components/schemas/StageKey"
+        status:
+          type: string
+          enum: [draft, active, completed, archived]
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+    ProjectListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectSummary"
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+    CreateProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        clientMutationId:
+          type: string
+          maxLength: 128
+    CreateProjectResponse:
+      type: object
+      additionalProperties: false
+      required: [project, nextUrl]
+      properties:
+        project:
+          $ref: "#/components/schemas/ProjectSummary"
+        nextUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+    SetupBootstrap:
+      type: object
+      additionalProperties: true
+      required: [project, setup, workflow, supportedTargetYears]
+      properties:
+        project:
+          type: object
+          additionalProperties: true
+          required: [projectId, name, status, currentStage, version, updatedAt]
+          properties:
+            projectId:
+              $ref: "#/components/schemas/OpaqueId"
+            name:
+              type: string
+            status:
+              type: string
+              enum: [draft, active, completed]
+            currentStage:
+              $ref: "#/components/schemas/StageKey"
+            version:
+              $ref: "#/components/schemas/VersionNumber"
+            updatedAt:
+              $ref: "#/components/schemas/Timestamp"
+        setup:
+          type: object
+          additionalProperties: true
+          required: [company, targetPeriod, cutoffDate, reportType, companyDomain, valuationMethod, status, version]
+          properties:
+            company:
+              oneOf:
+                - $ref: "#/components/schemas/CompanySummary"
+                - type: "null"
+            targetPeriod:
+              type: [object, "null"]
+              additionalProperties: false
+              properties:
+                year:
+                  type: integer
+                quarter:
+                  type: integer
+                  minimum: 1
+                  maximum: 4
+            cutoffDate:
+              type: [string, "null"]
+              format: date
+            reportType:
+              type: string
+              const: EARNINGS_REVIEW
+            companyDomain:
+              type: string
+              const: IT_MANUFACTURING
+            valuationMethod:
+              type: string
+              const: PER
+            status:
+              type: string
+              enum: [draft, complete]
+            version:
+              $ref: "#/components/schemas/VersionNumber"
+        workflow:
+          type: object
+          additionalProperties: true
+          required: [stageStates, allowedRoutes, downstreamImpact]
+          properties:
+            stageStates:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            allowedRoutes:
+              type: array
+              items:
+                $ref: "#/components/schemas/RelativeRoute"
+            downstreamImpact:
+              type: array
+              items:
+                $ref: "#/components/schemas/StageKey"
+        supportedTargetYears:
+          type: array
+          items:
+            type: integer
+    SetupWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [projectVersion, setup, confirmDownstreamInvalidation]
+      properties:
+        projectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        setup:
+          type: object
+          additionalProperties: false
+          properties:
+            companyId:
+              oneOf:
+                - $ref: "#/components/schemas/OpaqueId"
+                - type: "null"
+            targetPeriod:
+              type: [object, "null"]
+              additionalProperties: false
+              required: [year, quarter]
+              properties:
+                year:
+                  type: integer
+                quarter:
+                  type: integer
+                  minimum: 1
+                  maximum: 4
+            cutoffDate:
+              type: [string, "null"]
+              format: date
+        confirmDownstreamInvalidation:
+          type: boolean
+          default: false
+    SetupWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [projectVersion, setupVersion, savedAt, setupStatus, complete, invalidatedStages]
+      properties:
+        projectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        setupVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        savedAt:
+          $ref: "#/components/schemas/Timestamp"
+        setupStatus:
+          type: string
+          enum: [draft, complete]
+        complete:
+          type: boolean
+        invalidatedStages:
+          type: array
+          items:
+            $ref: "#/components/schemas/StageKey"
+    SetupCompleteResponse:
+      type: object
+      additionalProperties: false
+      required: [projectVersion, setupVersion, setupStatus, currentStage, currentRoute, invalidatedStages]
+      properties:
+        projectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        setupVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        setupStatus:
+          type: string
+          const: complete
+        currentStage:
+          type: string
+          const: files
+        currentRoute:
+          $ref: "#/components/schemas/RelativeRoute"
+        invalidatedStages:
+          type: array
+          items:
+            $ref: "#/components/schemas/StageKey"
+    StageCompleteResponse:
+      type: object
+      additionalProperties: true
+      required: [completedStage, nextStage, nextUrl, projectVersion]
+      properties:
+        completedStage:
+          $ref: "#/components/schemas/StageKey"
+        nextStage:
+          oneOf:
+            - $ref: "#/components/schemas/StageKey"
+            - type: "null"
+        nextUrl:
+          oneOf:
+            - $ref: "#/components/schemas/RelativeRoute"
+            - type: "null"
+        projectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        completedAt:
+          $ref: "#/components/schemas/Timestamp"
+    FileRole:
+      type: string
+      enum: [previous_report_pdf, analysis_workbook]
+    FileVersionSummary:
+      type: object
+      additionalProperties: true
+      required: [fileVersionId, role, fileName, status, version]
+      properties:
+        fileVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        role:
+          $ref: "#/components/schemas/FileRole"
+        fileName:
+          type: string
+        mediaType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [uploading, scanning, accepted, rejected, cancelled]
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+    FilesBootstrap:
+      type: object
+      additionalProperties: true
+      required: [projectId, projectVersion, slots]
+      properties:
+        projectId:
+          $ref: "#/components/schemas/OpaqueId"
+        projectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        slots:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [role, required, status]
+            properties:
+              role:
+                $ref: "#/components/schemas/FileRole"
+              required:
+                type: boolean
+              status:
+                type: string
+                enum: [empty, uploading, scanning, ready, rejected]
+              currentFile:
+                oneOf:
+                  - $ref: "#/components/schemas/FileVersionSummary"
+                  - type: "null"
+        inspection:
+          oneOf:
+            - $ref: "#/components/schemas/InspectionProjection"
+            - type: "null"
+    CreateFileUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [role, filename, byteSize, mediaType]
+      properties:
+        role:
+          $ref: "#/components/schemas/FileRole"
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        mediaType:
+          type: string
+          enum: [application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]
+        byteSize:
+          type: integer
+          minimum: 1
+        checksumSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    UploadSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [uploadId, uploadUrl, method, headers, expiresAt]
+      properties:
+        uploadId:
+          $ref: "#/components/schemas/OpaqueId"
+        uploadUrl:
+          type: string
+          format: uri
+        method:
+          type: string
+          const: PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        maxSizeBytes:
+          type: integer
+          minimum: 1
+    ReportImportSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [importId, upload]
+      properties:
+        importId:
+          $ref: "#/components/schemas/OpaqueId"
+        upload:
+          $ref: "#/components/schemas/UploadSessionResponse"
+    CompleteUploadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        checksumSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        parts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [partNumber, etag]
+            properties:
+              partNumber:
+                type: integer
+                minimum: 1
+              etag:
+                type: string
+    UploadStatusResponse:
+      type: object
+      additionalProperties: true
+      required: [uploadId, status]
+      properties:
+        uploadId:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          type: string
+          enum: [scanning, accepted, rejected]
+        fileVersion:
+          oneOf:
+            - $ref: "#/components/schemas/FileVersionSummary"
+            - type: "null"
+        job:
+          oneOf:
+            - $ref: "#/components/schemas/JobAccepted"
+            - type: "null"
+    CreateInspectionRequest:
+      type: object
+      additionalProperties: false
+      required: [pdfFileVersionId, workbookFileVersionId]
+      properties:
+        pdfFileVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        workbookFileVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+    InspectionIssue:
+      type: object
+      additionalProperties: true
+      required: [code, severity, message]
+      properties:
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, blocking]
+        message:
+          type: string
+        location:
+          type: [string, "null"]
+    InspectionProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            inspectionId:
+              $ref: "#/components/schemas/OpaqueId"
+            outcome:
+              type: [string, "null"]
+              enum: [passed, failed, null]
+            issues:
+              type: array
+              items:
+                $ref: "#/components/schemas/InspectionIssue"
+            mappingSet:
+              oneOf:
+                - $ref: "#/components/schemas/VersionRef"
+                - type: "null"
+    RetryJobRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    CancelJobRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    MappingChange:
+      type: object
+      additionalProperties: false
+      required: [source, target]
+      properties:
+        source:
+          type: string
+          minLength: 1
+        target:
+          type: string
+          minLength: 1
+        note:
+          type: string
+          maxLength: 500
+    MappingRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedMappingSetVersion, changes, requestId]
+      properties:
+        expectedMappingSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/MappingChange"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    MappingRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [mappingSetId, version, status]
+      properties:
+        mappingSetId:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [draft, confirmed]
+    FilesCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [inspectionId, templateVersion, workbookVersion, mappingSetVersion, expectedProjectVersion]
+      properties:
+        inspectionId:
+          $ref: "#/components/schemas/OpaqueId"
+        templateVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        mappingSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        expectedProjectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+    InvestmentRating:
+      type: string
+      enum: [BUY, HOLD, SELL]
+    ResearchQuestion:
+      type: object
+      additionalProperties: true
+      required: [id, text, category, falsificationCriteria, order]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+        category:
+          type: string
+          enum: [company, industry, financial, risk, valuation, catalyst]
+        falsificationCriteria:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        order:
+          type: integer
+          minimum: 0
+    QuestionSet:
+      type: object
+      additionalProperties: true
+      required: [id, version, status, questions]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [draft, approved, stale]
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchQuestion"
+        approvedAt:
+          type: [string, "null"]
+          format: date-time
+    HypothesisBootstrap:
+      type: object
+      additionalProperties: true
+      required: [projectId, draftVersion, inputRevision, provisionalRating, thesis, questionSet]
+      properties:
+        projectId:
+          $ref: "#/components/schemas/OpaqueId"
+        draftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        inputRevision:
+          $ref: "#/components/schemas/OpaqueId"
+        provisionalRating:
+          oneOf:
+            - $ref: "#/components/schemas/InvestmentRating"
+            - type: "null"
+        thesis:
+          type: string
+          maxLength: 5000
+        questionSet:
+          oneOf:
+            - $ref: "#/components/schemas/QuestionSet"
+            - type: "null"
+    HypothesisUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftVersion, requestId]
+      minProperties: 3
+      properties:
+        expectedDraftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        provisionalRating:
+          $ref: "#/components/schemas/InvestmentRating"
+        thesis:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    HypothesisWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [draftVersion, inputRevision, provisionalRating, thesis]
+      properties:
+        draftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        inputRevision:
+          $ref: "#/components/schemas/OpaqueId"
+        provisionalRating:
+          $ref: "#/components/schemas/InvestmentRating"
+        thesis:
+          type: string
+    CreateQuestionGenerationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedDraftVersion, inputRevision, requestId]
+      properties:
+        expectedDraftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        inputRevision:
+          $ref: "#/components/schemas/OpaqueId"
+        desiredCount:
+          type: integer
+          minimum: 3
+          maximum: 20
+        guidance:
+          type: string
+          maxLength: 2000
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    QuestionGenerationProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            generationId:
+              $ref: "#/components/schemas/OpaqueId"
+            questionSet:
+              oneOf:
+                - $ref: "#/components/schemas/QuestionSet"
+                - type: "null"
+    CreateResearchQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedQuestionSetVersion, text, category, falsificationCriteria, requestId]
+      properties:
+        expectedQuestionSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+        category:
+          type: string
+          enum: [company, industry, financial, risk, valuation, catalyst]
+        falsificationCriteria:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    UpdateResearchQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedQuestionSetVersion, requestId]
+      minProperties: 3
+      properties:
+        expectedQuestionSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+        category:
+          type: string
+          enum: [company, industry, financial, risk, valuation, catalyst]
+        falsificationCriteria:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    DeleteResearchQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedQuestionSetVersion, requestId]
+      properties:
+        expectedQuestionSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    ReorderResearchQuestionsRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedQuestionSetVersion, questionIds, requestId]
+      properties:
+        expectedQuestionSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        questionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    ApproveQuestionSetRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedQuestionSetVersion, inputRevision, requestId]
+      properties:
+        expectedQuestionSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        inputRevision:
+          $ref: "#/components/schemas/OpaqueId"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    QuestionSetResponse:
+      type: object
+      additionalProperties: false
+      required: [questionSet]
+      properties:
+        questionSet:
+          $ref: "#/components/schemas/QuestionSet"
+    ResearchPlanItem:
+      type: object
+      additionalProperties: true
+      required: [id, questionId, sourceTypes, priority, status]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        questionId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceTypes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [filing, company, news, industry, market_data, uploaded]
+        priority:
+          type: string
+          enum: [high, medium, low]
+        instructions:
+          type: string
+          maxLength: 2000
+        status:
+          type: string
+          enum: [draft, ready, blocked]
+    ResearchPlan:
+      type: object
+      additionalProperties: true
+      required: [id, version, status, items]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [draft, approved, running, completed, stale]
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchPlanItem"
+    ResearchPlanBootstrap:
+      type: object
+      additionalProperties: true
+      required: [projectId, plan, approvedQuestionSet]
+      properties:
+        projectId:
+          $ref: "#/components/schemas/OpaqueId"
+        plan:
+          $ref: "#/components/schemas/ResearchPlan"
+        approvedQuestionSet:
+          $ref: "#/components/schemas/VersionRef"
+        activeJob:
+          oneOf:
+            - $ref: "#/components/schemas/JobProjection"
+            - type: "null"
+    ResearchPlanUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, changes]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        changes:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: true
+            required: [op]
+            properties:
+              op:
+                type: string
+                enum: [set_question_included, set_question_sources, set_excel_target_included, set_material_included]
+    ResearchPlanWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [plan]
+      properties:
+        plan:
+          $ref: "#/components/schemas/ResearchPlan"
+    ApproveResearchPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [planId, expectedVersion]
+      properties:
+        planId:
+          $ref: "#/components/schemas/OpaqueId"
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+    CreateSourceUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [fileName, mediaType, sizeBytes, checksumSha256]
+      properties:
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        mediaType:
+          type: string
+          enum: [application/pdf, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv]
+        sizeBytes:
+          type: integer
+          minimum: 1
+        checksumSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        questionIds:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+    SourceUploadProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            uploadId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceVersion:
+              oneOf:
+                - $ref: "#/components/schemas/VersionRef"
+                - type: "null"
+    EvidenceLocator:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [pdf_page, workbook_cell, web_fragment, uploaded_file]
+        page:
+          type: integer
+          minimum: 1
+        sheet:
+          type: string
+        cell:
+          type: string
+          pattern: "^[A-Z]+[1-9][0-9]*$"
+        url:
+          type: string
+          format: uri
+        fragment:
+          type: string
+        fileName:
+          type: string
+    EvidenceSummary:
+      type: object
+      additionalProperties: true
+      required: [id, version, title, sourceType, locator, confidence]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        title:
+          type: string
+        sourceType:
+          type: string
+          enum: [filing, company, news, industry, market_data, uploaded, calculated]
+        locator:
+          $ref: "#/components/schemas/EvidenceLocator"
+        excerpt:
+          type: string
+        confidence:
+          $ref: "#/components/schemas/DecimalString"
+    ValidationResult:
+      type: object
+      additionalProperties: true
+      required: [id, questionId, status, conclusion, evidence]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        questionId:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          type: string
+          enum: [pending, supported, contradicted, inconclusive, accepted, rejected, re_researching]
+        conclusion:
+          type: string
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceSummary"
+    ValidationConflict:
+      type: object
+      additionalProperties: true
+      required: [id, status, evidenceIds]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          type: string
+          enum: [open, resolved]
+        evidenceIds:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        resolution:
+          type: [string, "null"]
+    ValidationBootstrap:
+      type: object
+      additionalProperties: true
+      required: [workspace, categories]
+      properties:
+        workspace:
+          type: object
+          additionalProperties: true
+          required: [projectId, researchPlanVersion, validationVersion, status, jobs, stageGate]
+          properties:
+            projectId:
+              $ref: "#/components/schemas/OpaqueId"
+            researchPlanVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            validationVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            status:
+              type: string
+              enum: [REVIEW_READY, REVIEW_BLOCKED, UPDATING, COMPLETED, REVALIDATION_REQUIRED]
+            cutoffAt:
+              $ref: "#/components/schemas/Timestamp"
+            jobs:
+              type: array
+              items:
+                $ref: "#/components/schemas/JobProjection"
+            stageGate:
+              type: object
+              additionalProperties: true
+              required: [canProceed, blockers]
+              properties:
+                canProceed:
+                  type: boolean
+                blockers:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                    required: [code]
+                    properties:
+                      code:
+                        type: string
+        categories:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        nextCursor:
+          type: [string, "null"]
+    WorkbookCellValue:
+      type: object
+      additionalProperties: false
+      required: [sheetId, address, valueType, rawValue, formattedText]
+      properties:
+        sheetId:
+          $ref: "#/components/schemas/OpaqueId"
+        address:
+          type: string
+          pattern: "^[A-Z]+[1-9][0-9]*$"
+        valueType:
+          type: string
+          enum: [number, string, boolean, blank, formula]
+        rawValue:
+          oneOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: string
+            - type: boolean
+            - type: "null"
+        formattedText:
+          type: string
+    ValuationSnapshot:
+      type: object
+      additionalProperties: true
+      required: [id, version, workbookVersion, status, targetPrice]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [draft, calculated, approved, stale]
+        targetPrice:
+          $ref: "#/components/schemas/DecimalString"
+        forwardEps:
+          $ref: "#/components/schemas/DecimalString"
+        targetPer:
+          $ref: "#/components/schemas/DecimalString"
+        currentPrice:
+          $ref: "#/components/schemas/DecimalString"
+        upsidePercent:
+          $ref: "#/components/schemas/DecimalString"
+    ValuationBootstrap:
+      type: object
+      additionalProperties: true
+      required: [project, workbook, permissions, calculation, valuationDraft, completion]
+      properties:
+        project:
+          type: object
+          additionalProperties: true
+          required: [projectId, companyName, targetPeriod, cutoffDate, cutoffAt]
+          properties:
+            projectId:
+              $ref: "#/components/schemas/OpaqueId"
+            companyName:
+              type: string
+            targetPeriod:
+              type: object
+              additionalProperties: false
+              required: [year, quarter]
+              properties:
+                year:
+                  type: integer
+                quarter:
+                  type: integer
+                  minimum: 1
+                  maximum: 4
+            cutoffDate:
+              type: string
+              format: date
+            cutoffAt:
+              $ref: "#/components/schemas/Timestamp"
+        workbook:
+          type: object
+          additionalProperties: true
+          required: [artifactId, originalWorkbookHash, workbookVersion, displayName, snapshotUrl, visibleSheets]
+          properties:
+            artifactId:
+              $ref: "#/components/schemas/OpaqueId"
+            originalWorkbookHash:
+              type: string
+            workbookVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            displayName:
+              type: string
+            snapshotUrl:
+              $ref: "#/components/schemas/RelativeRoute"
+            visibleSheets:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        permissions:
+          type: object
+          additionalProperties: true
+          required: [editableCellSetVersion, editableCells, requiredEditableCells, readOnlyReasons]
+          properties:
+            editableCellSetVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            editableCells:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            requiredEditableCells:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            readOnlyReasons:
+              type: object
+              additionalProperties:
+                type: string
+        calculation:
+          type: object
+          additionalProperties: true
+          required: [calculationRunId, status]
+          properties:
+            calculationRunId:
+              $ref: "#/components/schemas/OpaqueId"
+            status:
+              type: string
+              enum: [success, failed, stale]
+        valuationDraft:
+          type: object
+          additionalProperties: true
+          required: [draftVersion, inputMode]
+          properties:
+            draftVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            inputMode:
+              type: string
+              enum: [target_per, target_price]
+            targetPer:
+              oneOf:
+                - $ref: "#/components/schemas/DecimalString"
+                - type: "null"
+            targetPrice:
+              oneOf:
+                - $ref: "#/components/schemas/DecimalString"
+                - type: "null"
+        completion:
+          type: object
+          additionalProperties: true
+          required: [canApprove, canComplete, blockers]
+          properties:
+            canApprove:
+              type: boolean
+            canComplete:
+              type: boolean
+            blockers:
+              type: array
+              items:
+                type: string
+    WorkbookCellInput:
+      type: object
+      additionalProperties: false
+      required: [sheetId, address, valueType, value]
+      properties:
+        sheetId:
+          $ref: "#/components/schemas/OpaqueId"
+        address:
+          type: string
+          pattern: "^[A-Z]+[1-9][0-9]*$"
+        valueType:
+          type: string
+          enum: [number, string, boolean, blank]
+        value:
+          oneOf:
+            - $ref: "#/components/schemas/DecimalString"
+            - type: string
+            - type: boolean
+            - type: "null"
+    WorkbookCellsUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [workbookVersion, editableCellSetVersion, requestId, changes]
+      properties:
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        editableCellSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/WorkbookCellInput"
+    WorkbookCellsUpdateResponse:
+      type: object
+      additionalProperties: false
+      required: [workbookVersion, calculationRunId, appliedChanges, affectedCells]
+      properties:
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        calculationRunId:
+          $ref: "#/components/schemas/OpaqueId"
+        appliedChanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkbookCellValue"
+        affectedCells:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkbookCellValue"
+    ValuationDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [workbookVersion, draftVersion, requestId, inputMode]
+      properties:
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        draftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        inputMode:
+          type: string
+          enum: [target_per, target_price]
+        targetPer:
+          $ref: "#/components/schemas/DecimalString"
+        targetPrice:
+          $ref: "#/components/schemas/DecimalString"
+    ValuationWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [valuation]
+      properties:
+        valuation:
+          $ref: "#/components/schemas/ValuationSnapshot"
+    ApproveValuationRequest:
+      type: object
+      additionalProperties: false
+      required: [workbookVersion, draftVersion, calculationRunId, currentPriceSnapshotId, requestId]
+      properties:
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        draftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        calculationRunId:
+          $ref: "#/components/schemas/OpaqueId"
+        currentPriceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    SensitivityRequest:
+      type: object
+      additionalProperties: false
+      required: [workbookVersion, draftVersion]
+      properties:
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        draftVersion:
+          $ref: "#/components/schemas/VersionNumber"
+    SensitivityResponse:
+      type: object
+      additionalProperties: false
+      required: [epsAxis, perAxis, matrix, currentCell, ruleVersion]
+      properties:
+        epsAxis:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecimalString"
+        perAxis:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecimalString"
+        matrix:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: "#/components/schemas/DecimalString"
+        currentCell:
+          type: object
+          additionalProperties: false
+          required: [row, column]
+          properties:
+            row:
+              type: integer
+              minimum: 0
+            column:
+              type: integer
+              minimum: 0
+        ruleVersion:
+          type: string
+    CompleteValuationRequest:
+      type: object
+      additionalProperties: false
+      required: [valuationApprovalVersion, requestId]
+      properties:
+        valuationApprovalVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    OutlineSlot:
+      type: object
+      additionalProperties: true
+      required: [slotId, valueType, fixed, bindingStatus]
+      properties:
+        slotId:
+          $ref: "#/components/schemas/OpaqueId"
+        valueType:
+          type: string
+          enum: [string, decision, scalar, table, chart]
+        fixed:
+          type: boolean
+        suggestedValue: {}
+        userValue: {}
+        bindingStatus:
+          type: string
+          enum: [confirmed, revalidation-required, invalid]
+        sourceRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/VersionRef"
+    OutlinePage:
+      type: object
+      additionalProperties: true
+      required: [pageId, pageNumber, pageLabel, widthPt, heightPt, rotation, role, editable, reviewStatus, blocks]
+      properties:
+        pageId:
+          $ref: "#/components/schemas/OpaqueId"
+        pageNumber:
+          type: integer
+          minimum: 1
+        pageLabel:
+          type: string
+        widthPt:
+          $ref: "#/components/schemas/DecimalString"
+        heightPt:
+          $ref: "#/components/schemas/DecimalString"
+        rotation:
+          type: integer
+          enum: [0, 90, 180, 270]
+        role:
+          type: string
+        editable:
+          type: boolean
+        reviewStatus:
+          type: string
+          enum: [needs-review, reviewed, invalidated]
+        blocks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [blockId, role, required, fixed, slots]
+            properties:
+              blockId:
+                $ref: "#/components/schemas/OpaqueId"
+              role:
+                type: string
+              required:
+                type: boolean
+              fixed:
+                type: boolean
+              slots:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OutlineSlot"
+    ReportOutline:
+      type: object
+      additionalProperties: true
+      required: [outlineId, version, status, savedAt, pages]
+      properties:
+        outlineId:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [generating, editing, approved, stale]
+        savedAt:
+          $ref: "#/components/schemas/Timestamp"
+        pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutlinePage"
+    ReportOutlineBootstrap:
+      type: object
+      additionalProperties: true
+      required: [project, prerequisites, inputVersions, outline, evidenceSummary]
+      properties:
+        project:
+          type: object
+          additionalProperties: true
+          required: [projectId, name, companyName, ticker, targetPeriod, cutoffDate, currentStage]
+          properties:
+            projectId:
+              $ref: "#/components/schemas/OpaqueId"
+            name:
+              type: string
+            companyName:
+              type: string
+            ticker:
+              type: string
+            targetPeriod:
+              type: object
+              additionalProperties: true
+            cutoffDate:
+              type: string
+              format: date
+            currentStage:
+              type: string
+              const: report_outline
+        prerequisites:
+          type: object
+          additionalProperties: true
+          required: [ready, revalidationRequired, blockingItems]
+          properties:
+            ready:
+              type: boolean
+            revalidationRequired:
+              type: boolean
+            blockingItems:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        inputVersions:
+          $ref: "#/components/schemas/OutlineInputVersions"
+        outline:
+          $ref: "#/components/schemas/ReportOutline"
+        evidenceSummary:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceSummary"
+        draftTask:
+          oneOf:
+            - $ref: "#/components/schemas/JobProjection"
+            - type: "null"
+    OutlineInputVersions:
+      type: object
+      additionalProperties: false
+      required: [templateVersion, mappingSetId, workbookVersion, evidenceSetVersion, valuationVersion]
+      properties:
+        templateVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        mappingSetId:
+          $ref: "#/components/schemas/OpaqueId"
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        evidenceSetVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        valuationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        styleProfileVersion:
+          $ref: "#/components/schemas/VersionNumber"
+    OutlineSlotUpdate:
+      type: object
+      additionalProperties: false
+      required: [pageId, slotId, value]
+      properties:
+        pageId:
+          $ref: "#/components/schemas/OpaqueId"
+        slotId:
+          $ref: "#/components/schemas/OpaqueId"
+        value:
+          oneOf:
+            - type: string
+            - $ref: "#/components/schemas/DecimalString"
+            - type: boolean
+            - type: array
+            - type: object
+    ReportOutlineUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, requestId, changes]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OutlineSlotUpdate"
+    ReportOutlineWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [outlineVersion, savedAt, invalidatedPageIds, validationErrors]
+      properties:
+        outlineVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        savedAt:
+          $ref: "#/components/schemas/Timestamp"
+        invalidatedPageIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        validationErrors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+    GenerateReportOutlineRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedInputVersions, mode]
+      properties:
+        expectedInputVersions:
+          $ref: "#/components/schemas/OutlineInputVersions"
+        mode:
+          type: string
+          enum: [initial, reset]
+    ReviewOutlinePageRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedOutlineVersion]
+      properties:
+        expectedOutlineVersion:
+          $ref: "#/components/schemas/VersionNumber"
+    ApproveReportOutlineRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedOutlineVersion, expectedInputVersions]
+      properties:
+        expectedOutlineVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        expectedInputVersions:
+          $ref: "#/components/schemas/OutlineInputVersions"
+    EvidenceVersionResponse:
+      type: object
+      additionalProperties: false
+      required: [evidence]
+      properties:
+        evidence:
+          $ref: "#/components/schemas/EvidenceSummary"
+    ReportBlock:
+      type: object
+      additionalProperties: true
+      required: [blockId, role, bbox, permission, contentSchema, revision, slotIds, content, provenanceStatus]
+      properties:
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        revision:
+          $ref: "#/components/schemas/VersionNumber"
+        role:
+          type: string
+        bbox:
+          type: object
+          additionalProperties: false
+          required: [x, y, width, height]
+          properties:
+            x:
+              $ref: "#/components/schemas/DecimalString"
+            y:
+              $ref: "#/components/schemas/DecimalString"
+            width:
+              $ref: "#/components/schemas/DecimalString"
+            height:
+              $ref: "#/components/schemas/DecimalString"
+        permission:
+          type: string
+          enum: [fixed, editable_text, editable_binding]
+        contentSchema:
+          type: object
+          additionalProperties: true
+        slotIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        content:
+          type: object
+          additionalProperties: true
+        provenanceStatus:
+          type: string
+          enum: [verified, user_assumption, unverified, stale]
+        evidenceVersionIds:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+    ReportPage:
+      type: object
+      additionalProperties: true
+      required: [pageId, number, label, widthPt, heightPt, rotation, title, blockIds, blocks]
+      properties:
+        pageId:
+          $ref: "#/components/schemas/OpaqueId"
+        number:
+          type: integer
+          minimum: 1
+        label:
+          type: string
+        widthPt:
+          $ref: "#/components/schemas/DecimalString"
+        heightPt:
+          $ref: "#/components/schemas/DecimalString"
+        rotation:
+          type: integer
+          enum: [0, 90, 180, 270]
+        title:
+          type: string
+        blockIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportBlock"
+    ReportVersion:
+      type: object
+      additionalProperties: true
+      required: [id, version, status, parentVersionId, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        status:
+          type: string
+          enum: [draft, validated, approved, stale]
+        parentVersionId:
+          type: [string, "null"]
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        createdBy:
+          $ref: "#/components/schemas/OpaqueId"
+        reason:
+          type: string
+    ReportBootstrap:
+      type: object
+      additionalProperties: true
+      required: [project, report, permissions, pages, activeJobs]
+      properties:
+        project:
+          type: object
+          additionalProperties: true
+          required: [projectId, name, companyName, ticker, targetPeriod, cutoffDate, cutoffAt]
+          properties:
+            projectId:
+              $ref: "#/components/schemas/OpaqueId"
+            name:
+              type: string
+            companyName:
+              type: string
+            ticker:
+              type: string
+            targetPeriod:
+              type: object
+              additionalProperties: true
+            cutoffDate:
+              type: string
+              format: date
+            cutoffAt:
+              $ref: "#/components/schemas/Timestamp"
+        report:
+          type: object
+          additionalProperties: true
+          required: [reportId, status, activeVersionId, version, pageCount, validationStatus, previewStatus, lastSavedAt]
+          properties:
+            reportId:
+              $ref: "#/components/schemas/OpaqueId"
+            status:
+              type: string
+              enum: [working, approved, stale]
+            activeVersionId:
+              $ref: "#/components/schemas/OpaqueId"
+            version:
+              $ref: "#/components/schemas/VersionNumber"
+            pageCount:
+              type: integer
+              minimum: 1
+            validationStatus:
+              type: string
+              enum: [not_run, running, valid, invalid, stale]
+            previewStatus:
+              type: string
+              enum: [not_rendered, rendering, ready, failed, stale]
+            lastSavedAt:
+              $ref: "#/components/schemas/Timestamp"
+        permissions:
+          type: object
+          additionalProperties: false
+          required: [canView, canEdit, canApprove, canExport]
+          properties:
+            canView:
+              type: boolean
+            canEdit:
+              type: boolean
+            canApprove:
+              type: boolean
+            canExport:
+              type: boolean
+        pages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [pageId, number, label, title]
+            properties:
+              pageId:
+                $ref: "#/components/schemas/OpaqueId"
+              number:
+                type: integer
+                minimum: 1
+              label:
+                type: string
+              title:
+                type: string
+        activeJobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobProjection"
+    ReportPageResponse:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, page]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        page:
+          $ref: "#/components/schemas/ReportPage"
+    ReportVersionListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportVersion"
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+    RestoreReportVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [headVersionId, reason]
+      properties:
+        headVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    CreateEditSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, clientId]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    EditSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, reportVersionId, holderUserId, expiresAt, heartbeatAfterSeconds]
+      properties:
+        sessionId:
+          $ref: "#/components/schemas/OpaqueId"
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        holderUserId:
+          $ref: "#/components/schemas/OpaqueId"
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        heartbeatAfterSeconds:
+          type: integer
+          minimum: 1
+    EditSessionHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      required: [clientId]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 128
+    EditSessionTakeoverRequest:
+      type: object
+      additionalProperties: false
+      required: [clientId, observedExpiresAt]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        observedExpiresAt:
+          $ref: "#/components/schemas/Timestamp"
+    ReplaceTextOperation:
+      type: object
+      additionalProperties: false
+      required: [type, blockId, baseBlockRevision, range, text]
+      properties:
+        type:
+          const: replace_text
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        baseBlockRevision:
+          $ref: "#/components/schemas/VersionNumber"
+        range:
+          type: object
+          additionalProperties: false
+          required: [start, end]
+          properties:
+            start:
+              type: integer
+              minimum: 0
+            end:
+              type: integer
+              minimum: 0
+        text:
+          type: string
+          maxLength: 20000
+    ReplaceBlockTextOperation:
+      type: object
+      additionalProperties: false
+      required: [type, blockId, baseBlockRevision, text]
+      properties:
+        type:
+          const: replace_block_text
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        baseBlockRevision:
+          $ref: "#/components/schemas/VersionNumber"
+        text:
+          type: string
+          maxLength: 20000
+    ApplyProposalOperation:
+      type: object
+      additionalProperties: false
+      required: [type, blockId, baseBlockRevision, proposalId]
+      properties:
+        type:
+          const: apply_ai_proposal
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        baseBlockRevision:
+          $ref: "#/components/schemas/VersionNumber"
+        proposalId:
+          $ref: "#/components/schemas/OpaqueId"
+    ApplyBindingOperation:
+      type: object
+      additionalProperties: false
+      required: [type, blockId, baseBlockRevision, bindingId]
+      properties:
+        type:
+          type: string
+          enum: [apply_table_binding, apply_chart_binding]
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        baseBlockRevision:
+          $ref: "#/components/schemas/VersionNumber"
+        bindingId:
+          $ref: "#/components/schemas/OpaqueId"
+    HistoryOperation:
+      type: object
+      additionalProperties: false
+      required: [type, inverseOfOperationId]
+      properties:
+        type:
+          type: string
+          enum: [undo, redo]
+        inverseOfOperationId:
+          $ref: "#/components/schemas/OpaqueId"
+    ReportOperation:
+      oneOf:
+        - $ref: "#/components/schemas/ReplaceTextOperation"
+        - $ref: "#/components/schemas/ReplaceBlockTextOperation"
+        - $ref: "#/components/schemas/ApplyProposalOperation"
+        - $ref: "#/components/schemas/ApplyBindingOperation"
+        - $ref: "#/components/schemas/HistoryOperation"
+      discriminator:
+        propertyName: type
+    SaveReportOperationsRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, editSessionId, clientMutationId, operations]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        editSessionId:
+          $ref: "#/components/schemas/OpaqueId"
+        clientMutationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/ReportOperation"
+    ReportSaveResponse:
+      type: object
+      additionalProperties: false
+      required: [reportVersion, changedBlocks]
+      properties:
+        reportVersion:
+          $ref: "#/components/schemas/ReportVersion"
+        changedBlocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportBlock"
+    CreateAiProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, targetBlockIds, instruction]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        targetBlockIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        instruction:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        preserve:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [numbers, evidence, rating, user_assumptions]
+    AiProposalProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            proposalId:
+              $ref: "#/components/schemas/OpaqueId"
+            baseReportVersionId:
+              $ref: "#/components/schemas/OpaqueId"
+            operations:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReportOperation"
+            warnings:
+              type: array
+              items:
+                type: string
+    ApplyAiProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [baseReportVersionId, editSessionId, operationIndexes]
+      properties:
+        baseReportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        editSessionId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationIndexes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 0
+    CreateReportImportRequest:
+      type: object
+      additionalProperties: false
+      required: [fileName, mediaType, sizeBytes, checksumSha256, targetPageId]
+      properties:
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        mediaType:
+          type: string
+          enum: [image/png, image/jpeg, application/pdf]
+        sizeBytes:
+          type: integer
+          minimum: 1
+        checksumSha256:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        targetPageId:
+          $ref: "#/components/schemas/OpaqueId"
+    ReportImportProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            importId:
+              $ref: "#/components/schemas/OpaqueId"
+            artifact:
+              oneOf:
+                - $ref: "#/components/schemas/VersionRef"
+                - type: "null"
+            suggestedOperation:
+              oneOf:
+                - $ref: "#/components/schemas/ReportOperation"
+                - type: "null"
+    BlockProvenanceResponse:
+      type: object
+      additionalProperties: false
+      required: [blockId, reportVersionId, status, evidence, lineage]
+      properties:
+        blockId:
+          $ref: "#/components/schemas/OpaqueId"
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          type: string
+          enum: [verified, user_assumption, unverified, stale]
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceSummary"
+        lineage:
+          type: array
+          items:
+            $ref: "#/components/schemas/VersionRef"
+    CreateReportPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, format]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        format:
+          type: string
+          enum: [pdf]
+    ReportPreviewProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            previewId:
+              $ref: "#/components/schemas/OpaqueId"
+            reportVersionId:
+              $ref: "#/components/schemas/OpaqueId"
+            artifactId:
+              type: [string, "null"]
+            expiresAt:
+              type: [string, "null"]
+              format: date-time
+    CreateReportValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+    ReportValidationIssue:
+      type: object
+      additionalProperties: true
+      required: [id, code, severity, message, acknowledgeable]
+      properties:
+        id:
+          $ref: "#/components/schemas/OpaqueId"
+        code:
+          type: string
+        severity:
+          type: string
+          enum: [warning, blocking]
+        message:
+          type: string
+        blockId:
+          type: [string, "null"]
+        acknowledgeable:
+          type: boolean
+        acknowledged:
+          type: boolean
+    ReportValidationProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          properties:
+            runId:
+              $ref: "#/components/schemas/OpaqueId"
+            reportVersionId:
+              $ref: "#/components/schemas/OpaqueId"
+            issues:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReportValidationIssue"
+            blockingIssueCount:
+              type: integer
+              minimum: 0
+    AcknowledgeValidationIssuesRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, issueIds, note]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        issueIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ApproveReportVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [validationRunId]
+      properties:
+        validationRunId:
+          $ref: "#/components/schemas/OpaqueId"
+    ReportApprovalResponse:
+      type: object
+      additionalProperties: false
+      required: [reportVersion, approvedAt]
+      properties:
+        reportVersion:
+          $ref: "#/components/schemas/ReportVersion"
+        approvedAt:
+          $ref: "#/components/schemas/Timestamp"
+    ExportFormat:
+      type: string
+      enum: [pdf, xlsx]
+    CreateReportExportRequest:
+      type: object
+      additionalProperties: false
+      required: [reportVersionId, formats]
+      properties:
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        formats:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ExportFormat"
+    ExportFileProjection:
+      type: object
+      additionalProperties: false
+      required: [format, status]
+      properties:
+        format:
+          $ref: "#/components/schemas/ExportFormat"
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        artifactId:
+          type: [string, "null"]
+        errorCode:
+          type: [string, "null"]
+    ReportExportProjection:
+      type: object
+      additionalProperties: true
+      required: [exportId, reportVersionId, status, outcome, files]
+      properties:
+        exportId:
+          $ref: "#/components/schemas/OpaqueId"
+        reportVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        outcome:
+          type: string
+          enum: [pending, complete, partial, failed, cancelled]
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportFileProjection"
+    RetryReportExportRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        formats:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ExportFormat"
+    ArtifactDownloadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        disposition:
+          type: string
+          enum: [attachment, inline]
+          default: attachment
+    ArtifactDownloadResponse:
+      type: object
+      additionalProperties: false
+      required: [url, expiresAt, fileName, mediaType]
+      properties:
+        url:
+          type: string
+          format: uri
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        fileName:
+          type: string
+        mediaType:
+          type: string
+    InternalJobProgressRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, attempt, sequence, inputVersionIds, phase, progressMode, progressPercent, heartbeatAt]
+      properties:
+        schemaVersion:
+          type: integer
+          minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        sequence:
+          type: integer
+          minimum: 1
+        inputVersionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        progressMode:
+          type: string
+          enum: [determinate, indeterminate]
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        phase:
+          type: string
+          minLength: 1
+          maxLength: 100
+        message:
+          type: string
+          maxLength: 500
+        heartbeatAt:
+          $ref: "#/components/schemas/Timestamp"
+    InternalResultRef:
+      type: object
+      additionalProperties: false
+      required: [entityType, entityId, version, hash]
+      properties:
+        entityType:
+          type: string
+          minLength: 1
+          maxLength: 100
+        entityId:
+          $ref: "#/components/schemas/OpaqueId"
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        hash:
+          type: string
+          minLength: 16
+          maxLength: 128
+    InternalJobResultsRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, attempt, sequence, inputVersionIds, resultType, payload, results]
+      properties:
+        schemaVersion:
+          type: integer
+          minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        sequence:
+          type: integer
+          minimum: 1
+        inputVersionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        resultType:
+          type: string
+          minLength: 1
+          maxLength: 100
+        payload:
+          type: object
+          additionalProperties: true
+        results:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InternalResultRef"
+        tool:
+          type: object
+          additionalProperties: false
+          required: [name, version]
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+    InternalJobTerminalRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, attempt, sequence, status, finishedAt]
+      properties:
+        schemaVersion:
+          type: integer
+          minimum: 1
+        attempt:
+          type: integer
+          minimum: 1
+        sequence:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [succeeded, failed, cancelled]
+        finishedAt:
+          $ref: "#/components/schemas/Timestamp"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/ErrorBody"
+            - type: "null"
+    InternalCommandResponse:
+      type: object
+      additionalProperties: false
+      required: [jobId, attempt, applied]
+      properties:
+        jobId:
+          $ref: "#/components/schemas/OpaqueId"
+        attempt:
+          type: integer
+          minimum: 1
+        applied:
+          type: boolean
+        currentStatus:
+          $ref: "#/components/schemas/JobStatus"
+    ReconciliationJob:
+      type: object
+      additionalProperties: false
+      required: [jobId, status, attempt, lastHeartbeatAt, workflowRef]
+      properties:
+        jobId:
+          $ref: "#/components/schemas/OpaqueId"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        attempt:
+          type: integer
+          minimum: 1
+        lastHeartbeatAt:
+          type: [string, "null"]
+          format: date-time
+        workflowRef:
+          type: string
+          minLength: 1
+    ReconciliationJobListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationJob"
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+    ReconcileJobRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, observedStatus, observedAttempt, action]
+      properties:
+        schemaVersion:
+          type: integer
+          minimum: 1
+        observedStatus:
+          $ref: "#/components/schemas/JobStatus"
+        observedAttempt:
+          type: integer
+          minimum: 1
+        action:
+          type: string
+          enum: [refresh, mark_failed, enqueue_retry, no_change]
+        reason:
+          type: string
+          maxLength: 1000
+    ReconcileJobResponse:
+      type: object
+      additionalProperties: false
+      required: [job, actionApplied]
+      properties:
+        job:
+          $ref: "#/components/schemas/JobProjection"
+        actionApplied:
+          type: string
+          enum: [refreshed, marked_failed, retry_enqueued, none]
+        updateJob:
+          oneOf:
+            - $ref: "#/components/schemas/JobProjection"
+            - type: "null"
+    ValidationResultResponse:
+      type: object
+      additionalProperties: false
+      required: [validationVersion, result]
+      properties:
+        validationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        result:
+          $ref: "#/components/schemas/ValidationResult"
+    EvidenceViewerResponse:
+      type: object
+      additionalProperties: false
+      required: [evidence, viewer]
+      properties:
+        evidence:
+          $ref: "#/components/schemas/EvidenceSummary"
+        viewer:
+          type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              enum: [signed_url, embedded_pdf, workbook_range, external_link]
+            url:
+              type: [string, "null"]
+              format: uri
+            expiresAt:
+              type: [string, "null"]
+              format: date-time
+            locator:
+              $ref: "#/components/schemas/EvidenceLocator"
+    ValidationWorkbookDescriptor:
+      type: object
+      additionalProperties: false
+      required:
+        - originalWorkbookHash
+        - workbookVersion
+        - importUrl
+        - expiresAt
+        - visibleSheets
+        - validationTargets
+        - readOnlyReason
+      properties:
+        originalWorkbookHash:
+          type: string
+          minLength: 16
+        workbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        importUrl:
+          type: string
+          format: uri
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        visibleSheets:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [sheetId, name]
+            properties:
+              sheetId:
+                $ref: "#/components/schemas/OpaqueId"
+              name:
+                type: string
+        validationTargets:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required: [sheetId, address]
+            properties:
+              sheetId:
+                $ref: "#/components/schemas/OpaqueId"
+              address:
+                type: string
+        readOnlyReason:
+          type: string
+          const: validation_workspace
+    ValidationDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedValidationVersion, action, reason]
+      properties:
+        expectedValidationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        action:
+          type: string
+          enum: [REJECT, RESTORE, REINVESTIGATE]
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ConflictDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedValidationVersion, selectedEvidenceId, reason]
+      properties:
+        expectedValidationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        selectedEvidenceId:
+          $ref: "#/components/schemas/OpaqueId"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    ValidationDraftItem:
+      type: object
+      additionalProperties: false
+      required: [targetType, targetId, note]
+      properties:
+        targetType:
+          type: string
+          enum: [result, conflict]
+        targetId:
+          $ref: "#/components/schemas/OpaqueId"
+        note:
+          type: string
+          maxLength: 2000
+    ValidationDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedValidationVersion, items]
+      properties:
+        expectedValidationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationDraftItem"
+    ValidationMutationResponse:
+      type: object
+      additionalProperties: true
+      required: [validationVersion]
+      properties:
+        validationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/ValidationResult"
+            - type: "null"
+        conflict:
+          oneOf:
+            - $ref: "#/components/schemas/ValidationConflict"
+            - type: "null"
+        job:
+          oneOf:
+            - $ref: "#/components/schemas/JobAccepted"
+            - type: "null"
+    CompleteValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedValidationVersion]
+      properties:
+        expectedValidationVersion:
+          $ref: "#/components/schemas/VersionNumber"

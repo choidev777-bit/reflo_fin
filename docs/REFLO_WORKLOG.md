@@ -15,12 +15,13 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 6. Excel 기반 밸류에이션
 7. 보고서 구성 및 생성
 
-제품 동작과 기술 판단의 기준 문서는 다음 네 파일이다.
+제품 동작과 기술 판단의 기준 문서는 다음 다섯 파일이다.
 
 - [REFLO_URL_SERVICE_BEHAVIOR_v1.md](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [REFLO_TECHNICAL_DECISIONS_v1.md](./REFLO_TECHNICAL_DECISIONS_v1.md)
 - [REFLO_SYSTEM_ARCHITECTURE_v1.md](./REFLO_SYSTEM_ARCHITECTURE_v1.md)
 - [REFLO_ERD_v1.md](./REFLO_ERD_v1.md)
+- [REFLO_API_SPEC_v1.md](./REFLO_API_SPEC_v1.md)
 
 화면별 실제 구현 계약의 목차와 공통 원칙은 다음 인덱스에서 관리하고, 상세 명세는 `docs/screens/` 아래에 URL별로 분리한다.
 
@@ -405,14 +406,13 @@ npm run start
 
 ## 6. 다음 우선 작업
 
-1. 시스템 아키텍처를 기준으로 ERD를 작성한다.
-2. 화면 명세에 흩어진 endpoint를 통합 API 명세와 OpenAPI 초안으로 정리한다.
-3. Google OAuth/OIDC package, PostgreSQL access·migration 도구를 확정하고 SpreadJS 라이선스를 확인한다.
-4. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
-5. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
-6. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
-7. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
-8. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
+1. worker artifact JSON Schema와 TS·Python·C# 생성 규칙을 작성한다.
+2. Google OAuth/OIDC package, PostgreSQL access·migration 도구를 확정하고 SpreadJS 라이선스를 확인한다.
+3. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
+4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
+5. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
+6. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
+7. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
 
 ## 7. 작업 기록 규칙
 

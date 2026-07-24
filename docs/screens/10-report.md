@@ -820,7 +820,8 @@ API 경로는 애플리케이션 계약이다. 실제 backend framework는 별�
 | `POST` | `/api/projects/{projectId}/report/ai-proposals` | text·table·chart proposal job 생성 |
 | `GET` | `/api/projects/{projectId}/report/ai-proposals/{proposalId}` | 상태·diff·검사 결과 조회 |
 | `POST` | `/api/projects/{projectId}/report/ai-proposals/{proposalId}/apply` | 최신 version에 proposal 적용 |
-| `POST` | `/api/projects/{projectId}/report/imports` | 첨부 upload session과 검사 job 생성 |
+| `POST` | `/api/projects/{projectId}/report/imports` | 첨부 upload session 생성 |
+| `POST` | `/api/projects/{projectId}/report/imports/{importId}/complete` | 직접 업로드 완료 검증 후 검사 job 시작 |
 | `GET` | `/api/projects/{projectId}/report/imports/{importId}` | 첨부 처리 상태·미리보기 조회 |
 
 #### 근거·미리보기·검증·승인

@@ -2,7 +2,7 @@
 
 **문서 상태:** 기술 의사결정 기준선  
 **작성 기준일:** 2026-07-22  
-**연결 문서:** `REFLO_URL_SERVICE_BEHAVIOR_v1.md`, `REFLO_SYSTEM_ARCHITECTURE_v1.md`, `REFLO_ERD_v1.md`
+**연결 문서:** `REFLO_URL_SERVICE_BEHAVIOR_v1.md`, `REFLO_SYSTEM_ARCHITECTURE_v1.md`, `REFLO_ERD_v1.md`, `REFLO_API_SPEC_v1.md`
 **운영 방식:** 기술 결정을 하나씩 확정할 때마다 결정 ID를 추가하고 변경 이력을 기록한다.
 
 ## 1. 문서 목적

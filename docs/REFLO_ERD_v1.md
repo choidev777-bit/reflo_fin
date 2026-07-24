@@ -9,6 +9,7 @@
 - [시스템 아키텍처](./REFLO_SYSTEM_ARCHITECTURE_v1.md)
 - [URL별 서비스 동작 명세](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [기술 결정 사항](./REFLO_TECHNICAL_DECISIONS_v1.md)
+- [API 명세](./REFLO_API_SPEC_v1.md)
 - [화면 구현 명세 인덱스](./REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
 - [작업 로그](./REFLO_WORKLOG.md)
 
@@ -27,7 +28,7 @@
 
 대형 PDF·XLSX·원문 snapshot·page image·render 결과의 byte는 PostgreSQL에 저장하지 않는다. 이 파일들은 S3 호환 객체 저장소에 두고 PostgreSQL에는 `artifact` metadata와 관계만 저장한다. Temporal event history도 PostgreSQL에 복제하지 않으며 사용자 화면에 필요한 projection만 저장한다.
 
-이 문서는 API endpoint별 request·response schema나 실제 migration SQL을 대신하지 않는다. HTTP 계약은 후속 API 문서와 `contracts/openapi/reflo-v1.yaml`, worker 계약은 `contracts/schemas/`에서 정의한다.
+이 문서는 API endpoint별 request·response schema나 실제 migration SQL을 대신하지 않는다. HTTP 계약은 [API 명세](./REFLO_API_SPEC_v1.md)와 [`contracts/openapi/reflo-v1.yaml`](../contracts/openapi/reflo-v1.yaml), worker artifact 계약은 `contracts/schemas/`에서 정의한다.
 
 ## 2. 모델링 원칙
 

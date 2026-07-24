@@ -13,8 +13,9 @@
 
 1. [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)의 제품 동작과 MVP 불변조건
 2. [`REFLO_TECHNICAL_DECISIONS_v1.md`](./REFLO_TECHNICAL_DECISIONS_v1.md)의 확정·조건부 확정 기술 결정
-3. 현재 `source-react`의 화면 디자인과 상호작용
-4. 각 URL 상세 명세에서 확정한 구현 계약
+3. [`REFLO_API_SPEC_v1.md`](./REFLO_API_SPEC_v1.md)와 [`contracts/openapi/reflo-v1.yaml`](../contracts/openapi/reflo-v1.yaml)의 HTTP 계약
+4. 현재 `source-react`의 화면 디자인과 상호작용
+5. 각 URL 상세 명세에서 확정한 구현 계약
 
 현재 React 코드는 시각 디자인의 기준이지 제품 동작의 기준이 아니다. 하드코딩 데이터, 가짜 상태, 임시 URL, 동작하지 않는 버튼은 실제 구현으로 교체한다. 화면 구조·크기·색상·간격은 별도 사유가 없는 한 유지한다.
 

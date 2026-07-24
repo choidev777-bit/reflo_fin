@@ -1,0 +1,9 @@
+extends:
+  - recommended
+
+rules:
+  # Every operation uses the shared default Error response because one endpoint can
+  # emit several 4xx codes. The default response is deliberate and schema-typed.
+  operation-4xx-response: off
+  # REFLO is private/proprietary, so there is no public SPDX identifier or URL.
+  info-license-strict: off
