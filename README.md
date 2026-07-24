@@ -17,6 +17,7 @@ npm run dev
 주요 문서:
 
 - [시스템 아키텍처](./docs/REFLO_SYSTEM_ARCHITECTURE_v1.md)
+- [ERD](./docs/REFLO_ERD_v1.md)
 - [서비스 동작 명세](./docs/REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [기술 결정 사항](./docs/REFLO_TECHNICAL_DECISIONS_v1.md)
 - [화면 구현 명세](./docs/REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)

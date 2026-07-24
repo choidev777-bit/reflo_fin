@@ -8,12 +8,13 @@
 
 - [URL별 서비스 동작 명세](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [기술 결정 사항](./REFLO_TECHNICAL_DECISIONS_v1.md)
+- [ERD](./REFLO_ERD_v1.md)
 - [화면 구현 명세 인덱스](./REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
 - [작업 로그](./REFLO_WORKLOG.md)
 
 ## 1. 문서 목적
 
-이 문서는 REFLO를 어떤 실행 단위로 나누고, 각 단위가 어떤 데이터와 책임을 가지며, 서로 어떻게 통신하는지 정의한다. ERD의 세부 table·column과 API의 endpoint별 payload는 후속 문서에서 정의한다.
+이 문서는 REFLO를 어떤 실행 단위로 나누고, 각 단위가 어떤 데이터와 책임을 가지며, 서로 어떻게 통신하는지 정의한다. 세부 table·column은 [ERD](./REFLO_ERD_v1.md), endpoint별 payload는 후속 API 문서에서 정의한다.
 
 핵심 목표는 다음과 같다.
 
