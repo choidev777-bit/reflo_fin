@@ -25,7 +25,7 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
 | 순서 | URL | 화면 | 상세 문서 | 상태 |
 |---|---|---|---|---|
 | 01 | `/` | 홈 | [`screens/01-home.md`](./screens/01-home.md) | 1차 작성 완료 |
-| 02 | `/projects` | 프로젝트 목록 | `screens/02-projects.md` | 작성 예정 |
+| 02 | `/projects` | 프로젝트 목록 | [`screens/02-projects.md`](./screens/02-projects.md) | 1차 작성 완료 |
 | 03 | `/projects/:projectId/process/setup` | 프로젝트 설정 | `screens/03-setup.md` | 작성 예정 |
 | 04 | `/projects/:projectId/process/files` | 파일 업로드·검사 | `screens/04-files.md` | 작성 예정 |
 | 05 | `/projects/:projectId/process/hypothesis` | 투자 의견·조사 질문 | `screens/05-hypothesis.md` | 작성 예정 |
