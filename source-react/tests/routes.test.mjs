@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import { access, readFile } from "node:fs/promises";
+import test from "node:test";
+
+const routePages = [
+  "../app/projects/page.tsx",
+  "../app/projects/[projectId]/process/setup/page.tsx",
+  "../app/projects/[projectId]/process/files/page.tsx",
+  "../app/projects/[projectId]/process/hypothesis/page.tsx",
+  "../app/projects/[projectId]/process/research-plan/page.tsx",
+  "../app/projects/[projectId]/process/validation/page.tsx",
+  "../app/projects/[projectId]/process/valuation/page.tsx",
+  "../app/projects/[projectId]/process/report-outline/page.tsx",
+  "../app/projects/[projectId]/report/page.tsx",
+];
+
+test("defines every documented REFLO screen as an App Router URL", async () => {
+  await Promise.all(routePages.map((route) => access(new URL(route, import.meta.url))));
+});
+
+test("maps the seven process URLs to the existing seven screen states", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+
+  for (const [step, route] of [
+    [0, "setup"],
+    [1, "files"],
+    [3, "hypothesis"],
+    [4, "research-plan"],
+    [5, "validation"],
+    [9, "valuation"],
+    [11, "report-outline"],
+  ]) {
+    assert.match(source, new RegExp(`${step}: "${route}"`));
+  }
+
+  assert.match(source, /window\.history\.pushState\(null, "", nextPath\)/);
+  assert.match(source, /\/projects\/\$\{encodeURIComponent\(projectIdRef\.current\)\}\/report/);
+});

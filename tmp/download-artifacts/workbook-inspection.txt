@@ -1,0 +1,14 @@
+{"kind":"sheet","id":"ws/mb142w","name":"Summary","index":0,"range":"A1:F24","address":"A1:F24","formulas":2}
+{"kind":"formula","sheet":"Summary","address":"D6","formula":"=B6/C6-1"}
+{"kind":"formula","sheet":"Summary","address":"E15","formula":"=E13*E14"}
+{"kind":"sheet","id":"ws/aox3xu","name":"Financials","index":1,"range":"A1:F12","address":"A1:F12","formulas":9}
+{"kind":"formula","sheet":"Financials","address":"B11","formula":"=B6/B5"}
+{"kind":"formula","sheet":"Financials","address":"C11","formula":"=C6/C5"}
+{"kind":"formula","sheet":"Financials","address":"D11","formula":"=D6/D5"}
+{"kind":"formula","sheet":"Financials","address":"E11","formula":"=E6/E5"}
+{"kind":"formula","sheet":"Financials","address":"F11","formula":"=F6/F5"}
+{"kind":"formula","sheet":"Financials","address":"C12","formula":"=C7/B7-1"}
+{"kind":"formula","sheet":"Financials","address":"D12","formula":"=D7/C7-1"}
+{"kind":"formula","sheet":"Financials","address":"E12","formula":"=E7/D7-1"}
+{"kind":"formula","sheet":"Financials","address":"F12","formula":"=F7/E7-1"}
+{"kind":"sheet","id":"ws/w7g8lm","name":"Sources & Checks","index":2,"range":"A1:E15","address":"A1:E15"}

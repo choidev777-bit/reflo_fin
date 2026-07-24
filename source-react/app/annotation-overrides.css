@@ -1,0 +1,86 @@
+/* Browser annotation refinements: Excel audit hierarchy */
+.spec-audit-row > span:nth-of-type(2) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+}
+
+.spec-audit-row > span:nth-of-type(2) > b,
+.spec-audit-row > span:nth-of-type(2) > strong {
+  display: block;
+  color: #151814;
+  line-height: 1.25;
+}
+
+.spec-audit-row > span:nth-of-type(2) > small,
+.spec-audit-row > span:nth-of-type(2) > em {
+  display: block;
+  margin: 0;
+  color: #7b8479;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.spec-audit-row .spec-value-change b {
+  display: inline-block;
+  width: 56.72px;
+  min-width: 56.72px;
+}
+
+/* Keep monetary and multiple units beside their values in the PER calculator. */
+.spec-formula-inputs > article,
+.spec-formula-result > article {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  grid-auto-rows: max-content;
+  column-gap: 4px;
+  align-content: center;
+  align-items: baseline;
+}
+
+.spec-formula-inputs > article > :first-child,
+.spec-formula-result > article > :first-child {
+  grid-column: 1 / -1;
+}
+
+.spec-formula-inputs > article > strong,
+.spec-formula-result > article > strong {
+  grid-column: 1;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.spec-formula-inputs > article > strong > small,
+.spec-formula-inputs > article > strong > span,
+.spec-formula-inputs > article > strong > em,
+.spec-formula-inputs > article > strong > b,
+.spec-formula-result > article > strong > small,
+.spec-formula-result > article > strong > span,
+.spec-formula-result > article > strong > em,
+.spec-formula-result > article > strong > b {
+  display: inline !important;
+  margin: 0 !important;
+  line-height: 1;
+}
+
+.spec-formula-inputs > article > strong + b,
+.spec-formula-inputs > article > strong + span:not(:first-child),
+.spec-formula-inputs > article > strong + em,
+.spec-formula-result > article > strong + b,
+.spec-formula-result > article > strong + span:not(:first-child),
+.spec-formula-result > article > strong + em {
+  grid-column: 2;
+  align-self: baseline;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.spec-formula-inputs > article > small,
+.spec-formula-result > article > small {
+  grid-column: 1 / -1;
+}

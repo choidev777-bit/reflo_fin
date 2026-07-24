@@ -1,0 +1,31 @@
+{
+  "reference_id": "speeda",
+  "description": "REFLO B2B research workflow UI with improved readability and hierarchy across research planning and collection-result verification",
+  "mode": "inspired",
+  "delta_set": {
+    "axes": {
+      "color.hue_deg": 90,
+      "color.saturation_pct": 12,
+      "color.lightness_pct": 14,
+      "radius.delta_px": 0,
+      "density.shift": 0,
+      "tracking.shift": "0em"
+    },
+    "voiceHints": [
+      "concise Korean labels",
+      "action-led instructions",
+      "source-credible research language"
+    ],
+    "matchedKeywords": [
+      "b2b research",
+      "readable",
+      "hierarchical",
+      "dense",
+      "professional"
+    ],
+    "warnings": [
+      "SPEEDA crimson is shifted to preserve the established REFLO lime brand signal"
+    ]
+  },
+  "bootstrapped_at": "2026-07-21T00:00:00+09:00"
+}
