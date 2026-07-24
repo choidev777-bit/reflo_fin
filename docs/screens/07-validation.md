@@ -1,12 +1,12 @@
-# REFLO 화면 구현 명세: `/projects/:projectId/process/validation` 수집 결과 검증
+# REFLO 화면 구현 명세: `/projects/:projectId/process/validation` 조사 결과 검증
 
-**문서 상태:** 수집 결과 검증 화면 명세 작성 완료
+**문서 상태:** 조사 결과 검증 화면 명세 작성 완료
 **작성일:** 2026-07-24
 **대상:** 현업 배포용 MVP
 **상위 문서:** [`REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md`](../REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
 **기준 문서:** [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](../REFLO_URL_SERVICE_BEHAVIOR_v1.md), [`REFLO_TECHNICAL_DECISIONS_v1.md`](../REFLO_TECHNICAL_DECISIONS_v1.md)
 
-## 7. `/projects/:projectId/process/validation` — 수집 결과 검증
+## 7. `/projects/:projectId/process/validation` — 조사 결과 검증
 
 ### 7.1 명세 상태
 
@@ -56,7 +56,7 @@
 
 - 로그인하지 않은 사용자는 Google 로그인 후 동일한 validation URL로 복귀한다.
 - 서버는 URL의 `projectId`와 검증된 세션의 Google 사용자 ID로 소유권을 확인한다.
-- 다른 사용자 프로젝트는 존재 여부를 추측할 수 없도록 제품 공통 정책에 맞춰 `404` 또는 통합 접근 거부 응답을 사용한다.
+- 다른 사용자 프로젝트는 존재 여부를 추측할 수 없도록 `404 PROJECT_NOT_FOUND` 공통 응답을 사용한다.
 - 클라이언트가 보낸 사용자 ID, 소유자 ID, Evidence 소유권과 객체 저장소 key는 신뢰하지 않는다.
 
 #### 단계 조건
@@ -688,6 +688,8 @@ Idempotency-Key: 8b6d...
 
 #### `POST /api/projects/{projectId}/validation/complete`
 
+검증 승인과 단계 완료를 중복 생성하지 않도록 `Idempotency-Key` header를 필수로 사용한다.
+
 ```json
 {
   "expectedValidationVersion": 15
@@ -717,7 +719,7 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 |---|---|---|
 | `400` | `INVALID_DECISION_REASON` | 해당 textarea 아래 오류 |
 | `401` | `AUTH_REQUIRED` | draft 보존 후 로그인, 동일 URL 복귀 |
-| `403/404` | `PROJECT_ACCESS_DENIED` | 프로젝트 목록 또는 접근 오류 화면 |
+| `404` | `PROJECT_NOT_FOUND` | 프로젝트 없음과 타인 소유를 구분하지 않는 공통 화면 |
 | `409` | `STALE_VALIDATION_VERSION` | 최신 workspace 재조회, 사용자의 미제출 text 유지 |
 | `409` | `CONFLICT_ALREADY_RESOLVED` | 최신 decision 표시 |
 | `409` | `STAGE_GATE_BLOCKED` | blocker 목록 표시·첫 항목 focus |

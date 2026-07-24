@@ -90,7 +90,7 @@
 ### 8.5 기본 PER 밸류에이션 흐름
 
 ```text
-수집 결과 검증 완료
+조사 결과 검증 완료
   → valuation 초기 데이터와 workbook 권한 조회
   → SpreadJS에 최신 작업 사본 로드
   → 미래 추정치 입력 셀 편집
@@ -551,8 +551,12 @@ SpreadJS cell matrix와 전체 workbook JSON을 React state에 저장하지 않�
   "project": {
     "projectId": "prj_01...",
     "companyName": "리노공업",
-    "targetPeriod": "2Q26",
-    "cutoffAt": "2026-07-24T00:00:00+09:00"
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
+    "cutoffDate": "2026-07-24",
+    "cutoffAt": "2026-07-24T23:59:59+09:00"
   },
   "workbook": {
     "artifactId": "art_01...",
@@ -637,6 +641,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 #### `POST /api/projects/{projectId}/valuation/approve`
 
 최신 계산과 사용자 판단을 하나의 불변 승인 version으로 고정한다.
+`Idempotency-Key` header를 필수로 사용한다. body의 `requestId`는 추적용이다.
 
 ```json
 {
@@ -666,6 +671,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 #### `POST /api/projects/{projectId}/valuation/complete`
 
 승인된 최신 version으로 valuation 단계를 완료한다.
+`Idempotency-Key` header를 필수로 사용한다. body의 `requestId`는 추적용이며 중복 완료 방지의 권위값은 header다.
 
 ```json
 {
@@ -683,7 +689,7 @@ Target PER 또는 목표주가 draft를 갱신하고 Aspose.Cells를 재계산�
 }
 ```
 
-같은 request ID 재전송은 한 번만 완료 처리한다. 완료 modal은 표시하지 않고 `nextRoute`로 직접 이동한다.
+같은 idempotency key 재전송은 한 번만 완료 처리한다. 완료 modal은 표시하지 않고 `nextRoute`로 직접 이동한다.
 
 ### 8.20 저장 모델과 감사 이력
 

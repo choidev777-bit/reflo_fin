@@ -204,7 +204,7 @@ setup 진입
 | 데이터 | 필드 | 용도 |
 |---|---|---|
 | 프로젝트 | `projectId`, `name`, `status`, `currentStage`, `version`, `updatedAt` | 헤더·사이드바·저장 동시성 |
-| setup | `company`, `targetYear`, `targetQuarter`, `cutoffDate`, `reportType`, `companyDomain`, `valuationMethod`, `status`, `version` | 입력 초기값과 완료 여부 |
+| setup | `company`, `targetPeriod`, `cutoffDate`, `reportType`, `companyDomain`, `valuationMethod`, `status`, `version` | 입력 초기값과 완료 여부 |
 | 선택 기업 | `companyId`, `corpCode`, `name`, `ticker`, `exchange`, `industry`, `mvpEligible` | 기업 표시와 검증 |
 | workflow | `stageStates`, `allowedRoutes`, `downstreamImpact` | 단계 이동·진행률·재검증 안내 |
 | 지원 값 | `supportedTargetYears` | 연도 select 구성 |
@@ -387,8 +387,7 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
   },
   "setup": {
     "company": null,
-    "targetYear": null,
-    "targetQuarter": null,
+    "targetPeriod": null,
     "cutoffDate": null,
     "reportType": "EARNINGS_REVIEW",
     "companyDomain": "IT_MANUFACTURING",
@@ -466,8 +465,10 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
   "projectVersion": 3,
   "setup": {
     "companyId": "cmp_01...",
-    "targetYear": 2026,
-    "targetQuarter": "Q2",
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
     "cutoffDate": "2026-07-17"
   },
   "confirmDownstreamInvalidation": false
@@ -517,8 +518,10 @@ Idempotency-Key: 6fc7...
   "projectVersion": 4,
   "setup": {
     "companyId": "cmp_01...",
-    "targetYear": 2026,
-    "targetQuarter": "Q2",
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
     "cutoffDate": "2026-07-17"
   },
   "confirmDownstreamInvalidation": false
@@ -599,7 +602,7 @@ PostgreSQL의 논리 모델은 최소 다음 값을 보존한다.
 5. 기업명·프로젝트명·검색어와 오류 문구는 HTML로 해석하지 않고 텍스트로 렌더링한다.
 6. 상태 변경 요청에는 인증 방식에 맞는 CSRF 방어를 적용한다.
 7. 완료 요청은 요청 식별자와 데이터베이스 제약으로 한 번만 처리한다.
-8. 다른 사용자의 프로젝트는 `403`으로 구분해 존재를 노출하지 않고 `404`로 처리한다.
+8. 다른 사용자의 프로젝트는 별도 권한 오류로 구분해 존재를 노출하지 않고 `404 PROJECT_NOT_FOUND`로 처리한다.
 9. 검색 query, limit과 날짜·연도 입력은 서버에서 길이·형식·범위를 검증한다.
 10. 클라이언트의 `mvpEligible`, 단계 잠금, version 값을 권한의 근거로 신뢰하지 않는다.
 

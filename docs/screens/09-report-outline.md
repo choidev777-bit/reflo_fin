@@ -531,8 +531,12 @@ Report Draft Agent는 승인된 block 안에서만 문장을 작성한다. 새 �
     "name": "삼성전기 2026년 2분기 리서치",
     "companyName": "삼성전기",
     "ticker": "009150",
-    "targetPeriod": "2026 2Q",
-    "currentStage": "report-outline"
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
+    "cutoffDate": "2026-07-17",
+    "currentStage": "report_outline"
   },
   "prerequisites": {
     "ready": true,
@@ -611,7 +615,7 @@ Report Draft Agent는 승인된 block 안에서만 문장을 작성한다. 새 �
 
 ## 17. API 계약
 
-### 17.1 `GET /api/projects/:projectId/report-outline`
+### 17.1 `GET /api/projects/{projectId}/report-outline`
 
 세션·소유권·선행 조건을 확인하고 화면 view model을 반환한다.
 
@@ -620,11 +624,11 @@ Report Draft Agent는 승인된 block 안에서만 문장을 작성한다. 새 �
 | `200` | 조회 성공 | 상태에 맞는 화면 |
 | `401` | 로그인 필요 | 로그인 후 원래 URL 복귀 |
 | `404` | 없음 또는 권한 없음 | 일반 not-found |
-| `412` | 선행 조건 미충족 | `resumeRoute` CTA |
+| `409` | 선행 조건 미충족 | `requiredStage`·`resumeRoute` CTA |
 | `409` | 재검증 필요 | 읽기 전용·복귀 안내 |
 | `500` | 조회 실패 | 전체 오류·재시도 |
 
-### 17.2 `POST /api/projects/:projectId/report-outline/generations`
+### 17.2 `POST /api/projects/{projectId}/report-outline/generations`
 
 저장된 outline이 없거나 기준 초기화를 실행할 때 Report Outline Agent 제안 생성을 시작한다.
 
@@ -647,7 +651,7 @@ Report Draft Agent는 승인된 block 안에서만 문장을 작성한다. 새 �
 
 응답은 `202 Accepted`와 `taskId`를 반환한다. 같은 input version과 request ID의 중복 작업을 만들지 않는다.
 
-### 17.3 `PATCH /api/projects/:projectId/report-outline`
+### 17.3 `PATCH /api/projects/{projectId}/report-outline`
 
 batch slot 변경을 자동 저장한다.
 
@@ -680,7 +684,7 @@ batch slot 변경을 자동 저장한다.
 - fixed slot, page 순서, block 좌표 변경 요청은 거절한다.
 - version이 오래되면 `409 OUTLINE_VERSION_CONFLICT`를 반환한다.
 
-### 17.4 `POST /api/projects/:projectId/report-outline/pages/:pageId/review`
+### 17.4 `POST /api/projects/{projectId}/report-outline/pages/{pageId}/review`
 
 페이지 확인 상태를 저장한다.
 
@@ -692,7 +696,7 @@ batch slot 변경을 자동 저장한다.
 
 페이지 validation 실패 시 `422 PAGE_OUTLINE_INVALID`와 field·slot 오류를 반환한다.
 
-### 17.5 `POST /api/projects/:projectId/report-outline/approve`
+### 17.5 `POST /api/projects/{projectId}/report-outline/approve`
 
 전체 outline을 승인하고 보고서 초안 생성을 시작한다.
 
@@ -721,7 +725,7 @@ batch slot 변경을 자동 저장한다.
   },
   "draftTask": {
     "taskId": "task_01...",
-    "status": "queued",
+    "operationStatus": "queued",
     "reportRoute": "/projects/prj_01.../report"
   }
 }
@@ -729,11 +733,11 @@ batch slot 변경을 자동 저장한다.
 
 이 endpoint도 `Idempotency-Key`를 사용한다. 중복 클릭으로 여러 보고서 초안을 만들지 않는다.
 
-### 17.6 `GET /api/projects/:projectId/tasks/:taskId`
+### 17.6 `GET /api/projects/{projectId}/tasks/{taskId}`
 
 Temporal 내부 상태를 사용자용 projection으로 반환한다.
 
-| 상태 | 표시 |
+| `operationStatus` | 표시 |
 |---|---|
 | `queued` | 생성 대기 |
 | `running` | 현재 단계와 진행률 |
@@ -743,7 +747,7 @@ Temporal 내부 상태를 사용자용 projection으로 반환한다.
 
 클라이언트는 Temporal workflow ID나 내부 queue 이름에 의존하지 않는다.
 
-### 17.7 `GET /api/projects/:projectId/evidence/:evidenceVersionId`
+### 17.7 `GET /api/projects/{projectId}/evidence/{evidenceVersionId}`
 
 원문 drawer에 필요한 source version, locator, exact quote, provenance와 사용 block을 반환한다.
 

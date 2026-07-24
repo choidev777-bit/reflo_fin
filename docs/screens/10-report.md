@@ -130,7 +130,7 @@ MVP의 최종 산출물은 PDF와 값이 채워진 Excel이다. 현재 화면의
 
 | 이탈 동작 | 계약 |
 |---|---|
-| `Process` 또는 `← Process` | `/projects/:projectId/process/report-outline`로 이동 |
+| `Process` 또는 `← Process` | `/projects/{projectId}/process/report-outline`로 이동 |
 | 전역 `Project`·프로젝트로 돌아가기 | `/projects`로 이동 |
 | 브라우저 뒤로가기 | 실제 App Router history를 따라 이동 |
 | 탭 닫기·새로고침 | 저장되지 않은 변경이 있을 때만 브라우저 이탈 경고 |
@@ -358,7 +358,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 
 #### 제안 상태
 
-`idle → queued → running → ready | failed | canceled | stale`
+`idle → queued → running → ready | failed | cancelled | stale`
 
 - `ready`에서 원문과 제안문 diff를 표시한다.
 - 숫자·단위·Evidence·투자의견·사용자 가정 유지 검사를 함께 표시한다.
@@ -568,7 +568,7 @@ MVP는 공동 프로젝트·동시 공동 편집을 지원하지 않는다. 같�
 
 #### 검증 상태
 
-`not_run | stale | queued | running | passed | passed_with_warnings | failed | canceled`
+`not_run | stale | queued | running | passed | passed_with_warnings | failed | cancelled`
 
 검증 중에는 단계, 처리 page 수, 최근 heartbeat와 재시도 상태를 표시한다. 실제 처리량이 없으면 임의 퍼센트를 만들지 않고 단계형 progress를 사용한다.
 
@@ -644,11 +644,12 @@ Word·DOCX, PNG page 묶음과 client-side workbook export는 MVP에서 제공�
 
 전체 job:
 
-`queued | running | partially_succeeded | succeeded | failed | canceled`
+- `operationStatus`: `queued | running | succeeded | failed | cancel_requested | cancelled`
+- `outcome`: `pending | complete | partial`
 
 각 artifact:
 
-`pending | generating | verifying | publishing | ready | failed | canceled`
+`pending | generating | verifying | publishing | ready | failed | cancelled`
 
 PDF 단계 예:
 
@@ -667,8 +668,8 @@ Excel 단계 예:
 | `ready` | 파일명·크기·생성시각·version | 다운로드 |
 | `failed` retryable | 실패 이유와 마지막 시도 | 실패 파일 재시도 |
 | `failed` non-retryable | 수정해야 할 입력·단계 링크 | 해당 단계로 이동 |
-| `canceled` | 취소 시각 | 새 작업 시작 |
-| `partially_succeeded` | 성공 파일은 다운로드, 실패 파일은 재시도 | 파일별 동작 |
+| `cancelled` | 취소 시각 | 새 작업 시작 |
+| `outcome=partial` | 성공 파일은 다운로드, 실패 파일은 재시도 | 파일별 동작 |
 
 실패한 한 파일 때문에 성공한 다른 파일의 다운로드를 숨기지 않는다. 재시도는 성공 artifact를 다시 만들지 않고 같은 승인 입력으로 실패한 artifact만 실행할 수 있다.
 
@@ -709,7 +710,11 @@ Excel 단계 예:
     "name": "리노공업 1Q26 실적리뷰",
     "companyName": "리노공업",
     "ticker": "058470",
-    "targetPeriod": "1Q26",
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 1
+    },
+    "cutoffDate": "2026-05-15",
     "cutoffAt": "2026-05-15T14:59:59Z"
   },
   "report": {
@@ -774,20 +779,20 @@ API 경로는 애플리케이션 계약이다. 실제 backend framework는 별�
 
 | Method | 경로 | 목적 |
 |---|---|---|
-| `GET` | `/api/projects/:projectId/report` | 권한·선행 조건·active report·job bootstrap |
-| `GET` | `/api/projects/:projectId/report/pages/:pageId` | page view model과 block 조회 |
-| `GET` | `/api/projects/:projectId/report/versions` | version history 조회 |
-| `POST` | `/api/projects/:projectId/report/versions/:versionId/restore` | 과거 version 기반 새 working version 생성 |
+| `GET` | `/api/projects/{projectId}/report` | 권한·선행 조건·active report·job bootstrap |
+| `GET` | `/api/projects/{projectId}/report/pages/{pageId}` | page view model과 block 조회 |
+| `GET` | `/api/projects/{projectId}/report/versions` | version history 조회 |
+| `POST` | `/api/projects/{projectId}/report/versions/{versionId}/restore` | 과거 version 기반 새 working version 생성 |
 
 #### edit session·저장
 
 | Method | 경로 | 목적 |
 |---|---|---|
-| `POST` | `/api/projects/:projectId/report/edit-sessions` | active edit lease 발급 |
-| `POST` | `/api/projects/:projectId/report/edit-sessions/:sessionId/heartbeat` | lease 유지 |
-| `POST` | `/api/projects/:projectId/report/edit-sessions/:sessionId/takeover` | 명시적 편집권 이동 |
-| `PATCH` | `/api/projects/:projectId/report/versions/:versionId` | typed operation batch 저장 |
-| `DELETE` | `/api/projects/:projectId/report/edit-sessions/:sessionId` | edit session 종료 |
+| `POST` | `/api/projects/{projectId}/report/edit-sessions` | active edit lease 발급 |
+| `POST` | `/api/projects/{projectId}/report/edit-sessions/{sessionId}/heartbeat` | lease 유지 |
+| `POST` | `/api/projects/{projectId}/report/edit-sessions/{sessionId}/takeover` | 명시적 편집권 이동 |
+| `PATCH` | `/api/projects/{projectId}/report/versions/{versionId}` | typed operation batch 저장 |
+| `DELETE` | `/api/projects/{projectId}/report/edit-sessions/{sessionId}` | edit session 종료 |
 
 저장 요청 예:
 
@@ -812,33 +817,35 @@ API 경로는 애플리케이션 계약이다. 실제 backend framework는 별�
 
 | Method | 경로 | 목적 |
 |---|---|---|
-| `POST` | `/api/projects/:projectId/report/ai-proposals` | text·table·chart proposal job 생성 |
-| `GET` | `/api/projects/:projectId/report/ai-proposals/:proposalId` | 상태·diff·검사 결과 조회 |
-| `POST` | `/api/projects/:projectId/report/ai-proposals/:proposalId/apply` | 최신 version에 proposal 적용 |
-| `POST` | `/api/projects/:projectId/report/imports` | 첨부 upload session과 검사 job 생성 |
-| `GET` | `/api/projects/:projectId/report/imports/:importId` | 첨부 처리 상태·미리보기 조회 |
+| `POST` | `/api/projects/{projectId}/report/ai-proposals` | text·table·chart proposal job 생성 |
+| `GET` | `/api/projects/{projectId}/report/ai-proposals/{proposalId}` | 상태·diff·검사 결과 조회 |
+| `POST` | `/api/projects/{projectId}/report/ai-proposals/{proposalId}/apply` | 최신 version에 proposal 적용 |
+| `POST` | `/api/projects/{projectId}/report/imports` | 첨부 upload session과 검사 job 생성 |
+| `GET` | `/api/projects/{projectId}/report/imports/{importId}` | 첨부 처리 상태·미리보기 조회 |
 
 #### 근거·미리보기·검증·승인
 
 | Method | 경로 | 목적 |
 |---|---|---|
-| `GET` | `/api/projects/:projectId/report/blocks/:blockId/provenance` | Evidence·source·계산 path 조회 |
-| `POST` | `/api/projects/:projectId/report/previews` | 특정 version preview job 생성 |
-| `GET` | `/api/projects/:projectId/report/previews/:previewId` | preview 상태·artifact 조회 |
-| `POST` | `/api/projects/:projectId/report/validations` | full validation run 생성 |
-| `GET` | `/api/projects/:projectId/report/validations/:runId` | 단계·issue·artifact 조회 |
-| `POST` | `/api/projects/:projectId/report/validations/:runId/acknowledgements` | 허용 warning 사용자 확인 |
-| `POST` | `/api/projects/:projectId/report/versions/:versionId/approve` | exact validated version 최종 승인 |
+| `GET` | `/api/projects/{projectId}/report/blocks/{blockId}/provenance` | Evidence·source·계산 path 조회 |
+| `POST` | `/api/projects/{projectId}/report/previews` | 특정 version preview job 생성 |
+| `GET` | `/api/projects/{projectId}/report/previews/{previewId}` | preview 상태·artifact 조회 |
+| `POST` | `/api/projects/{projectId}/report/validations` | full validation run 생성 |
+| `GET` | `/api/projects/{projectId}/report/validations/{runId}` | 단계·issue·artifact 조회 |
+| `POST` | `/api/projects/{projectId}/report/validations/{runId}/acknowledgements` | 허용 warning 사용자 확인 |
+| `POST` | `/api/projects/{projectId}/report/versions/{versionId}/approve` | exact validated version 최종 승인 |
+
+최종 승인 요청은 `Idempotency-Key` header를 필수로 사용한다.
 
 #### export·download
 
 | Method | 경로 | 목적 |
 |---|---|---|
-| `POST` | `/api/projects/:projectId/report/exports` | PDF·XLSX export job 생성 |
-| `GET` | `/api/projects/:projectId/report/exports/:exportId` | 전체·파일별 상태 조회 |
-| `POST` | `/api/projects/:projectId/report/exports/:exportId/retry` | 실패 artifact 재시도 |
-| `POST` | `/api/projects/:projectId/report/exports/:exportId/cancel` | 미완료 작업 취소 |
-| `POST` | `/api/projects/:projectId/artifacts/:artifactId/download` | 권한 확인 후 download URL 발급 |
+| `POST` | `/api/projects/{projectId}/report/exports` | PDF·XLSX export job 생성 |
+| `GET` | `/api/projects/{projectId}/report/exports/{exportId}` | 전체·파일별 상태 조회 |
+| `POST` | `/api/projects/{projectId}/report/exports/{exportId}/retry` | 실패 artifact 재시도 |
+| `POST` | `/api/projects/{projectId}/report/exports/{exportId}/cancel` | 미완료 작업 취소 |
+| `POST` | `/api/projects/{projectId}/artifacts/{artifactId}/download` | 권한 확인 후 download URL 발급 |
 
 긴 작업의 최소 구현은 status API polling이다. SSE·WebSocket 등 push transport는 확정 전 선택 사항이며 PostgreSQL 작업 projection이 사용자 표시의 권위 상태다.
 
@@ -848,14 +855,14 @@ API 경로는 애플리케이션 계약이다. 실제 backend framework는 별�
 |---:|---|---|
 | `400` | `INVALID_REPORT_OPERATION` | 해당 block·입력 근처에 구체적 검증 오류 |
 | `401` | `AUTH_REQUIRED` | 현재 URL·의도 보존 후 로그인 |
-| `403`·`404` | `PROJECT_NOT_FOUND` | 존재 여부를 숨기는 공통 없음 화면 |
+| `404` | `PROJECT_NOT_FOUND` | 프로젝트 없음과 타인 소유를 구분하지 않는 공통 화면 |
 | `409` | `REPORT_VERSION_CONFLICT` | 저장 중단, 최신 version·다른 탭 안내 |
 | `409` | `EDIT_SESSION_CONFLICT` | 보기 모드와 편집권 가져오기 제공 |
 | `409` | `VALIDATION_STALE` | 최신 version 재검증 |
 | `409` | `APPROVAL_VERSION_MISMATCH` | 승인 중단, 변경사항 다시 불러오기 |
 | `409` | `EXPORT_ALREADY_EXISTS` | 기존 export job·artifact 열기 |
 | `410` | `DOWNLOAD_URL_EXPIRED` | 같은 artifact의 새 URL 발급 |
-| `422` | `REPORT_PREREQUISITE_INVALID` | 무효화한 선행 단계와 이동 액션 |
+| `409` | `REPORT_PREREQUISITE_INCOMPLETE` | `requiredStage`·`resumeRoute`와 무효화한 선행 단계 표시 |
 | `422` | `BLOCK_OVERFLOW` | page·block 위치와 축약·직접 수정 안내 |
 | `422` | `UNVERIFIED_VALUE` | 첨부값 적용 차단, 검증 단계 이동 |
 | `429` | `RATE_LIMITED` | 재시도 가능 시각·자동 재시도 여부 |

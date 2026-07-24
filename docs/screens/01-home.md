@@ -110,8 +110,8 @@
 | 01 | 프로젝트 설정 | 기업·분기·기준일과 분석 범위 설정 | `process/setup` |
 | 02 | 파일 업로드·검사 | 이전 PDF와 실제 Excel 구조·적합성 검사 | `process/files` |
 | 03 | 투자 의견·조사 질문 | 잠정 의견과 투자 가설을 조사 질문으로 확정 | `process/hypothesis` |
-| 04 | 자료 조사 계획 | 질문별 출처와 Excel 입력값 수집 계획 승인 | `process/research-plan` |
-| 05 | 수집 결과 검증 | 원문 대조, 값 검증, 출처 충돌 해결 | `process/validation` |
+| 04 | 자료 수집 및 계획 | 질문별 출처와 Excel 입력값 수집 계획 승인 | `process/research-plan` |
+| 05 | 조사 결과 검증 | 원문 대조, 값 검증, 출처 충돌 해결 | `process/validation` |
 | 06 | PER 밸류에이션 | 추정치와 Target PER을 사용자가 확정 | `process/valuation` |
 | 07 | 페이지 내용 설정 | 페이지 구성 승인 후 보고서 생성·편집으로 연결 | `process/report-outline` |
 

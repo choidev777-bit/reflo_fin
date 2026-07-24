@@ -1,6 +1,6 @@
 # REFLO URL별 화면 구현 명세 v1
 
-**문서 상태:** 작성 중  
+**문서 상태:** 1차 작성·교차 검수 완료
 **작성 시작일:** 2026-07-24  
 **대상:** 현업 배포용 MVP  
 **구현 범위:** 기존 디자이너 UI를 보존하면서 실제 인증·데이터·API·상태를 연결하기 위한 화면별 기준
@@ -26,16 +26,16 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
 |---|---|---|---|---|
 | 01 | `/` | 홈 | [`screens/01-home.md`](./screens/01-home.md) | 1차 작성 완료 |
 | 02 | `/projects` | 프로젝트 목록 | [`screens/02-projects.md`](./screens/02-projects.md) | 1차 작성 완료 |
-| 03 | `/projects/:projectId/process/setup` | 프로젝트 설정 | `screens/03-setup.md` | 작성 예정 |
-| 04 | `/projects/:projectId/process/files` | 파일 업로드·검사 | `screens/04-files.md` | 작성 예정 |
-| 05 | `/projects/:projectId/process/hypothesis` | 투자 의견·조사 질문 | `screens/05-hypothesis.md` | 작성 예정 |
-| 06 | `/projects/:projectId/process/research-plan` | 자료 조사 계획 | `screens/06-research-plan.md` | 작성 예정 |
-| 07 | `/projects/:projectId/process/validation` | 수집 결과 검증 | `screens/07-validation.md` | 작성 예정 |
-| 08 | `/projects/:projectId/process/valuation` | PER 밸류에이션 | `screens/08-valuation.md` | 작성 예정 |
-| 09 | `/projects/:projectId/process/report-outline` | 페이지 내용 설정 | `screens/09-report-outline.md` | 작성 예정 |
-| 10 | `/projects/:projectId/report` | 보고서 편집·검증·내보내기 | `screens/10-report.md` | 작성 예정 |
+| 03 | `/projects/:projectId/process/setup` | 프로젝트 설정 | [`screens/03-setup.md`](./screens/03-setup.md) | 1차 작성 완료 |
+| 04 | `/projects/:projectId/process/files` | 파일 업로드·검사 | [`screens/04-files.md`](./screens/04-files.md) | 1차 작성 완료 |
+| 05 | `/projects/:projectId/process/hypothesis` | 투자 의견·조사 질문 | [`screens/05-hypothesis.md`](./screens/05-hypothesis.md) | 1차 작성 완료 |
+| 06 | `/projects/:projectId/process/research-plan` | 자료 수집 및 계획 | [`screens/06-research-plan.md`](./screens/06-research-plan.md) | 1차 작성 완료 |
+| 07 | `/projects/:projectId/process/validation` | 조사 결과 검증 | [`screens/07-validation.md`](./screens/07-validation.md) | 1차 작성 완료 |
+| 08 | `/projects/:projectId/process/valuation` | PER 밸류에이션 | [`screens/08-valuation.md`](./screens/08-valuation.md) | 1차 작성 완료 |
+| 09 | `/projects/:projectId/process/report-outline` | 페이지 내용 설정 | [`screens/09-report-outline.md`](./screens/09-report-outline.md) | 1차 작성 완료 |
+| 10 | `/projects/:projectId/report` | 보고서 편집·검증·내보내기 | [`screens/10-report.md`](./screens/10-report.md) | 1차 작성 완료 |
 
-아직 생성하지 않은 파일은 링크로 만들지 않는다. 각 URL 명세를 작성할 때 이 표의 경로와 상태를 함께 갱신한다.
+10개 URL 문서의 1차 작성은 끝났다. 이후 상세 문서를 변경하면 이 인덱스의 공통 계약과 충돌하지 않는지 함께 확인한다.
 
 ## 2. URL 상세 명세의 공통 구성
 
@@ -84,3 +84,139 @@ API 경로는 프론트엔드와 백엔드가 공유할 애플리케이션 계�
 - 하드코딩 데이터는 API 응답 또는 명시적인 정적 카피로 구분한다.
 - SpreadJS, PDF·Excel 워커, Temporal, Agent 코드는 실제 사용하는 URL에만 배치한다.
 - 디자이너의 레이아웃과 시각 표현은 기능·접근성·요구사항 충돌이 없는 한 유지한다.
+
+## 5. canonical workflow 계약
+
+`REFLO_URL_SERVICE_BEHAVIOR_v1.md`의 명칭과 순서를 모든 화면, API와 테스트에서 사용한다.
+
+| 순서 | `stageKey` | 표시명 | route |
+|---|---|---|---|
+| 01 | `setup` | 프로젝트 설정 | `/projects/{projectId}/process/setup` |
+| 02 | `files` | 파일 업로드·검사 | `/projects/{projectId}/process/files` |
+| 03 | `hypothesis` | 투자 의견·조사 질문 | `/projects/{projectId}/process/hypothesis` |
+| 04 | `research_plan` | 자료 수집 및 계획 | `/projects/{projectId}/process/research-plan` |
+| 05 | `validation` | 조사 결과 검증 | `/projects/{projectId}/process/validation` |
+| 06 | `valuation` | PER 밸류에이션 | `/projects/{projectId}/process/valuation` |
+| 07 | `report_outline` | 페이지 내용 설정 | `/projects/{projectId}/process/report-outline` |
+
+`/projects/{projectId}/report`는 7단계 완료 뒤 사용하는 산출물 편집·검증·내보내기 workspace다. process 단계 수나 진행률에 여덟 번째 단계처럼 포함하지 않는다.
+
+- `currentStage`, `requiredStage`와 `stageStates[].stage`는 위 snake_case `stageKey`만 사용한다.
+- 브라우저 route segment는 표의 kebab-case 경로를 사용한다.
+- 진행률과 `resumeRoute`는 서버가 완료·무효화 상태로 계산한다. 클라이언트가 URL 숫자나 과거 13단계 인덱스로 계산하지 않는다.
+- 완료된 이전 단계는 다시 열 수 있고, 잠긴 미래 단계는 직접 URL에서도 같은 server guard를 거친다.
+- valuation 다음에는 별도 Evidence Review 단계를 두지 않고 `report-outline`으로 이동한다.
+- validation의 다음 동작과 valuation의 다음 동작은 완료 모달 없이 각각 valuation과 report-outline으로 직접 이동한다.
+
+## 6. 공통 데이터·API 표기 계약
+
+### 6.1 path parameter
+
+- 화면 route 제목처럼 route pattern을 설명할 때는 `:projectId`를 사용할 수 있다.
+- 실제 이동 예시는 `/projects/{projectId}/...`로 적는다.
+- API 명세의 path parameter는 `/api/projects/{projectId}/...`처럼 중괄호로 통일한다.
+- 응답의 `nextRoute`와 `resumeRoute`는 같은 origin의 허용된 실제 URL만 반환한다.
+
+### 6.2 프로젝트 context
+
+화면 간 전달되는 프로젝트 context의 최소 표기는 다음과 같다.
+
+```json
+{
+  "projectId": "prj_01...",
+  "company": {
+    "companyId": "cmp_01...",
+    "name": "삼성전기",
+    "ticker": "009150",
+    "exchange": "KRX"
+  },
+  "targetPeriod": {
+    "year": 2026,
+    "quarter": 2
+  },
+  "cutoffDate": "2026-07-17",
+  "reportType": "EARNINGS_REVIEW",
+  "companyDomain": "IT_MANUFACTURING",
+  "valuationMethod": "PER",
+  "currentStage": "research_plan"
+}
+```
+
+- `targetPeriod`는 API와 저장 계약에서 `{ year, quarter }` 객체다. `2Q26`, `2026Q2`, `2026 2Q`는 화면 표시용 label일 뿐 저장값이 아니다.
+- 사용자가 입력하는 값은 date-only `cutoffDate`다. 자료 수집에 사용하는 `cutoffAt`은 서버가 timezone 정책으로 파생하며 클라이언트가 권위값으로 보내지 않는다.
+- `cutoffDate`를 `cutoffAt`으로 바꾸는 timezone·day-end 규칙은 setup 명세의 미확정 기술 결정으로 유지한다. 확정 전 화면별로 다른 변환을 구현하지 않는다.
+- API enum은 `EARNINGS_REVIEW`, `IT_MANUFACTURING`, `PER`처럼 명세의 대문자 값을 사용하고 화면에서 한글 label로 변환한다.
+- opaque identity는 `...Id`로 표기한다. immutable version은 opaque `...VersionId` 또는 `{ resourceId, version }` 쌍으로 참조한다. 숫자 `version` 또는 `revision`은 해당 프로젝트·resource 범위의 낙관적 동시성 값이며 단독 전역 식별자로 사용하지 않는다.
+
+### 6.3 공통 오류
+
+| HTTP | 공통 code | 의미와 화면 처리 |
+|---|---|---|
+| `401` | `AUTH_REQUIRED` | 현재 URL과 안전한 draft를 보존하고 Google 로그인 뒤 복귀 |
+| `404` | `PROJECT_NOT_FOUND` | 없음과 타인 소유를 구분하지 않는 공통 화면 |
+| `409` | `PREREQUISITE_INCOMPLETE` | `requiredStage`, `resumeRoute`, `reasonCode`를 표시하고 가장 이른 유효 단계로 이동 |
+| `409` | domain version conflict | 자동 덮어쓰기 없이 최신 version 재조회 |
+| `422` | domain validation failure | 관련 field·blocker 가까이에 오류 표시 |
+| `429` | `RATE_LIMITED` | 재시도 가능 시각 또는 지연 안내 |
+| `500`·`503` | server·dependency failure | 기존 입력 유지, 안전한 재시도 제공 |
+
+화면별 상세 code는 공통 의미를 더 구체화할 수 있지만 HTTP 의미와 소유권 은닉 정책을 바꾸지 않는다. 새 작업 생성, 단계 완료, 승인, 재시도와 취소처럼 중복 부작용이 생길 수 있는 요청은 `Idempotency-Key` header를 사용한다. body의 `requestId`는 추적·batch dedup 보조값일 수 있지만 header를 대신하지 않는다.
+
+## 7. 비동기 작업 공통 계약
+
+Temporal 내부 workflow ID와 activity 이름은 브라우저에 노출하지 않는다. PostgreSQL projection과 domain API가 사용자 표시의 권위다.
+
+공통 lifecycle:
+
+```text
+queued → running → succeeded | failed
+                 ↘ cancel_requested → cancelled
+```
+
+- 영문 상태는 `cancelled`로 통일한다.
+- `passed`, `blocked`, `partially_succeeded`는 lifecycle이 아니라 domain 결과다.
+- `current`, `obsolete`, `revalidation_required`, `stale`은 결과의 유효성이다.
+- 각 화면은 domain ID인 `inspectionId`, `generationId`, `jobId`, `taskId`, `exportId`를 유지할 수 있지만 `operationStatus`, `phase`, `progressPercent`, `heartbeatAt`, `retryable`, 사용자용 error code의 의미는 같아야 한다.
+- 진행률은 완료 unit이나 versioned stage weight로 서버가 계산한다. 시간 경과로 임의 증가시키지 않는다.
+- 화면 이탈·새로고침·worker 재시작 후에도 같은 projection에서 상태를 복원한다.
+- 초기 구현은 visibility-aware polling을 사용한다. SSE·WebSocket은 별도 기술 결정 전 필수 계약이 아니다.
+
+## 8. 단계 간 version·무효화 계약
+
+- 각 하위 산출물은 자신을 만든 상위 immutable version을 모두 참조한다.
+- 상위 변경은 과거 산출물을 삭제·덮어쓰지 않고 새 version을 만든다.
+- 영향을 받는 하위 단계는 `revalidation_required` 또는 `stale`로 전환한다.
+- `resumeRoute`는 가장 먼저 다시 확인해야 하는 단계로 향한다.
+- 보고서 draft와 export는 사용한 Template IR, MappingSet, workbook, Evidence set, valuation, outline version을 고정한다.
+- 새 source나 계산 결과가 생겨도 이미 승인·내보낸 report version을 자동 변경하지 않는다.
+
+## 9. URL별 기술 배치
+
+| URL | 브라우저·화면 기술 | backend·worker 기술 | 넣지 않는 기술 |
+|---|---|---|---|
+| `/` | Next.js·React 인증/생성 UI | 세션·PostgreSQL | SpreadJS, Temporal, PDF·Excel·Agent |
+| `/projects` | 목록·검색·정렬·projection | PostgreSQL project/job projection | SpreadJS, PDF·Excel·Agent runtime |
+| `process/setup` | form·기업 검색 | 세션·PostgreSQL·기업 master | S3, Temporal, SpreadJS, PDF·Excel·Agent |
+| `process/files` | upload·결과 비교 UI | S3 호환 저장소, Temporal, PDF worker, Aspose.Cells 분석 | SpreadJS workbook UI |
+| `process/hypothesis` | 질문 편집·승인 UI | PydanticAI Hypothesis Agent, Temporal, PostgreSQL | Research/Validation Agent, SpreadJS, PDF·Excel worker |
+| `process/research-plan` | 계획·source·cell metadata UI | Research/Validation Agent, network worker, Temporal, S3 | SpreadJS, PDF patch·render |
+| `process/validation` | Evidence viewer, SpreadJS 읽기 전용 workbook | Validation workflow, Aspose.Cells, source/PDF viewer API | SpreadJS 편집·client export |
+| `process/valuation` | SpreadJS 편집 UI, 일반 React 판단 UI | Aspose.Cells 권위 계산·저장, PostgreSQL | browser 권위 계산, SpreadJS client export |
+| `process/report-outline` | page·slot 구성 UI | Report Outline/Draft Agent, Temporal, Template IR | SpreadJS, browser PDF·XLSX 생성 |
+| `/report` | Template IR 기반 report editor | PDF·Excel·Agent worker, Temporal, 검증·export | SpreadJS, browser 최종 export |
+
+SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀 편집용이다. 두 화면 모두 계산 권위는 Aspose.Cells이며 최종 XLSX를 브라우저에서 만들지 않는다.
+
+## 10. 교차 검수 결과와 남은 결정
+
+2026-07-24에 10개 URL 명세를 함께 검수해 단계명, stage key, route 전이, path parameter, 소유권 오류, 비동기 취소 상태와 기술 위치를 이 문서의 공통 계약으로 통일했다.
+
+구현 전에 별도 제품·기술 결정으로 확정해야 하는 주요 항목:
+
+1. Google OAuth/OIDC 라이브러리, session 저장소·만료·회전과 CSRF 정책
+2. `cutoffDate`를 `cutoffAt`으로 변환하는 timezone·day-end 규칙
+3. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
+4. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
+5. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
+6. Agent model·provider·비용 한도·prompt/schema version·원시 응답 보존 정책
+7. 실시간 상태 transport를 polling에서 SSE·WebSocket으로 바꿀 기준

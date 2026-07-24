@@ -35,7 +35,7 @@
 4. 질문이 기업·기간·관찰 지표를 명확히 포함하는지 검증한다.
 5. 가설을 기각하거나 수정하게 할 반증 질문을 최소 1개 포함한다.
 6. 사용자가 질문을 추가·수정·삭제·정렬한 뒤 전체 질문 세트를 승인하게 한다.
-7. 승인한 질문 버전을 다음 자료 조사 계획 단계의 입력으로 고정한다.
+7. 승인한 질문 버전을 다음 자료 수집 및 계획 단계의 입력으로 고정한다.
 
 다음 작업은 이 화면에서 수행하지 않는다.
 
@@ -337,7 +337,7 @@ HTML을 허용하지 않고 일반 텍스트로 저장·렌더링한다. 입력�
 - 유효성 조건을 만족하지 않으면 비활성화하고 누락 조건을 가까운 위치에 표시한다.
 - 성공하면 `승인 완료` 상태, 승인 시각, 승인된 version을 표시한다.
 - 승인 이후 어떤 입력이나 질문이 바뀌면 승인 상태를 즉시 해제한다.
-- 승인은 사용자의 최종 투자의견 확정이 아니라 다음 자료 조사 계획의 입력 버전 고정이다.
+- 승인은 사용자의 최종 투자의견 확정이 아니라 다음 자료 수집 및 계획의 입력 버전 고정이다.
 
 ### 9.10 버튼 계약
 
@@ -459,7 +459,8 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
 | `thesisDraft` | string | textarea 로컬 입력 |
 | `saveState` | idle·dirty·saving·saved·error·conflict | 자동 저장 |
 | `questionSet` | object 또는 null | 서버 활성 질문 세트 |
-| `generationState` | idle·queued·running·failed | 생성 작업 표시 |
+| `generationState` | idle·queued·running·succeeded·failed·cancel_requested·cancelled | 생성 작업 lifecycle |
+| `generationValidity` | current·obsolete | 현재 입력 revision에 적용 가능한지 |
 | `editingQuestionId` | string 또는 null | 현재 인라인 편집 |
 | `editingValue` | string | 편집 질문 |
 | `newQuestion` | string | 추가 질문 |
@@ -488,7 +489,10 @@ Agent 결과를 바로 기존 row에 덮어쓰지 않는다. 새 question-set ve
     "companyName": "삼성전기",
     "ticker": "009150",
     "industry": "IT 제조업",
-    "targetPeriod": "2026Q2",
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
     "cutoffDate": "2026-07-17",
     "reportType": "EARNINGS_REVIEW",
     "currentStage": "hypothesis"
@@ -537,6 +541,7 @@ rating 또는 thesis를 자동 저장한다.
 ### 13.3 `POST /api/projects/{projectId}/hypothesis/generations`
 
 현재 서버 저장 입력으로 Hypothesis Agent 작업을 시작한다.
+`Idempotency-Key` header를 필수로 사용한다. body의 `requestId`는 추적용이며 중복 작업 방지의 권위값은 header다.
 
 ```json
 {
@@ -565,14 +570,15 @@ rating 또는 thesis를 자동 저장한다.
 ```json
 {
   "generationId": "hgen_01...",
-  "status": "queued",
+  "operationStatus": "queued",
+  "validity": "current",
   "statusUrl": "/api/projects/prj_01.../hypothesis/generations/hgen_01..."
 }
 ```
 
 ### 13.4 `GET /api/projects/{projectId}/hypothesis/generations/{generationId}`
 
-`queued`, `running`, `succeeded`, `failed`, `obsolete`, `cancelled` 중 하나를 반환한다. 화면은 짧은 polling으로 상태를 갱신할 수 있으며 background 작업은 화면 연결과 무관하게 Temporal에서 계속된다.
+`operationStatus`는 `queued`, `running`, `succeeded`, `failed`, `cancel_requested`, `cancelled` 중 하나를 반환한다. `validity`는 `current` 또는 `obsolete`다. 화면은 짧은 polling으로 상태를 갱신할 수 있으며 background 작업은 화면 연결과 무관하게 Temporal에서 계속된다.
 
 성공 결과는 Pydantic schema 검증을 통과한 question-set ID만 반환한다. 원시 model text를 검증 전 UI에 노출하지 않는다.
 
@@ -600,6 +606,7 @@ rating 또는 thesis를 자동 저장한다.
 ### 13.6 `POST /api/projects/{projectId}/hypothesis/question-sets/{questionSetId}/approval`
 
 현재 질문 세트 전체를 승인한다.
+`Idempotency-Key` header를 필수로 사용한다. body의 `requestId`는 추적용이다.
 
 ```json
 {
@@ -618,7 +625,7 @@ rating 또는 thesis를 자동 저장한다.
 | `400` | `INVALID_REQUEST` | 해당 입력 가까이에 오류 |
 | `401` | `AUTH_REQUIRED` | 입력 보존 후 로그인·원래 URL 복귀 |
 | `404` | `PROJECT_NOT_FOUND` | 프로젝트 정보 없이 목록 이동 안내 |
-| `409` | `PREREQUISITE_NOT_READY` | 유효 선행 단계로 이동 |
+| `409` | `HYPOTHESIS_PREREQUISITE_INCOMPLETE` | `requiredStage`·`resumeRoute`로 유효 선행 단계 이동 |
 | `409` | `VERSION_CONFLICT` | 최신본 불러오기 안내, 자동 덮어쓰기 금지 |
 | `409` | `INPUT_REVISION_CHANGED` | 완료된 과거 생성 결과를 obsolete 처리 |
 | `422` | `INVALID_RATING` | 투자의견 필드 오류 |
@@ -655,7 +662,7 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 | entity | 주요 필드 |
 |---|---|
 | `project_hypothesis` | project ID, rating, thesis, draft version, input revision, 선행 version, updated actor/time |
-| `hypothesis_generation` | generation ID, input revision, agent profile·prompt·schema version, status, Temporal workflow ID |
+| `hypothesis_generation` | generation ID, input revision, agent profile·prompt·schema version, operation status, validity, Temporal workflow ID |
 | `hypothesis_question_set` | set ID, project ID, version, source generation, status, approval |
 | `hypothesis_question` | stable question ID, set version, order, text, observable metric, falsification flag, origin |
 | `hypothesis_approval` | approved set version, input revision, user, time |

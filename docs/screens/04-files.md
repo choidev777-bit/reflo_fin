@@ -38,7 +38,7 @@
 7. 사용자가 결과와 차단 사유를 확인하고 필요한 파일 교체 또는 매핑 보정을 수행하게 한다.
 8. 모든 차단 검사를 통과한 파일 버전과 분석 버전을 확정한 뒤 투자 의견·조사 질문 단계로 이동한다.
 
-이 화면에서는 조사 참고자료를 받지 않는다. DART, IR, 뉴스, 사용자 참고 파일과 URL은 자료 조사 계획 화면에서 연결한다. 미래 추정치를 입력하거나 Excel을 편집하지도 않는다.
+이 화면에서는 조사 참고자료를 받지 않는다. DART, IR, 뉴스, 사용자 참고 파일과 URL은 자료 수집 및 계획 화면에서 연결한다. 미래 추정치를 입력하거나 Excel을 편집하지도 않는다.
 
 ### 1.3 판단 우선순위
 
@@ -70,7 +70,7 @@
 | 상황 | 처리 |
 |---|---|
 | 비로그인 | Google 로그인 후 원래 files URL로 복귀 |
-| 다른 사용자 프로젝트 | 존재 여부를 노출하지 않는 `404` 또는 공통 접근 불가 화면 |
+| 다른 사용자 프로젝트 | 존재 여부를 노출하지 않는 `404 PROJECT_NOT_FOUND` 공통 화면 |
 | 존재하지 않는 `projectId` | 프로젝트 없음 화면 |
 | setup 미완료 | setup URL로 이동하고 `프로젝트 설정을 먼저 완료해 주세요` 안내 |
 | 이미 업로드·검사 중 | 서버 작업 상태부터 복원 |
@@ -177,6 +177,8 @@ files URL 진입
 | `passed` | 확정 후보 표시 | PDF·Excel·매핑 결과 요약 | 결과 확인 |
 | `revalidation_required` | 기존 파일 유지 | 변경 원인과 무효 범위 | 재검사 |
 | `obsolete` | 새 버전 표시 | 이전 실행 결과는 기록용 | 최신 버전으로 검사 |
+
+이 표의 화면 상태는 `operationStatus`, `outcome`, `validity`를 조합한 view state다. `blocked`, `passed`, `obsolete`를 비동기 lifecycle `status`로 저장하지 않는다.
 
 성공·실패 상태가 바뀔 때 카드 전체가 사라지지 않는다. 사용자가 어떤 파일을 검사했는지 계속 확인할 수 있어야 한다.
 
@@ -375,18 +377,25 @@ ready → superseded
 
 PDF와 Excel의 독립 단계는 병렬 실행할 수 있다. 매핑은 두 분석 결과가 준비된 뒤 시작한다.
 
-### 8.3 검사 run 상태
+### 8.3 검사 run lifecycle·outcome·validity
 
-| 상태 | 의미 |
-|---|---|
-| `idle` | 실행 전 |
-| `queued` | Temporal 제출 완료, worker 대기 |
-| `running` | 하나 이상의 stage 실행 중 |
-| `blocked` | 입력·호환성·필수 매핑 문제로 사용자 조치 필요 |
-| `failed` | infrastructure 또는 worker 실패로 완료하지 못함 |
-| `passed` | 모든 필수 검사 통과 |
-| `cancelled` | 사용자 또는 시스템이 안전하게 취소 |
-| `obsolete` | 상위 설정·파일·매핑 version 변경으로 결과 적용 불가 |
+비동기 lifecycle과 검사 결과, version 유효성을 하나의 `status` enum으로 섞지 않는다.
+
+| 구분 | 값 | 의미 |
+|---|---|---|
+| `operationStatus` | `idle` | 실행 전 |
+| `operationStatus` | `queued` | Temporal 제출 완료, worker 대기 |
+| `operationStatus` | `running` | 하나 이상의 stage 실행 중 |
+| `operationStatus` | `cancel_requested` | 안전한 취소 처리 중 |
+| `operationStatus` | `succeeded` | workflow가 끝나 domain outcome 확정 |
+| `operationStatus` | `failed` | infrastructure 또는 worker 실패로 완료하지 못함 |
+| `operationStatus` | `cancelled` | 사용자 또는 시스템이 안전하게 취소 |
+| `outcome` | `pending` | 아직 검사 결과 미확정 |
+| `outcome` | `passed` | 모든 필수 검사 통과 |
+| `outcome` | `blocked` | 입력·호환성·필수 매핑 문제로 사용자 조치 필요 |
+| `validity` | `current` | 현재 입력 version에 적용 가능 |
+| `validity` | `obsolete` | 상위 설정·파일·매핑 version 변경으로 적용 불가 |
+| `validity` | `revalidation_required` | 새 입력으로 다시 검사해야 함 |
 
 ### 8.4 진행률 표시
 
@@ -507,7 +516,7 @@ Excel 탭은 실제 workbook 편집 화면이 아니라 검사 결과 요약이�
 | 파일 슬롯 | `role`, `activeFileVersionId`, `status` | PDF·Excel 카드 |
 | upload | `uploadId`, `status`, `bytes`, `expiresAt`, `retryable` | 전송 진행 |
 | artifact | `artifactId`, `fileVersionId`, `filename`, `byteSize`, `sha256`, `mediaType` | 원본 식별·표시 |
-| inspection run | `inspectionId`, `inputVersions`, `status`, `stage`, `progress`, `heartbeatAt` | 검사 진행 |
+| inspection run | `inspectionId`, `inputVersions`, `operationStatus`, `outcome`, `validity`, `stage`, `progressPercent`, `heartbeatAt` | 검사 진행 |
 | PDF result | `templateVersion`, `styleProfileVersion`, `pages`, `warnings`, `previewArtifacts` | PDF 결과 |
 | Excel result | `workbookVersion`, `structureHash`, `sheets`, `formulaSummary`, `editableCellSummary` | Excel 결과 |
 | MappingSet | `mappingSetId`, `version`, `status`, `bindings`, `unmappedRequiredSlots` | 매핑 결과 |
@@ -543,8 +552,8 @@ Excel 탭은 실제 workbook 편집 화면이 아니라 검사 결과 요약이�
 | 상태 코드 | 오류 코드 | 화면 처리 |
 |---|---|---|
 | `401` | `AUTH_REQUIRED` | 로그인 후 같은 URL 복귀 |
-| `403` 또는 `404` | `PROJECT_NOT_ACCESSIBLE` | 프로젝트 존재를 노출하지 않는 접근 불가 |
-| `409` | `SETUP_INCOMPLETE` | setup URL 이동 |
+| `404` | `PROJECT_NOT_FOUND` | 프로젝트 없음과 타인 소유를 구분하지 않는 공통 화면 |
+| `409` | `FILES_PREREQUISITE_INCOMPLETE` | `requiredStage`·`resumeRoute`를 사용해 setup URL 이동 |
 | `500` | `FILES_STATE_LOAD_FAILED` | 기존 화면을 유지하고 재시도 |
 
 ### 13.2 `POST /api/projects/{projectId}/files/upload-sessions`
@@ -593,7 +602,7 @@ If-Match: "project-version-7"
 }
 ```
 
-성공 시 `202 Accepted`와 `inspectionId`, `status=queued`를 반환한다. 같은 입력 version과 idempotency key 재전송은 같은 실행을 반환한다.
+성공 시 `202 Accepted`와 `inspectionId`, `operationStatus=queued`, `outcome=pending`, `validity=current`를 반환한다. 같은 입력 version과 idempotency key 재전송은 같은 실행을 반환한다.
 
 ### 13.6 `GET /api/projects/{projectId}/file-inspections/{inspectionId}`
 
@@ -612,6 +621,7 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 ### 13.9 `POST /api/projects/{projectId}/process/files/complete`
 
 검사 결과를 단계 입력으로 확정한다.
+`Idempotency-Key` header를 필수로 사용한다.
 
 ```json
 {
@@ -629,7 +639,7 @@ stage, 진행률, heartbeat, PDF·Excel·mapping 요약, blocker와 retry capabi
 |---|---|---|
 | `400` | `INSPECTION_NOT_PASSED` | 결과 대화상자 유지, 차단 탭 이동 |
 | `401` | `AUTH_REQUIRED` | 상태 보존 후 재로그인 |
-| `404` | `PROJECT_NOT_ACCESSIBLE` | 접근 불가 |
+| `404` | `PROJECT_NOT_FOUND` | 프로젝트 없음과 타인 소유를 구분하지 않는 공통 화면 |
 | `409` | `STALE_PROJECT_VERSION` | 최신 상태 재조회 |
 | `409` | `STALE_FILE_VERSION` | 재검증 필요 |
 | `409` | `MAPPING_NOT_CONFIRMED` | 매핑 탭 이동 |

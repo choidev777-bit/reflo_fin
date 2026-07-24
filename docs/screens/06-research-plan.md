@@ -1,6 +1,6 @@
-# REFLO 화면 구현 명세: `/projects/:projectId/process/research-plan` 자료 조사 계획
+# REFLO 화면 구현 명세: `/projects/:projectId/process/research-plan` 자료 수집 및 계획
 
-**문서 상태:** 자료 조사 계획 명세 작성 완료
+**문서 상태:** 자료 수집 및 계획 명세 작성 완료
 
 **작성일:** 2026-07-24
 
@@ -10,7 +10,7 @@
 
 **기준 문서:** [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](../REFLO_URL_SERVICE_BEHAVIOR_v1.md), [`REFLO_TECHNICAL_DECISIONS_v1.md`](../REFLO_TECHNICAL_DECISIONS_v1.md)
 
-## 6. `/projects/:projectId/process/research-plan` — 자료 조사 계획
+## 6. `/projects/:projectId/process/research-plan` — 자료 수집 및 계획
 
 ### 6.1 명세 상태
 
@@ -62,7 +62,7 @@
 | PDF·Excel version 변경으로 plan 무효 | 읽기 가능한 stale 안내와 `파일 다시 확인` 이동 제공, 승인·실행 차단 |
 | 질문 version 변경으로 plan 무효 | 최신 질문으로 새 draft 생성 안내, 기존 승인 version은 이력으로 유지 |
 | 실행 중 job 존재 | 승인된 plan snapshot과 실제 job 진행 상태를 읽기 전용으로 표시 |
-| 완료 job 존재 | 완료 상태와 `수집 결과 검증` 이동 표시, plan 변경 시 새 version 필요 |
+| 완료 job 존재 | 완료 상태와 `조사 결과 검증` 이동 표시, plan 변경 시 새 version 필요 |
 
 #### 이탈 조건
 
@@ -95,7 +95,7 @@
 | 현재 영역 | 판정 | 구현 판단 |
 |---|---|---|
 | 공통 process 헤더·좌측 workflow·하단 action bar | 재사용 | 실제 project·stage·저장·job 상태 연결 |
-| `STEP 04`와 `자료 조사 계획` 제목 | 재사용 | 설명은 사용자 승인 책임이 드러나는 문구로 수정 |
+| `STEP 04`와 `자료 수집 및 계획` 제목 | 재사용 | 설명은 사용자 승인 책임이 드러나는 문구로 수정 |
 | HYPOTHESIS·EXCEL 2개 목적 탭 | 그대로 재사용 | 순서, 2자리 번호, 15px 제목, 선택 선과 keyboard tab 동작 유지 |
 | 탭 아래 한 줄 guide | 재사용·문구 수정 | 질문별 출처와 Excel 실제값 계약을 간결하게 안내 |
 | HYPOTHESIS 공용 출처 카드 | 재사용·역할 수정 | 질문별 출처의 일괄 기본값·bulk editor로 사용, 질문별 저장값을 덮는 단일 권위 상태로 사용하지 않음 |
@@ -113,7 +113,7 @@
 | 승인 dialog의 가짜 진행률·가짜 수집 건수 | 제거 | Temporal job projection의 실제 phase·progress·count만 표시 |
 | 실행 중 dialog | 재사용·수정 | 닫기, STEP 05 이동, 취소 요청과 background 실행 안내 제공 |
 | `임시 저장` | 재사용 | 실제 versioned save와 오류 복구 연결 |
-| `다음` | 재사용 | 유효 draft에서는 승인 dialog, 실행 후에는 `수집 상태 보기` 또는 `수집 결과 검증` 의미로 변경 |
+| `다음` | 재사용 | 유효 draft에서는 승인 dialog, 실행 후에는 `수집 상태 보기` 또는 `조사 결과 검증` 의미로 변경 |
 
 현재 화면의 흰 작업면, 중립 band, hairline, REFLO lime 상태 신호, borderless 질문 목록과 반응형 구조를 유지한다. 제품 동작을 맞추기 위해 필요한 정보와 상태만 추가한다.
 
@@ -154,7 +154,7 @@ route 진입
 | `SourceSelectionDialog` | 기준 출처 선택과 질문 적용 범위 확정 | source options, target question IDs | bulk 또는 개별 source binding 저장 |
 | `UserMaterialManager` | 파일 upload와 URL 등록 | project, current materials | artifact·URL source 생성·삭제 |
 | `PlanApprovalDialog` | 승인 snapshot 요약과 실행 확인 | plan version, validation result | 승인·job 생성 |
-| `ResearchJobStatus` | queued·running·failed·canceled·succeeded 표시 | job projection | validation 이동, retry, cancel |
+| `ResearchJobStatus` | queued·running·failed·cancelled·succeeded 표시 | job projection | validation 이동, retry, cancel |
 | `PlanRouteError` | 404·선행 단계·초기 조회 오류 | error code | 이전 단계·재시도 |
 
 탭과 card 표시 컴포넌트 안에 Temporal client, 객체 저장소 credential, PydanticAI 실행 코드를 넣지 않는다.
@@ -166,7 +166,7 @@ route 진입
 | 영역 | 문구 |
 |---|---|
 | eyebrow | `STEP 04` |
-| 제목 | `자료 조사 계획` |
+| 제목 | `자료 수집 및 계획` |
 | 설명 | `승인된 가설 질문과 Excel 실제값 입력 대상을 확인하고, 수집할 출처와 방법을 확정합니다.` |
 | HYPOTHESIS eyebrow | `HYPOTHESIS` |
 | HYPOTHESIS 제목 | `가설 확인을 위한 자료 수집` |
@@ -314,10 +314,10 @@ Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata�
 | PLAN-BTN-08 | 하단 `다음` | draft valid·저장 완료 | approval dialog 열기 | 승인 요약 표시 | 차단 항목으로 focus 이동 |
 | PLAN-BTN-09 | `자료 수집 시작` | approval ready·요청 중 아님 | plan 승인과 job 생성 | queued 상태·job ID 수신 | dialog 유지·재시도 |
 | PLAN-LINK-01 | `수집 상태 보기` | job queued·running·cancel requested | STEP 05 이동 | 실제 progress 표시 | route 오류 |
-| PLAN-LINK-02 | `수집 결과 검증` | job succeeded | STEP 05 이동 | 검증 대기열 표시 | route 오류 |
+| PLAN-LINK-02 | `조사 결과 검증` | job succeeded | STEP 05 이동 | 검증 대기열 표시 | route 오류 |
 | PLAN-BTN-10 | `자료 수집 취소` | queued·running | cancel 요청 | `cancel_requested` 표시 | 기존 job 유지·재시도 |
 | PLAN-BTN-11 | `실패 단계 재시도` | retryable failed | 같은 승인 plan으로 retry | 새 attempt 또는 재개 job | 실패 이유 유지 |
-| PLAN-BTN-12 | `계획 수정` | canceled 또는 non-retryable failed | 새 draft version 생성 | 편집 상태 복귀 | 생성 실패·재시도 |
+| PLAN-BTN-12 | `계획 수정` | cancelled 또는 non-retryable failed | 새 draft version 생성 | 편집 상태 복귀 | 생성 실패·재시도 |
 
 질문·Excel 항목의 `×` 삭제 버튼과 새 질문·새 Excel 입력값 자유 입력은 목표 화면에 두지 않는다.
 
@@ -332,7 +332,11 @@ Excel workbook grid를 이 화면에 넣지 않는다. cell 목록과 metadata�
     "name": "삼성전기 2026년 2분기 리서치",
     "companyName": "삼성전기",
     "ticker": "009150",
-    "targetPeriod": "2026Q2",
+    "targetPeriod": {
+      "year": 2026,
+      "quarter": 2
+    },
+    "cutoffDate": "2026-07-17",
     "cutoffAt": "2026-07-17T23:59:59+09:00"
   },
   "prerequisites": {
@@ -520,7 +524,7 @@ Idempotency-Key: 2f35...
   "approvedPlanVersionId": "rplv_12",
   "job": {
     "jobId": "job_01...",
-    "status": "queued",
+    "operationStatus": "queued",
     "phase": "preparing",
     "progressPercent": 0,
     "retryable": false,
@@ -563,17 +567,17 @@ GET  /api/projects/{projectId}/source-uploads/{uploadId}
 
 ### 6.18 비동기 실행·진행·재시도·취소 상태
 
-#### job 상태
+#### job lifecycle
 
-| 상태 | 화면 | 사용자 동작 |
+| `operationStatus` | 화면 | 사용자 동작 |
 |---|---|---|
 | `queued` | 실제 대기 상태와 0% 표시 | STEP 05 이동, background 계속, 취소 |
 | `running` | phase, progress, 최근 갱신 시각 | STEP 05 이동, background 계속, 취소 |
 | `cancel_requested` | 종료 요청 처리 중, 중복 취소 차단 | 기다리기·프로젝트 목록 이동 |
-| `canceled` | 취소 완료와 partial 결과 비공개 안내 | 계획 수정·같은 plan 재시작 |
+| `cancelled` | 취소 완료와 partial 결과 비공개 안내 | 계획 수정·같은 plan 재시작 |
 | `failed` retryable | 실패 phase와 사용자용 오류 code | 실패 단계 재시도·로그 상세 |
 | `failed` non-retryable | 입력·source 수정 필요 이유 | plan 또는 이전 단계 수정 |
-| `succeeded` | 수집·추출·독립 검증 준비 완료 | `수집 결과 검증` |
+| `succeeded` | 수집·추출·독립 검증 준비 완료 | `조사 결과 검증` |
 
 #### phase
 
@@ -601,7 +605,7 @@ progress는 Temporal activity의 완료 단위와 실제 checkpoint에서 계산
 
 - `queued`·`running`에서만 취소할 수 있다.
 - 취소 확인은 현재 phase와 `지금까지의 임시 결과는 최종 결과로 사용되지 않습니다`를 표시한다.
-- 요청 후 즉시 `canceled`로 보이지 않고 `cancel_requested`를 표시한다.
+- 요청 후 즉시 `cancelled`로 보이지 않고 `cancel_requested`를 표시한다.
 - 실행 중 자식 process는 grace period 후 종료하고 시작하지 않은 activity는 실행하지 않는다.
 - temporary artifact는 publish하지 않고 정리 workflow 대상으로 남긴다.
 - 이미 `succeeded`한 job은 취소할 수 없다.
@@ -839,7 +843,7 @@ approved plan version은 최소 다음 참조를 고정한다.
 | E2E | autosave 성공·실패·수동 재시도·version conflict |
 | E2E | 승인 요약 후 job 생성, 중복 클릭에도 job 한 개 |
 | E2E | queued·running 실제 progress와 background 실행 |
-| E2E | running 취소 요청·cancel requested·canceled |
+| E2E | running 취소 요청·cancel requested·cancelled |
 | E2E | retryable 실패의 checkpoint 재시도 |
 | E2E | non-retryable 실패가 plan·이전 단계 수정 action 제공 |
 | E2E | running·succeeded에서 validation route 이동 |

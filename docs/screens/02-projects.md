@@ -265,7 +265,7 @@ workflowProgress = completedStageCount ÷ 7 × 100
 |---|---|---|
 | 식별 | `projectId`, `name`, `version` | 행 key, 표시, stale 상태 판정 |
 | 기업 | `company.name`, `company.ticker`, `company.exchange` | 기업 정보와 검색 |
-| 분석 기준 | `targetPeriod.year`, `targetPeriod.quarter`, `reportType`, `industry`, `valuationMethod` | 리포트 열 |
+| 분석 기준 | `targetPeriod.year`, `targetPeriod.quarter`, `reportType`, `companyDomain`, `valuationMethod` | 리포트 열 |
 | workflow | `workflow.currentStage`, `workflow.completedStageCount`, `workflow.totalStageCount`, `workflow.progressPercent`, `workflow.resumeRoute` | 진행률과 이동 |
 | 프로젝트 상태 | `primaryStatusCode`, `attentionCodes` | 상태 badge |
 | 실행 작업 | `activeJob` 또는 null | 장시간 분석·수집 진행 상태 |
@@ -357,9 +357,9 @@ workflowProgress = completedStageCount ÷ 7 × 100
         "year": 2026,
         "quarter": 2
       },
-      "reportType": "earnings_review",
-      "industry": "it_manufacturing",
-      "valuationMethod": "per",
+      "reportType": "EARNINGS_REVIEW",
+      "companyDomain": "IT_MANUFACTURING",
+      "valuationMethod": "PER",
       "workflow": {
         "currentStage": "files",
         "completedStageCount": 1,
