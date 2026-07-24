@@ -84,6 +84,33 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 ## 4. 2026-07-24 작업 기록
 
+### 2026-07-24 — 시스템 아키텍처 기준선 작성
+
+#### 결과
+
+- `REFLO_SYSTEM_ARCHITECTURE_v1.md`를 작성하고 현재 UI 프로토타입과 목표 production 구조를 분리했다.
+- MVP를 Next.js Node.js 웹/API 모듈러 모놀리스, PostgreSQL, S3 호환 객체 저장소, Temporal과 격리된 PDF·Excel·Research/Validation·PydanticAI worker로 구성했다.
+- 브라우저, application service, worker, PostgreSQL, 객체 저장소와 Temporal의 권위 데이터와 금지 책임을 구분했다.
+- DB commit 뒤 장시간 작업 시작이 유실되지 않도록 PostgreSQL outbox와 deterministic Temporal workflow 시작 흐름을 명시했다.
+- 동기 저장, 비동기 작업, 파일 수명주기, version 무효화, 인증·보안, 재시도·취소, 관측성, 배포 단위와 목표 repository 구조를 정의했다.
+- 10개 URL을 동기 application 책임, 비동기 책임과 주요 저장소에 매핑했다.
+- 구현 순서를 계약 완성 → 인증·프로젝트 수직 흐름 → 파일·작업 기반 → 7단계 기능으로 확정했다.
+
+#### 검증
+
+- README와 기술 결정문·작업 로그에서 아키텍처 문서 접근 경로 확인
+- Markdown 16개 내부 링크, code fence와 JSON 예시 검사: 통과
+- `git diff --check`: 통과
+- 문서만 변경했으므로 애플리케이션 build와 브라우저 검사는 생략했다.
+
+#### 다음 작업
+
+- 아키텍처의 사용자·session·project·version·artifact·job·Evidence·report 경계를 ERD로 구체화한다.
+
+#### Git
+
+- 시스템 아키텍처 기준선: `21b4c99`
+
 ### 2026-07-24 — MVP 플랫폼 기본값과 PydanticAI·OpenAI 결정
 
 #### 결과
@@ -322,13 +349,14 @@ npm run start
 
 ## 6. 다음 우선 작업
 
-1. TD-014를 구현할 Google OAuth/OIDC package와 정확한 version을 확정하고 SpreadJS 라이선스를 확인한다.
-2. 화면 명세를 기준으로 프로젝트·파일·작업·Evidence·밸류에이션·보고서 데이터 모델과 API 모듈을 설계한다.
-3. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
-4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
-5. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
-6. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
-7. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
+1. 시스템 아키텍처를 기준으로 ERD를 작성한다.
+2. 화면 명세에 흩어진 endpoint를 통합 API 명세와 OpenAPI 초안으로 정리한다.
+3. Google OAuth/OIDC package, PostgreSQL access·migration 도구를 확정하고 SpreadJS 라이선스를 확인한다.
+4. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
+5. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
+6. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
+7. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
+8. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
 
 ## 7. 작업 기록 규칙
 
