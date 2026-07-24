@@ -788,7 +788,7 @@ function LinoEditableTable({ title, columns, rows }: LinoTableProps) {
       <div className="lino-edit-table-scroll">
         <table>
           <thead>
-            <tr>{columns.map((column) => <th key={column} contentEditable suppressContentEditableWarning>{column}</th>)}</tr>
+            <tr>{columns.map((column, columnIndex) => <th key={`${column}-${columnIndex}`} contentEditable suppressContentEditableWarning>{column}</th>)}</tr>
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => <tr key={`${title}-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`} contentEditable suppressContentEditableWarning>{cell}</td>)}</tr>)}
