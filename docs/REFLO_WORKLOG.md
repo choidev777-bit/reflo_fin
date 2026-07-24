@@ -20,6 +20,10 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 - [REFLO_URL_SERVICE_BEHAVIOR_v1.md](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [REFLO_TECHNICAL_DECISIONS_v1.md](./REFLO_TECHNICAL_DECISIONS_v1.md)
 
+화면별 실제 구현 계약은 다음 문서에 URL 순서대로 누적한다.
+
+- [REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md](./REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
+
 화면·스타일·문구를 변경할 때는 프로젝트 루트의 [DESIGN.md](../DESIGN.md)를 먼저 확인한다.
 
 ## 2. 협업 방향
@@ -77,6 +81,24 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 백엔드 기술은 UI 디자인 코드와 분리한다.
 
 ## 4. 2026-07-24 작업 기록
+
+### 2026-07-24 — `/` 홈 화면 구현 명세
+
+#### 목표
+
+- 두 기준 문서와 현재 React 디자인을 대조해 홈의 컴포넌트·버튼·데이터·API·상태·기술 위치를 확정한다.
+
+#### 결과
+
+- `REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md`를 만들고 `/` 홈 명세를 첫 항목으로 작성했다.
+- 기존 헤더·히어로·모달 디자인은 재사용하고 인증 상태와 실제 프로젝트 생성만 연결하도록 정리했다.
+- Google 로그인, 실제 `projectId`, 7단계 표시, 사용자 메뉴·로그아웃, 오류·보안·테스트 조건을 명시했다.
+- 홈에서 사용하지 않는 SpreadJS, Temporal, PDF·Excel 워커, Agent는 로드하지 않도록 명시했다.
+- 인증 라이브러리·세션 정책·CSRF 방식은 기술 결정 문서에 추가해야 할 미확정 항목으로 분리했다.
+
+#### 다음 작업
+
+- 같은 문서에 `/projects` 명세를 이어서 작성한다.
 
 ### 2026-07-24 — 개발 기준선 완료
 
