@@ -84,6 +84,32 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 ## 4. 2026-07-24 작업 기록
 
+### 2026-07-24 — 시스템 아키텍처 review 수정
+
+#### 결과
+
+- Temporal Workflow 정의·replay·versioning을 실행하는 `Workflow Control Worker`를 별도 배포 단위와 repository 구조에 추가했다.
+- activity worker의 PostgreSQL 직접 접근을 제거하고 service identity 기반 `Internal Worker API`를 통해서만 진행률·typed result·artifact metadata를 반영하도록 경계를 수정했다.
+- outbox 상태·lease·중복 시작 정책, PostgreSQL projection과 Temporal history reconciliation, S3 temporary artifact commit·orphan cleanup 절차를 추가했다.
+- browser의 presigned URL 직접 업로드 경로와 제한 CORS·완료 검증을 diagram과 파일 수명주기에 반영했다.
+- PostgreSQL·S3·Temporal과 서비스 전체의 초기 RPO·RTO, 통합 복구 순서와 분기별 restore test를 정의했다.
+- OpenAPI와 JSON Schema의 단일 원본, TS·Python·C# type 생성, schema version과 active workflow 호환성 규칙을 추가했다.
+- TD-011의 오케스트레이션·worker 격리·확정 전환 조건을 같은 경계로 갱신했다.
+
+#### 검증
+
+- Markdown 16개 내부 링크, code fence와 JSON 예시 검사: 통과
+- activity worker의 PostgreSQL 직접 쓰기 경로 잔존 검사: 없음
+- 필수 architecture 보완 section과 `git diff --check`: 통과
+
+#### 다음 작업
+
+- 수정된 architecture를 기준으로 outbox, job, artifact, version과 Evidence 관계를 포함한 ERD를 작성한다.
+
+#### Git
+
+- 시스템 아키텍처 경계 보강: `08877db`
+
 ### 2026-07-24 — 시스템 아키텍처 기준선 작성
 
 #### 결과
