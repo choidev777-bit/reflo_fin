@@ -317,7 +317,7 @@ field 수준 계약은 OpenAPI schema를 사용한다. 아래 표의 “주요 �
 | `PATCH` | `/api/projects/{projectId}/process/setup` | `200` | `INVALID_SETUP_FIELD`, `STALE_PROJECT_VERSION`, `DOWNSTREAM_INVALIDATION_CONFIRMATION_REQUIRED`, `UNSUPPORTED_COMPANY` |
 | `POST` | `/api/projects/{projectId}/process/setup/complete` | `200` | `SETUP_INCOMPLETE`, `STALE_PROJECT_VERSION`, `UNSUPPORTED_COMPANY` |
 
-setup mutation에서 `reportType`, `companyDomain`, `valuationMethod`, `cutoffAt`, owner와 완료 상태를 client 입력으로 받지 않는다.
+setup mutation에서 `valuationMethod`는 `PER`, `PBR`, `EV_EBITDA`, `DCF` 중 하나를 받는다. `reportType`, `companyDomain`, `cutoffAt`, owner와 완료 상태는 client 입력으로 받지 않으며, `companyDomain`은 선택 기업의 KRX 업종에서 서버가 결정한다.
 
 ### 8.3 STEP 02 파일 업로드·검사
 

@@ -18,6 +18,7 @@
 
 # Local environment files
 **/.env*
+!**/.env.example
 
 # OS metadata
 .DS_Store

@@ -16,6 +16,7 @@ npm run dev
 
 주요 문서:
 
+- [Phase별 구현 계획](./docs/REFLO_IMPLEMENTATION_PLAN_v1.md)
 - [시스템 아키텍처](./docs/REFLO_SYSTEM_ARCHITECTURE_v1.md)
 - [ERD](./docs/REFLO_ERD_v1.md)
 - [API 명세](./docs/REFLO_API_SPEC_v1.md)

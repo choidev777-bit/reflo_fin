@@ -19,7 +19,7 @@ test("defines every documented REFLO screen as an App Router URL", async () => {
 });
 
 test("maps the seven process URLs to the existing seven screen states", async () => {
-  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const source = await readFile(new URL("../app/legacy-client.tsx", import.meta.url), "utf8");
 
   for (const [step, route] of [
     [0, "setup"],
@@ -35,4 +35,46 @@ test("maps the seven process URLs to the existing seven screen states", async ()
 
   assert.match(source, /window\.history\.pushState\(null, "", nextPath\)/);
   assert.match(source, /\/projects\/\$\{encodeURIComponent\(projectIdRef\.current\)\}\/report/);
+});
+
+test("uses dedicated Phase 1 pages instead of re-exporting the prototype root", async () => {
+  const [home, projects, setup] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/projects/page.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/projects/[projectId]/process/setup/page.tsx", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(home, /HomeScreen/);
+  assert.match(projects, /ProjectsScreen/);
+  assert.match(setup, /SetupScreen/);
+  assert.doesNotMatch(setup, /export \{ default \}/);
+});
+
+test("uses the real Phase 2 file workspace instead of the timer prototype", async () => {
+  const [page, screen, repository] = await Promise.all([
+    readFile(
+      new URL("../app/projects/[projectId]/process/files/page.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../app/_phase2/FilesScreen.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL(
+        "../server/infrastructure/repositories/file-repository.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(page, /FilesScreen/);
+  assert.doesNotMatch(page, /LegacyClient/);
+  assert.match(screen, /\/files\/upload-sessions/);
+  assert.match(screen, /file-inspections/);
+  assert.match(screen, /document\.hidden/);
+  assert.doesNotMatch(screen, /setCheckProgress/);
+  assert.match(repository, /INSERT INTO outbox_event/);
+  assert.match(repository, /temporal_workflow_id/);
 });

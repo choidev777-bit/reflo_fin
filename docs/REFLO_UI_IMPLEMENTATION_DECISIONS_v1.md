@@ -55,6 +55,8 @@
 - desktop project overview는 top padding 0, eyebrow 아래 14px, heading 아래 10px을 사용한다. compact breakpoint는 16px page inset을 유지한다.
 - project setup field label은 12px을 사용한다.
 - company mismatch dialog는 16px horizontal padding, 30px icon과 20px glyph를 사용한다.
+- 기업 분야는 고정 문구를 사용하지 않고 선택 기업의 KRX 업종을 읽기 전용으로 표시·저장한다.
+- 밸류에이션 모델은 `PER`, `PBR`, `EV/EBITDA`, `DCF` 중 선택하며 기본값과 데모 선택값은 `PER`다.
 
 ## 5. 파일 업로드·분석
 

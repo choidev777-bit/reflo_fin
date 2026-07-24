@@ -1,0 +1,110 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: reflo
+      POSTGRES_USER: reflo
+      POSTGRES_PASSWORD: reflo_local
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reflo -d reflo"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - reflo-postgres:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: reflo_local
+      MINIO_ROOT_PASSWORD: reflo_local_change_me
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3100,http://localhost:3100"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - reflo-minio:/data
+
+  temporal-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal_local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - reflo-temporal-postgres:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.29.1
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal_local
+      POSTGRES_SEEDS: temporal-postgres
+    ports:
+      - "127.0.0.1:7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health | grep SERVING"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  clamav:
+    image: clamav/clamav:1.4.5
+    ports:
+      - "127.0.0.1:3310:3310"
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'PING\\n' | nc 127.0.0.1 3310 | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    volumes:
+      - reflo-clamav:/var/lib/clamav
+
+  pdf-worker:
+    build:
+      context: ../../workers/pdf
+    environment:
+      PORT: 8091
+    ports:
+      - "127.0.0.1:8091:8091"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  excel-worker:
+    build:
+      context: ../../workers/excel
+    ports:
+      - "127.0.0.1:8092:8092"
+
+volumes:
+  reflo-postgres:
+  reflo-minio:
+  reflo-temporal-postgres:
+  reflo-clamav:

@@ -184,8 +184,10 @@ export default function Aurora({
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let animationId = 0;
+    let disposed = false;
 
     const renderFrame = (frameTime: number) => {
+      if (disposed || gl.isContextLost()) return;
       const current = propsRef.current;
       const resolvedTime = current.time ?? frameTime * 0.01;
       program.uniforms.uTime.value = resolvedTime * current.speed * 0.1;
@@ -204,6 +206,7 @@ export default function Aurora({
     else animationId = requestAnimationFrame(update);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(animationId);
       resizeObserver.disconnect();
       if (canvas.parentNode === container) container.removeChild(canvas);
