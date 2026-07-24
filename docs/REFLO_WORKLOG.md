@@ -85,6 +85,35 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 ## 4. 2026-07-24 작업 기록
 
+### 2026-07-24 — PostgreSQL ERD 기준선 작성
+
+#### 결과
+
+- `REFLO_ERD_v1.md`를 작성하고 사용자·인증·프로젝트부터 7단계와 보고서까지의 PostgreSQL 논리·물리 모델 기준선을 정의했다.
+- 공통 `versioned_resource`·`resource_version`, 여러 입력을 함께 고정하는 approval·stage completion과 하위 단계 무효화 구조를 설계했다.
+- Temporal job projection, outbox, idempotency, activity attempt, reconciliation과 Internal Worker API 결과 transaction을 table·constraint로 구체화했다.
+- S3 artifact metadata, upload quarantine, Source·locator·Evidence·검증·충돌 결정과 FK 기반 provenance 구조를 정의했다.
+- 조사 후보와 승인 Evidence를 분리하는 `research_result_version`, Aspose.Cells 권위 workbook·계산·valuation, report revision·edit lease·검증·승인·export 모델을 포함했다.
+- 화면 명세의 논리 entity와 물리 table 매핑, 필수 unique·check·index, FK 삭제 정책, DB role과 migration 순서를 추가했다.
+- README, 아키텍처, 기술 결정문과 작업 로그에서 ERD를 기준 문서로 연결했다.
+
+#### 검증
+
+- 관련 Markdown 내부 링크 검사: 통과
+- ERD code fence 40개, Mermaid diagram 9개와 1~22장 heading 순서 검사: 통과
+- 10개 화면 명세의 저장 모델·version·job·Evidence·report entity 교차 대조: 통과
+- `git diff --check`: 통과
+- 문서만 변경했으므로 애플리케이션 build와 브라우저 검사는 생략했다.
+
+#### 다음 작업
+
+- ERD의 aggregate와 화면별 API 계약을 기준으로 `REFLO_API_SPEC_v1.md`를 작성한다.
+- 그 다음 인증·session, project·setup과 공통 version table부터 migration과 수직 기능 구현을 시작한다.
+
+#### Git
+
+- PostgreSQL ERD 기준선: `68c9310`
+
 ### 2026-07-24 — 시스템 아키텍처 review 수정
 
 #### 결과
