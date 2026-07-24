@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "outputType": "hypothesis_questions",
+  "inputVersionRefs": [
+    {
+      "role": "hypothesis_draft",
+      "resourceVersionId": "hypothesis_version_01",
+      "version": 1,
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "metadata": {
+    "provider": "openai",
+    "model": "configured-model-id",
+    "promptVersion": "hypothesis-v1",
+    "outputSchemaId": "https://schemas.reflo.dev/worker/v1/agent-output.schema.json",
+    "startedAt": "2026-07-24T10:00:00+09:00",
+    "finishedAt": "2026-07-24T10:00:05+09:00",
+    "usage": {
+      "inputTokens": 100,
+      "outputTokens": 200
+    }
+  },
+  "warnings": [],
+  "questions": [
+    {
+      "questionKey": "q_01",
+      "text": "매출 성장률이 둔화되는가?",
+      "category": "financial",
+      "falsificationCriteria": "분기 매출 성장률이 기준치를 하회한다.",
+      "order": 0
+    },
+    {
+      "questionKey": "q_02",
+      "text": "산업 수요가 예상보다 약한가?",
+      "category": "industry",
+      "falsificationCriteria": "공식 산업 지표가 전년 대비 감소한다.",
+      "order": 1
+    },
+    {
+      "questionKey": "q_03",
+      "text": "밸류에이션 프리미엄이 유지되는가?",
+      "category": "valuation",
+      "falsificationCriteria": "동종기업 대비 프리미엄 근거가 확인되지 않는다.",
+      "order": 2
+    }
+  ]
+}

@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/research-result.schema.json",
+  "title": "REFLO Research Worker Result v1",
+  "description": "Source collection metadata or unverified research candidates. Candidates are not Evidence until independent validation passes.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SourceCollectionResult"
+    },
+    {
+      "$ref": "#/$defs/ResearchCandidateResult"
+    }
+  ],
+  "$defs": {
+    "HttpMetadata": {
+      "title": "HttpMetadata",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "contentType",
+        "redirectChain"
+      ],
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "etag": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "lastModified": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "redirectChain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    },
+    "SourceSnapshot": {
+      "title": "SourceSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "sourceType",
+        "requestedUrl",
+        "finalUrl",
+        "capturedAt",
+        "contentHash",
+        "mediaType",
+        "accessClass",
+        "retentionClass",
+        "http",
+        "parser"
+      ],
+      "properties": {
+        "sourceKey": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "DART",
+            "COMPANY_IR",
+            "KRX",
+            "ECOS",
+            "FNGUIDE_CONSENSUS",
+            "OFFICIAL",
+            "NEWS",
+            "USER_UPLOAD"
+          ]
+        },
+        "documentId": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "publisher": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "requestedUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "finalUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "canonicalUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "capturedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "publishedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "effectiveAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "contentHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "accessClass": {
+          "type": "string",
+          "enum": [
+            "public",
+            "licensed",
+            "project_private",
+            "restricted_internal"
+          ]
+        },
+        "retentionClass": {
+          "type": "string",
+          "enum": [
+            "metadata_only",
+            "minimal_quote",
+            "full_snapshot",
+            "project",
+            "evidence",
+            "legal_hold"
+          ]
+        },
+        "http": {
+          "$ref": "#/$defs/HttpMetadata"
+        },
+        "parser": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        }
+      }
+    },
+    "SourceCollectionResult": {
+      "title": "SourceCollectionResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "resultType",
+        "planVersionId",
+        "questionId",
+        "snapshots",
+        "failedSources",
+        "collectedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "resultType": {
+          "const": "source_collection"
+        },
+        "planVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "snapshots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceSnapshot"
+          }
+        },
+        "failedSources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceFailure"
+          }
+        },
+        "collectedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "SourceFailure": {
+      "title": "SourceFailure",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "errorCode",
+        "retryable"
+      ],
+      "properties": {
+        "sourceKey": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "errorCode": {
+          "$ref": "worker-error.schema.json#/$defs/WorkerErrorCode"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "Candidate": {
+      "title": "ResearchCandidate",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "questionId",
+        "sourceKey",
+        "locator",
+        "quoteExact",
+        "quoteNormalized",
+        "quoteSha256",
+        "claimType",
+        "stance",
+        "status"
+      ],
+      "properties": {
+        "candidateId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceKey": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "locator": {
+          "$ref": "common.schema.json#/$defs/SourceLocator"
+        },
+        "quoteExact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "quoteNormalized": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "quoteSha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "claimType": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "metric",
+            "event",
+            "definition",
+            "supporting",
+            "contradicting"
+          ]
+        },
+        "stance": {
+          "type": "string",
+          "enum": [
+            "supporting",
+            "contradicting",
+            "neutral"
+          ]
+        },
+        "rawValue": {},
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "status": {
+          "const": "unverified"
+        }
+      }
+    },
+    "ResearchCandidateResult": {
+      "title": "ResearchCandidateResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "resultType",
+        "planVersionId",
+        "questionId",
+        "candidates",
+        "extractedAt",
+        "tool"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "resultType": {
+          "const": "research_candidates"
+        },
+        "planVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          }
+        },
+        "extractedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        }
+      }
+    }
+  }
+}

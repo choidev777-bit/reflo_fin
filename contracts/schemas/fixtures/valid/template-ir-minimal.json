@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "1.0",
+  "templateId": "tpl_01",
+  "templateVersion": 1,
+  "source": {
+    "pdfHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pdfVersion": "1.7",
+    "parser": {
+      "name": "PyMuPDF",
+      "version": "1.0.0"
+    },
+    "taggedPdf": false,
+    "linearized": false
+  },
+  "pages": [
+    {
+      "pageId": "page_01",
+      "pageNumber": 1,
+      "pageLabel": "1",
+      "pageObjectRef": "1 0 R",
+      "boxes": {
+        "mediaBox": [
+          0,
+          0,
+          595,
+          842
+        ],
+        "cropBox": [
+          0,
+          0,
+          595,
+          842
+        ]
+      },
+      "rotation": 0,
+      "userUnit": 1,
+      "pdfToViewMatrix": [
+        1,
+        0,
+        0,
+        -1,
+        0,
+        842
+      ],
+      "viewToPdfMatrix": [
+        1,
+        0,
+        0,
+        -1,
+        0,
+        842
+      ],
+      "contentStreams": [
+        {
+          "objectRef": "2 0 R",
+          "tokenHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "byteLength": 0
+        }
+      ],
+      "resourceInheritance": {
+        "inherited": false,
+        "ownerObjectRef": "1 0 R"
+      },
+      "blocks": [],
+      "slots": [],
+      "objects": [],
+      "validationMasks": [
+        {
+          "maskId": "mask_01",
+          "kind": "fixed",
+          "geometry": [
+            0,
+            0,
+            595,
+            842
+          ],
+          "blockIds": [],
+          "objectIds": []
+        }
+      ],
+      "links": [],
+      "annotations": [],
+      "taggedStatus": "not_tagged"
+    }
+  ],
+  "resources": {
+    "fonts": [],
+    "images": [],
+    "xobjects": [],
+    "styles": [],
+    "clipPaths": []
+  },
+  "validationProfile": {
+    "profileId": "profile_01",
+    "renderDpi": 288,
+    "background": "opaque_srgb",
+    "fixedPixelMatchThreshold": 0.995,
+    "channelDifferenceThreshold": 2,
+    "maxCoordinateErrorPt": 0.5,
+    "maxEdgeDisplacementPx": 2,
+    "profileHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "analysisWarnings": []
+}

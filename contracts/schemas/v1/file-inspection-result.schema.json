@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/file-inspection-result.schema.json",
+  "title": "REFLO File Inspection Result v1",
+  "description": "Typed result from file-scan before an upload is accepted as an immutable project file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fileRole",
+    "fileHash",
+    "byteSize",
+    "declaredMediaType",
+    "detectedMediaType",
+    "format",
+    "magicBytesValid",
+    "encryptionStatus",
+    "malwareStatus",
+    "supportStatus",
+    "checks",
+    "inspectedAt",
+    "tool"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "fileRole": {
+      "type": "string",
+      "enum": [
+        "previous_report_pdf",
+        "analysis_workbook",
+        "user_source",
+        "report_import",
+        "font"
+      ]
+    },
+    "fileHash": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "byteSize": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "declaredMediaType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "detectedMediaType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "pdf",
+        "xlsx",
+        "xlsm",
+        "xls",
+        "csv",
+        "docx",
+        "pptx",
+        "txt",
+        "ttf",
+        "otf",
+        "unknown"
+      ]
+    },
+    "magicBytesValid": {
+      "type": "boolean"
+    },
+    "encryptionStatus": {
+      "type": "string",
+      "enum": [
+        "not_encrypted",
+        "encrypted_supported",
+        "encrypted_unsupported",
+        "unknown"
+      ]
+    },
+    "malwareStatus": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "infected",
+        "scan_unavailable"
+      ]
+    },
+    "supportStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "manual_review",
+        "rejected"
+      ]
+    },
+    "rejectionCodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "worker-error.schema.json#/$defs/WorkerErrorCode"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/InspectionCheck"
+      }
+    },
+    "inspectedAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "tool": {
+      "$ref": "common.schema.json#/$defs/ToolDescriptor"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Warning"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "supportStatus": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "supportStatus"
+        ]
+      },
+      "then": {
+        "required": [
+          "rejectionCodes"
+        ],
+        "properties": {
+          "rejectionCodes": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "InspectionCheck": {
+      "title": "InspectionCheck",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "status"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "size",
+            "media_type",
+            "magic_bytes",
+            "archive_structure",
+            "encryption",
+            "malware",
+            "parser_open",
+            "supported_features"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "warning",
+            "failed",
+            "not_applicable"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

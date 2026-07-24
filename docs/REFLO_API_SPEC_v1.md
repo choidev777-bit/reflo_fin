@@ -16,6 +16,7 @@
 
 - [시스템 아키텍처](./REFLO_SYSTEM_ARCHITECTURE_v1.md)
 - [ERD](./REFLO_ERD_v1.md)
+- [Worker JSON Schema](../contracts/schemas/README.md)
 - [URL별 서비스 동작 명세](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [기술 결정 사항](./REFLO_TECHNICAL_DECISIONS_v1.md)
 - [화면 구현 명세 인덱스](./REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
@@ -516,6 +517,8 @@ PDF와 XLSX를 파일별 상태로 반환한다. `outcome=partial`이면 성공 
 - versioned typed payload
 - temporary artifact descriptor
 - tool name·version
+
+request body의 machine-readable 권위는 [`worker-result-envelope.schema.json`](../contracts/schemas/v1/worker-result-envelope.schema.json)이다. `resultType`별 payload, artifact descriptor와 worker error code는 [`contracts/schemas/`](../contracts/schemas/README.md)에서 함께 version 관리한다.
 
 Internal API는 object metadata와 checksum, job·project·input version을 다시 확인한다. 검증 전 artifact를 DB output version에 연결하지 않는다.
 

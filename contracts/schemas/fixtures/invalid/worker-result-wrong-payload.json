@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "attempt": 1,
+  "sequence": 2,
+  "inputVersionIds": [
+    "file_version_01"
+  ],
+  "resultType": "file_scan",
+  "payload": {
+    "schemaVersion": "1.0",
+    "artifactType": "publish_result"
+  },
+  "results": [
+    {
+      "entityType": "project_file_version",
+      "entityId": "file_version_01",
+      "version": 1,
+      "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "artifacts": [],
+  "tool": {
+    "name": "reflo-file-scan",
+    "version": "1.0.0"
+  }
+}

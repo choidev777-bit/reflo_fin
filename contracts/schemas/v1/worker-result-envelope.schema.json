@@ -1,0 +1,441 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/worker-result-envelope.schema.json",
+  "title": "REFLO Worker Result Envelope v1",
+  "description": "Canonical request body for POST /internal/v1/jobs/{jobId}/results.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "attempt",
+    "sequence",
+    "inputVersionIds",
+    "resultType",
+    "payload",
+    "results",
+    "artifacts",
+    "tool"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/CommandSchemaVersion"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "inputVersionIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/OpaqueId"
+      }
+    },
+    "resultType": {
+      "$ref": "#/$defs/ResultType"
+    },
+    "payload": {},
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ResultRef"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "artifact-descriptor.schema.json"
+      }
+    },
+    "tool": {
+      "$ref": "common.schema.json#/$defs/ToolDescriptor"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "file_scan"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "file-inspection-result.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "pdf_template_ir"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "template-ir.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "workbook_analysis"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "workbook-analysis.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "mapping_set"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "mapping-set.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "enum": [
+              "source_collection",
+              "research_candidates"
+            ]
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "research-result.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "evidence_validation"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "evidence-validation-result.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "hypothesis_questions"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "agent-output.schema.json#/$defs/HypothesisQuestionOutput"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "valuation_proposal"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "agent-output.schema.json#/$defs/ValuationProposalOutput"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "report_outline_proposal"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "agent-output.schema.json#/$defs/ReportOutlineProposalOutput"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "report_text_proposal"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "agent-output.schema.json#/$defs/ReportTextProposalOutput"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "evidence_snapshot"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/EvidenceSnapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "workbook_recalculation"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/WorkbookRecalculationResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "render_plan"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/RenderPlan"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "pdf_render"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/PdfRenderResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "structural_validation"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/StructuralValidationResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "visual_validation"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/VisualValidationResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "publish"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "report-worker-artifact.schema.json#/$defs/PublishResult"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "ResultType": {
+      "title": "WorkerResultType",
+      "type": "string",
+      "enum": [
+        "file_scan",
+        "pdf_template_ir",
+        "workbook_analysis",
+        "mapping_set",
+        "source_collection",
+        "research_candidates",
+        "evidence_validation",
+        "hypothesis_questions",
+        "valuation_proposal",
+        "report_outline_proposal",
+        "report_text_proposal",
+        "evidence_snapshot",
+        "workbook_recalculation",
+        "render_plan",
+        "pdf_render",
+        "structural_validation",
+        "visual_validation",
+        "publish"
+      ]
+    },
+    "ResultRef": {
+      "title": "WorkerResultRef",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entityType",
+        "entityId",
+        "version",
+        "hash"
+      ],
+      "properties": {
+        "entityType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "entityId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "version": {
+          "$ref": "common.schema.json#/$defs/VersionNumber"
+        },
+        "hash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    }
+  }
+}

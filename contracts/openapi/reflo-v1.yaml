@@ -3050,7 +3050,7 @@ components:
             $ref: "#/components/schemas/RelativeRoute"
         error:
           oneOf:
-            - $ref: "#/components/schemas/ErrorBody"
+            - $ref: ../schemas/v1/worker-error.schema.json
             - type: "null"
     SessionUser:
       type: object
@@ -5314,64 +5314,8 @@ components:
           maxLength: 500
         heartbeatAt:
           $ref: "#/components/schemas/Timestamp"
-    InternalResultRef:
-      type: object
-      additionalProperties: false
-      required: [entityType, entityId, version, hash]
-      properties:
-        entityType:
-          type: string
-          minLength: 1
-          maxLength: 100
-        entityId:
-          $ref: "#/components/schemas/OpaqueId"
-        version:
-          $ref: "#/components/schemas/VersionNumber"
-        hash:
-          type: string
-          minLength: 16
-          maxLength: 128
     InternalJobResultsRequest:
-      type: object
-      additionalProperties: false
-      required: [schemaVersion, attempt, sequence, inputVersionIds, resultType, payload, results]
-      properties:
-        schemaVersion:
-          type: integer
-          minimum: 1
-        attempt:
-          type: integer
-          minimum: 1
-        sequence:
-          type: integer
-          minimum: 1
-        inputVersionIds:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/OpaqueId"
-        resultType:
-          type: string
-          minLength: 1
-          maxLength: 100
-        payload:
-          type: object
-          additionalProperties: true
-        results:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/InternalResultRef"
-        tool:
-          type: object
-          additionalProperties: false
-          required: [name, version]
-          properties:
-            name:
-              type: string
-            version:
-              type: string
+      $ref: ../schemas/v1/worker-result-envelope.schema.json
     InternalJobTerminalRequest:
       type: object
       additionalProperties: false

@@ -308,7 +308,7 @@ Idempotency-Key: 7a4d...
 |---|---|---|
 | Next.js App Router | `/` route와 서버 세션 초기화 | 사용 |
 | React Client Component | 생성 모달·사용자 메뉴 상호작용 | 사용 |
-| Google OAuth | 로그인·세션 발급 | 필수, 구체 라이브러리는 미확정 |
+| Google OAuth | 로그인·세션 발급 | 필수, `openid-client@6.8.4`와 TD-014·TD-018 적용 |
 | PostgreSQL | 사용자와 프로젝트 초안 소유권 저장 | 사용 |
 | OGL `Aurora` | 홈 배경 장식 | 현재 디자인 보존을 위해 사용 |
 | CSS·ShinyText | 홈 제목 표현 | 사용, 모션 감소 설정 지원 |
@@ -409,11 +409,12 @@ Idempotency-Key: 7a4d...
 
 ### 1.21 아직 필요한 기술 결정
 
-홈의 제품 동작은 확정할 수 있지만 다음 기술 선택은 두 기준 문서에 아직 없다.
+홈 구현을 막는 기술 결정은 없다.
 
-1. Google OAuth와 세션 구현 라이브러리
-2. 세션 저장 위치와 만료·갱신 시간
-3. 사용자 레코드와 Google 계정 연결 방식
-4. CSRF 구현 방식
+- Google OAuth/OIDC client: `openid-client@6.8.4`
+- session: PostgreSQL의 hash-only opaque token, idle 7일·absolute 30일
+- identity: 검증된 Google issuer·subject
+- CSRF: PKCE·state·nonce callback 검증, same-origin과 session-bound CSRF
+- PostgreSQL: `pg@8.22.0`, migration은 `node-pg-migrate@9.0.0`
 
-이 항목은 인증 구현 전에 `REFLO_TECHNICAL_DECISIONS_v1.md`에 새 결정 ID로 추가해야 한다. 인증 기술이 미확정이어도 홈 UI 재사용 범위, 버튼 동작, 프로젝트 생성 계약은 이 명세대로 유지한다.
+세부 경계는 TD-014와 TD-018을 따른다. session rotation 주기와 revoked session 보존기간은 production 운영 정책이며 홈 수직 흐름 구현을 막지 않는다.

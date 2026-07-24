@@ -84,7 +84,65 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 백엔드 기술은 UI 디자인 코드와 분리한다.
 
-## 4. 2026-07-24 작업 기록
+## 4. 작업 기록
+
+### 2026-07-25 — 구현 문서 기준선 확정
+
+#### 결과
+
+- TD-018에서 Google OIDC를 `openid-client@6.8.4`, PostgreSQL access를 `pg@8.22.0`, migration을 `node-pg-migrate@9.0.0`으로 확정했다.
+- `@types/pg@8.20.0`을 포함해 `source-react/package.json`과 `package-lock.json`에 exact version을 고정했다.
+- TD-014의 hash-only opaque session을 유지하도록 PKCE·state·nonce, issuer·subject, session hash와 CSRF 경계를 확정했다.
+- Phase 0의 OAuth·PostgreSQL 도구 선택을 완료 처리했다.
+- 기술 결정 상태와 delivery gate를 분리해 공통 구현, feature 통합과 production 배포 차단 조건을 구분했다.
+- 10개 화면 명세의 오래된 인증·세션·CSRF 미확정 문구를 TD-014·TD-018 기준으로 갱신했다.
+- `.omd/preferences.md`의 사용자 교정 245건을 검토하고 원본은 `.omd/preferences.history.md`로 보존했다.
+- 현재 UI 규칙을 `REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`에 통합하고 `DESIGN.md`에서 권위 문서로 연결했다.
+- `DESIGN.md`의 빈 MVP persona를 현재 제품 범위에 맞는 금융 리서치 애널리스트로 구체화했다.
+
+#### 검증
+
+- `openid-client`, node-postgres와 node-pg-migrate 공식 문서 기준으로 선택·보안·transaction·migration lock을 확인했다.
+- OpenAPI lint, Worker JSON Schema fixture, Markdown link와 문서 endpoint 대조를 다시 실행한다.
+- `source-react`의 lint, typecheck, unit, build와 Playwright E2E를 다시 실행한다.
+
+#### 다음 작업
+
+- `infra/migrations`와 server repository skeleton을 만들고 user·identity·session·project 첫 migration을 구현한다.
+- Google login·server session과 `/` → `/projects` → `process/setup` 수직 흐름을 연결한다.
+- contract type generation과 CI gate를 실제 repository 구조에 추가한다.
+
+#### Git
+
+- 이 작업의 문서·OpenAPI·Worker schema 기준선 commit에서 함께 고정한다.
+
+### 2026-07-24 — Worker JSON Schema v1 기준선 작성
+
+#### 결과
+
+- `contracts/schemas/v1/`에 JSON Schema 2020-12 기반 worker 계약 13개를 작성했다.
+- activity input, artifact descriptor, worker error code, file scan, Template IR, workbook analysis, MappingSet, research candidate, Evidence validation, Agent structured output, RenderPlan·PDF 검증·publish 결과를 정의했다.
+- `WorkerResultEnvelope`의 18개 `resultType`을 task queue·activity·payload schema와 registry로 연결했다.
+- HTTP command의 `schemaVersion: 1`과 domain artifact의 `schemaVersion: "1.0"`을 구분했다.
+- `POST /internal/v1/jobs/{jobId}/results` OpenAPI request body가 worker schema를 직접 참조하도록 변경했다.
+- TypeScript·Python·C# code generation의 wire type, strict field, 출력 위치와 cross-language fixture 규칙을 작성했다.
+
+#### 검증
+
+- Ajv 8 JSON Schema 2020-12 strict compile: 13개 통과
+- valid·invalid fixture: 6개 기대 결과 통과
+- activity·queue·resultType·payload registry 양방향 검사: 18개 통과
+- Redocly OpenAPI lint: 오류·경고 없이 통과
+- `git diff --check`: 통과
+
+#### 남은 작업
+
+- language별 worker skeleton을 만들 때 generator package와 exact version을 각 lockfile·tool manifest에 고정한다.
+- Google OAuth/OIDC package와 PostgreSQL access·migration 도구를 확정한다.
+
+#### Git
+
+- 아직 commit하지 않음
 
 ### 2026-07-24 — API 계약 기준선 작성
 
@@ -436,11 +494,11 @@ npm run start
 
 ## 6. 다음 우선 작업
 
-1. worker artifact JSON Schema와 TS·Python·C# 생성 규칙을 작성한다.
-2. Google OAuth/OIDC package, PostgreSQL access·migration 도구를 확정하고 SpreadJS 라이선스를 확인한다.
-3. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
-4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
-5. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
+1. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
+2. contract type generation과 CI gate를 실제 repository 구조에 추가한다.
+3. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
+4. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
+5. SpreadJS 라이선스·package version·hostname 범위를 확인한 뒤 validation·valuation 통합 gate를 해제한다.
 6. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
 7. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
 

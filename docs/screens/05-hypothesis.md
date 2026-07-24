@@ -918,10 +918,9 @@ PostgreSQL에 최소 다음 논리 데이터를 둔다.
 
 이 화면 계약은 확정할 수 있지만 다음 선택은 기준 문서에 아직 없다.
 
-1. Google OAuth·세션 구현 라이브러리와 CSRF 구체 방식
-2. Hypothesis Agent가 사용할 정확한 GPT model ID·model settings·비용 한도
-3. Agent 원시 prompt·응답의 보존기간과 운영자 열람 범위
-4. 사용자 질문의 300자 상한을 다른 화면과 공통 상수로 확정할지 여부
-5. `optionalContext`에 사용자가 별도 배경 정보를 입력하는 기능을 후속 제공할지 여부
+1. Hypothesis Agent가 사용할 정확한 GPT model ID·model settings·비용 한도
+2. Agent 원시 prompt·응답의 보존기간과 운영자 열람 범위
+3. 사용자 질문의 300자 상한을 다른 화면과 공통 상수로 확정할지 여부
+4. `optionalContext`에 사용자가 별도 배경 정보를 입력하는 기능을 후속 제공할지 여부
 
-Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로, 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 선택이 남아 있어도 필수 rating, 500자 thesis, PydanticAI 질문 3~5개, 반증 질문, 질문 CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.
+인증은 TD-014·TD-018, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT, 진행 상태는 TD-016의 polling으로 확정됐다. 나머지 선택이 남아 있어도 필수 rating, 500자 thesis, PydanticAI 질문 3~5개, 반증 질문, 질문 CRUD·정렬·전체 승인, 서버 자동 저장·version, 다음 단계 가드는 이 명세대로 유지한다.

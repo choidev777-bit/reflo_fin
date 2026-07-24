@@ -872,6 +872,5 @@ approved plan version은 최소 다음 참조를 고정한다.
 4. source별 필수·optional 실패가 전체 job을 막는 정확한 정책
 5. job progress weight와 사용자에게 노출할 정형 오류 code 전체 목록
 6. 수집 완료 뒤 STEP 05로 자동 이동할지 사용자의 `수집 상태 보기` 선택을 기다릴지에 대한 최종 UX 정책
-7. Google OAuth·세션·CSRF 구현 방식
 
-미확정 수치나 source 정책을 client hardcode로 확정하지 않는다. 운영 policy가 정해지기 전에는 서버가 제공하는 제한과 오류 code를 화면이 표시하는 구조로 구현한다.
+Google OAuth·세션·CSRF 구현은 TD-014·TD-018로 확정했다. 미확정 수치나 source 정책을 client hardcode로 확정하지 않는다. 운영 policy가 정해지기 전에는 서버가 제공하는 제한과 오류 code를 화면이 표시하는 구조로 구현한다.

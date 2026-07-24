@@ -1032,12 +1032,11 @@ TD-011 PostgreSQL projection을 조회하는 기본 계약은 workspace GET에 �
 
 두 기준 문서로 화면 동작 대부분을 확정할 수 있지만 다음 항목은 구현 전에 추가 결정이 필요하다.
 
-1. 인증·세션·CSRF의 구체 구현은 홈 명세와 같은 미확정 기술 결정을 따른다.
-2. 질문별 `sufficient`, `qualified`, `insufficient` 자동 판정 기준과 사용자 override 허용 여부가 필요하다.
-3. 선택값·반려·재조사 사유의 최소 5자 규칙을 제품 공통 규칙으로 확정할지 결정해야 한다.
-4. validation 승인 뒤 후속 단계가 진행된 상태에서 결정을 바꿀 때 보여줄 하위 무효화 확인 문구가 필요하다.
-5. 뉴스·유료 자료의 snapshot 보존·표시·삭제 범위는 TD-012 확정 전환 조건에 남아 있다.
-6. SpreadJS 상용·SaaS 배포 라이선스와 실제 workbook 회귀검사는 TD-010 확정 전환 조건에 남아 있다.
-7. Aspose.Cells, Temporal, PDF viewer와 Evidence 저장의 production 운영 한도는 TD-004·011·012 조건부 확정 항목을 통과해야 한다.
+1. 질문별 `sufficient`, `qualified`, `insufficient` 자동 판정 기준과 사용자 override 허용 여부
+2. 선택값·반려·재조사 사유의 최소 5자 규칙을 제품 공통 규칙으로 확정할지 여부
+3. validation 승인 뒤 후속 단계가 진행된 상태에서 결정을 바꿀 때 보여줄 하위 무효화 확인 문구
+4. 뉴스·유료 자료의 snapshot 보존·표시·삭제 범위
+5. SpreadJS 상용·SaaS 배포 라이선스와 실제 workbook 회귀검사
+6. Aspose.Cells, Temporal, PDF viewer와 Evidence 저장의 production 운영 한도
 
-job 상태 전달은 TD-016의 polling으로 확정됐다. 나머지 미확정 항목은 현재 화면의 레이아웃, 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동 계약을 바꾸지 않는다.
+인증은 TD-014·TD-018, job 상태 전달은 TD-016의 polling으로 확정됐다. 1~3은 feature 구현 gate, 4~6은 production gate다. 현재 화면의 레이아웃, 공식 원문 우선, 독립 검증, conflict 사용자 선택, 읽기 전용 Excel과 직접 valuation 이동 계약을 바꾸지 않는다.

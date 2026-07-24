@@ -446,7 +446,7 @@ workflowProgress = completedStageCount ÷ 7 × 100
 |---|---|---|
 | Next.js App Router | 보호 route, 세션·초기 목록 server 조회 | 사용 |
 | React Client Component | 검색 debounce, 정렬, 더 보기, dialog, 상태 polling | 사용 |
-| Google OAuth·server session | 접근 권한과 사용자 메뉴 | 필수, 구체 라이브러리는 미확정 |
+| Google OAuth·server session | 접근 권한과 사용자 메뉴 | 필수, `openid-client@6.8.4`와 TD-014·TD-018 적용 |
 | PostgreSQL | 소유자 범위 목록과 project/job projection | 사용 |
 | Temporal | backend가 장시간 작업 상태 projection 갱신 | 간접 사용, 브라우저 직접 연결 금지 |
 | S3 호환 저장소 | 목록 API에 artifact byte를 제공하지 않음 | 직접 사용하지 않음 |
@@ -613,12 +613,10 @@ active job은 조건부 polling과 window focus 갱신으로 최신화한다. �
 
 ### 2.26 아직 필요한 제품·기술 결정
 
-프로젝트 목록의 사용자 동작은 확정할 수 있지만 다음 항목은 별도 결정 또는 운영 정책이 필요하다.
+인증 도구와 project·job의 논리 schema는 TD-014, TD-018과 ERD에서 확정했다. 다음은 production 운영 정책으로 남는다.
 
-1. 홈 명세와 공통인 Google OAuth·세션 라이브러리, 만료·갱신·CSRF 방식
-2. project·job PostgreSQL projection의 구체 스키마와 index
-3. 프로젝트 보존기간과 향후 삭제·보관 정책
-4. 장시간 작업 progress 산정 방식과 사용자 표시 가능한 오류 code 목록
-5. 전체 프로젝트 수가 커질 때 검색에 PostgreSQL trigram index를 적용할 기준
+1. 프로젝트 보존기간과 향후 삭제·보관 정책
+2. 작업 유형별 progress weight와 사용자 표시 가능한 오류 code 전체 목록
+3. 전체 프로젝트 수와 query plan이 커질 때 PostgreSQL trigram index를 적용할 측정 기준
 
 삭제·보관 정책이 확정되기 전까지 관련 버튼과 API를 임의로 추가하지 않는다.

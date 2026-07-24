@@ -1,0 +1,828 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/report-worker-artifact.schema.json",
+  "title": "REFLO Report and Excel Worker Artifact v1",
+  "description": "Typed workbook recalculation, render plan, PDF render, validation, and publish artifacts.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/WorkbookRecalculationResult"
+    },
+    {
+      "$ref": "#/$defs/EvidenceSnapshot"
+    },
+    {
+      "$ref": "#/$defs/RenderPlan"
+    },
+    {
+      "$ref": "#/$defs/PdfRenderResult"
+    },
+    {
+      "$ref": "#/$defs/StructuralValidationResult"
+    },
+    {
+      "$ref": "#/$defs/VisualValidationResult"
+    },
+    {
+      "$ref": "#/$defs/PublishResult"
+    }
+  ],
+  "$defs": {
+    "EvidenceSnapshot": {
+      "title": "EvidenceSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "evidenceSetVersionId",
+        "evidenceVersionIds",
+        "contentHash",
+        "frozenAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "evidence_snapshot"
+        },
+        "evidenceSetVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "evidenceVersionIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "contentHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "frozenAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "CalculatedCell": {
+      "title": "CalculatedCell",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetId",
+        "sheetName",
+        "address",
+        "valueType",
+        "formattedText"
+      ],
+      "properties": {
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "address": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "string",
+            "boolean",
+            "blank",
+            "formula_error"
+          ]
+        },
+        "rawValue": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/DecimalString"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "formula": {
+          "type": "string",
+          "maxLength": 10000
+        },
+        "formattedText": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "numberFormat": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "WorkbookRecalculationResult": {
+      "title": "WorkbookRecalculationResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "inputWorkbookVersionId",
+        "inputWorkbookHash",
+        "outputWorkbookHash",
+        "calculationVersion",
+        "status",
+        "changedCells",
+        "formulaErrors",
+        "calculatedAt",
+        "tool"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "workbook_recalculation"
+        },
+        "inputWorkbookVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "inputWorkbookHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "outputWorkbookHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "calculationVersion": {
+          "$ref": "common.schema.json#/$defs/VersionNumber"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "succeeded_with_warnings",
+            "failed"
+          ]
+        },
+        "changedCells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CalculatedCell"
+          }
+        },
+        "formulaErrors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CalculatedCell"
+          }
+        },
+        "calculatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        }
+      }
+    },
+    "PinnedInput": {
+      "title": "PinnedInput",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "templateIrVersionId",
+        "templateIrHash",
+        "mappingSetVersionId",
+        "mappingSetHash",
+        "workbookCalculationVersionId",
+        "workbookCalculationHash",
+        "evidenceVersionIds",
+        "reportVersionId"
+      ],
+      "properties": {
+        "templateIrVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "templateIrHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "mappingSetVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "mappingSetHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "workbookCalculationVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "workbookCalculationHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "evidenceVersionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "reportVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "RenderValue": {
+      "title": "RenderValue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slotId",
+        "valueType",
+        "formattedValue",
+        "sourceKind",
+        "sourceVersionIds"
+      ],
+      "properties": {
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "money",
+            "percent",
+            "integer",
+            "date",
+            "string",
+            "boolean",
+            "table",
+            "chart",
+            "decision"
+          ]
+        },
+        "rawValue": {},
+        "formattedValue": {},
+        "sourceKind": {
+          "type": "string",
+          "enum": [
+            "mapping",
+            "evidence",
+            "user_judgment",
+            "fixed"
+          ]
+        },
+        "sourceVersionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        }
+      }
+    },
+    "PatchCommand": {
+      "title": "PatchCommand",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "pageId",
+        "blockId",
+        "slotId",
+        "strategy",
+        "targetObjectIds",
+        "expectedTokenHashes"
+      ],
+      "properties": {
+        "commandId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "pageId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "blockId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "strategy": {
+          "$ref": "template-ir.schema.json#/$defs/PatchStrategy"
+        },
+        "targetObjectIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "expectedTokenHashes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/Sha256"
+          }
+        },
+        "fallbackStrategies": {
+          "type": "array",
+          "items": {
+            "$ref": "template-ir.schema.json#/$defs/PatchStrategy"
+          }
+        }
+      }
+    },
+    "RenderPlan": {
+      "title": "RenderPlan",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "renderPlanId",
+        "renderPlanVersion",
+        "inputs",
+        "values",
+        "commands",
+        "createdAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "render_plan"
+        },
+        "renderPlanId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderPlanVersion": {
+          "$ref": "common.schema.json#/$defs/VersionNumber"
+        },
+        "inputs": {
+          "$ref": "#/$defs/PinnedInput"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RenderValue"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PatchCommand"
+          }
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Warning"
+          }
+        }
+      }
+    },
+    "PdfRenderResult": {
+      "title": "PdfRenderResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "renderPlanId",
+        "sourcePdfHash",
+        "outputPdfHash",
+        "pageCount",
+        "status",
+        "appliedCommandIds",
+        "renderedAt",
+        "tools"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "pdf_render"
+        },
+        "renderPlanId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourcePdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "outputPdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "pageCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "succeeded_with_warnings",
+            "failed"
+          ]
+        },
+        "appliedCommandIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "renderedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/ToolDescriptor"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Warning"
+          }
+        }
+      }
+    },
+    "ValidationIssue": {
+      "title": "ReportValidationIssue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "pageId",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,99}$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "blocking",
+            "warning",
+            "info"
+          ]
+        },
+        "pageId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "blockId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "objectId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "StructuralValidationResult": {
+      "title": "StructuralValidationResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "validationRunId",
+        "renderPlanId",
+        "pdfHash",
+        "status",
+        "pageCountMatches",
+        "boxesMatch",
+        "taggedStatus",
+        "qpdfPassed",
+        "issues",
+        "validatedAt",
+        "tool"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "structural_validation"
+        },
+        "validationRunId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderPlanId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "pdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review"
+          ]
+        },
+        "pageCountMatches": {
+          "type": "boolean"
+        },
+        "boxesMatch": {
+          "type": "boolean"
+        },
+        "taggedStatus": {
+          "type": "string",
+          "enum": [
+            "not_tagged",
+            "preserved",
+            "needs_revalidation",
+            "invalid"
+          ]
+        },
+        "qpdfPassed": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          }
+        },
+        "validatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        }
+      }
+    },
+    "MaskMetric": {
+      "title": "MaskMetric",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maskId",
+        "kind",
+        "pixelCount",
+        "matchingPixelRatio",
+        "differentPixelCount",
+        "maxChannelDifference",
+        "maxCoordinateErrorPt",
+        "maxEdgeDisplacementPx",
+        "status"
+      ],
+      "properties": {
+        "maskId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "fixed",
+            "dynamic",
+            "ignore",
+            "protected"
+          ]
+        },
+        "pixelCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matchingPixelRatio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "differentPixelCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxChannelDifference": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "maxCoordinateErrorPt": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxEdgeDisplacementPx": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "ignored"
+          ]
+        }
+      }
+    },
+    "PageVisualResult": {
+      "title": "PageVisualResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId",
+        "pageNumber",
+        "widthPx",
+        "heightPx",
+        "durationMs",
+        "masks",
+        "status"
+      ],
+      "properties": {
+        "pageId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "pageNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "widthPx": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heightPx": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "masks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaskMetric"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        }
+      }
+    },
+    "VisualValidationResult": {
+      "title": "VisualValidationResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "validationRunId",
+        "renderPlanId",
+        "sourcePdfHash",
+        "outputPdfHash",
+        "renderProfileId",
+        "renderProfileHash",
+        "status",
+        "pages",
+        "issues",
+        "validatedAt",
+        "tools"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "visual_validation"
+        },
+        "validationRunId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderPlanId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourcePdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "outputPdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "renderProfileId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderProfileHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review"
+          ]
+        },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PageVisualResult"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          }
+        },
+        "validatedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/ToolDescriptor"
+          }
+        }
+      }
+    },
+    "PublishResult": {
+      "title": "PublishResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "artifactType",
+        "reportVersionId",
+        "validationRunIds",
+        "status",
+        "publishedArtifacts",
+        "publishedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "artifactType": {
+          "const": "publish_result"
+        },
+        "reportVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "validationRunIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "published",
+            "partial",
+            "failed"
+          ]
+        },
+        "publishedArtifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "artifact-descriptor.schema.json"
+          }
+        },
+        "publishedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    }
+  }
+}

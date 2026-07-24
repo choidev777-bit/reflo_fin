@@ -1,0 +1,32 @@
+[
+  {
+    "data": "valid/activity-input.json",
+    "schema": "../v1/activity-input.schema.json",
+    "valid": true
+  },
+  {
+    "data": "valid/file-inspection-result.json",
+    "schema": "../v1/file-inspection-result.schema.json",
+    "valid": true
+  },
+  {
+    "data": "valid/worker-result-file-scan.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": true
+  },
+  {
+    "data": "valid/template-ir-minimal.json",
+    "schema": "../v1/template-ir.schema.json",
+    "valid": true
+  },
+  {
+    "data": "valid/agent-hypothesis-output.json",
+    "schema": "../v1/agent-output.schema.json",
+    "valid": true
+  },
+  {
+    "data": "invalid/worker-result-wrong-payload.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": false
+  }
+]

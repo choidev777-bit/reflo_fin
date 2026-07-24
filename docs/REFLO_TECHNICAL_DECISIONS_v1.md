@@ -12,29 +12,45 @@
 결정 상태는 다음 세 가지를 사용한다.
 
 - `확정`: 구현 기준으로 사용한다.
-- `조건부 확정`: 방향은 확정했지만 기술검증 또는 추가 선택이 남아 있다.
+- `일단 확정`: 방향은 확정했지만 구현해보고 아니다 싶으면 다른 기술로 바꿀 수도 있다.
 - `미확정`: 비교·검토 중이며 구현 기준으로 사용할 수 없다.
+
+결정 상태와 delivery gate는 분리한다. `일단 확정`은 구현 방향으로 사용할 수 있지만 해당 기술의 표본·라이선스·운영 검증을 통과하기 전 production에 배포할 수 있다는 뜻은 아니다.
 
 ## 2. 결정 목록
 
 | ID | 영역 | 결정 | 상태 | 확정일 |
 |---|---|---|---|---|
-| TD-001 | PDF 생성 | 객체 보존형 하이브리드 패치 방식 채택 | 조건부 확정 | 2026-07-22 |
+| TD-001 | PDF 생성 | 객체 보존형 하이브리드 패치 방식 채택 | 일단 확정 | 2026-07-22 |
 | TD-002 | PDF 폰트 | 관리형 폰트 매칭 후 미확보 폰트는 대체하여 초안 생성 | 확정 | 2026-07-22 |
 | TD-003 | Excel 입력 셀 | 노란색 배경과 파란색 글씨 조합으로 직접 입력 셀 판정 | 확정 | 2026-07-22 |
-| TD-004 | Excel 수식 재계산 | Aspose.Cells for .NET 기반 독립 계산 서비스 채택 | 조건부 확정 | 2026-07-22 |
+| TD-004 | Excel 수식 재계산 | Aspose.Cells for .NET 기반 독립 계산 서비스 채택 | 일단 확정 | 2026-07-22 |
 | TD-005 | PDF↔Excel 매핑 | 의미 슬롯 기반 Scalar·Table·Chart 데이터 매핑 채택 | 확정 | 2026-07-22 |
 | TD-006 | Template IR | Page·Block·Slot·Physical Object 계층의 버전형 JSON IR 채택 | 확정 | 2026-07-22 |
-| TD-007 | PDF 처리 라이브러리 | PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정 엔진 조합 채택 | 조건부 확정 | 2026-07-23 |
-| TD-008 | PDF 시각 검증 | PDFium 288 DPI 렌더링과 OpenCV 마스크별 하이브리드 비교 채택 | 조건부 확정 | 2026-07-23 |
-| TD-010 | 웹 Excel UI | SpreadJS React 표시·입력 UI와 Aspose.Cells 서버 권위 계산 구조 채택 | 조건부 확정 | 2026-07-23 |
-| TD-011 | 파일·작업 실행 환경 | S3 호환 불변 객체 저장소, PostgreSQL 메타데이터, Temporal과 사전 가동 격리 워커 조합 채택 | 조건부 확정 | 2026-07-23 |
-| TD-012 | Evidence 저장 | 원문 객체 저장소와 PostgreSQL 불변 Evidence·locator·provenance 분리 저장 방식 채택 | 조건부 확정 | 2026-07-23 |
-| TD-013 | 컨센서스 공급자 | FnGuide JSON 기반 격리 공급자, 불변 스냅샷과 기준시점 선택 규칙 채택 | 조건부 확정 | 2026-07-23 |
+| TD-007 | PDF 처리 라이브러리 | PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정 엔진 조합 채택 | 일단 확정 | 2026-07-23 |
+| TD-008 | PDF 시각 검증 | PDFium 288 DPI 렌더링과 OpenCV 마스크별 하이브리드 비교 채택 | 일단 확정 | 2026-07-23 |
+| TD-010 | 웹 Excel UI | SpreadJS React 표시·입력 UI와 Aspose.Cells 서버 권위 계산 구조 채택 | 일단 확정 | 2026-07-23 |
+| TD-011 | 파일·작업 실행 환경 | S3 호환 불변 객체 저장소, PostgreSQL 메타데이터, Temporal과 사전 가동 격리 워커 조합 채택 | 일단 확정 | 2026-07-23 |
+| TD-012 | Evidence 저장 | 원문 객체 저장소와 PostgreSQL 불변 Evidence·locator·provenance 분리 저장 방식 채택 | 일단 확정 | 2026-07-23 |
+| TD-013 | 컨센서스 공급자 | FnGuide JSON 기반 격리 공급자, 불변 스냅샷과 기준시점 선택 규칙 채택 | 일단 확정 | 2026-07-23 |
 | TD-014 | 인증·세션 | Google 로그인과 PostgreSQL 기반 불투명 server session 채택 | 확정 | 2026-07-24 |
 | TD-015 | 보고서 기준일 | 사용자 입력 date-only와 Asia/Seoul 일말 기준 권위 시각 채택 | 확정 | 2026-07-24 |
 | TD-016 | 작업 상태 전달 | visibility-aware polling을 MVP 기본 transport로 채택 | 확정 | 2026-07-24 |
-| TD-017 | AI Agent | PydanticAI와 OpenAI GPT provider 조합 채택 | 조건부 확정 | 2026-07-24 |
+| TD-017 | AI Agent | PydanticAI와 OpenAI GPT provider 조합 채택 | 일단 확정 | 2026-07-24 |
+| TD-018 | 인증·PostgreSQL 도구 | openid-client, node-postgres, node-pg-migrate 채택과 exact version 고정 | 확정 | 2026-07-25 |
+
+### 2.1 Delivery gate
+
+| gate | 대상 | 해제 조건 |
+|---|---|---|
+| 공통 구현 시작 | 없음 | TD-018 확정으로 Phase 0 도구 선택 완료 |
+| Excel worker 구현 | TD-004 | Aspose.Cells exact version·상용 라이선스 환경·기준 workbook 재계산 회귀 확인 |
+| PDF worker 구현 | TD-007, TD-008 | PyMuPDF·pikepdf·PDFium·OpenCV exact version, Artifex 라이선스 경계와 기준 PDF 자동 회귀 확인 |
+| SpreadJS 통합 | TD-010 | package version, 개발자 수, production·staging hostname, 지원 browser와 배포 라이선스 확인 |
+| Agent 통합 | TD-017 | PydanticAI·OpenAI SDK version, Agent별 model ID·prompt/schema version·timeout·비용 한도 확정 |
+| production 배포 | TD-001, TD-004, TD-007, TD-008, TD-010~TD-013, TD-017 | 각 결정의 확정 전환 조건, 법무·구매, 표본 회귀, 성능·복구·보존 정책 통과 |
+
+TD-002, TD-003, TD-005, TD-006, TD-014~TD-016과 TD-018은 별도 기술 선택 때문에 구현을 막지 않는다. 실제 구현의 test와 migration 완료 조건은 각 명세의 acceptance criteria로 관리한다.
 
 ---
 
@@ -42,9 +58,9 @@
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
-복제 전략은 확정했다. 폰트 처리 정책은 TD-002로 확정했으며, 세부 라이브러리 조합은 TD-007로 조건부 확정했다. 시각 비교 알고리즘은 TD-008에서 별도로 확정한다.
+복제 전략은 확정했다. 폰트 처리 정책은 TD-002로 확정했으며, 세부 라이브러리 조합은 TD-007로 일단 확정했다. 시각 비교 알고리즘은 TD-008에서 별도로 확정한다.
 
 ### 배경
 
@@ -159,7 +175,7 @@ Template IR의 상세 스키마는 별도 기술 결정에서 확정한다.
 
 ### 기술 구성 결정
 
-TD-007에서 다음 역할 분담을 조건부 확정했다.
+TD-007에서 다음 역할 분담을 일단 확정했다.
 
 - PyMuPDF/MuPDF: 객체·좌표 분석, 텍스트·도형 처리, Template IR 생성과 패치 자산 생성
 - pikepdf/qpdf: PDF 객체와 리소스 보존, content stream 정밀 수정, Form XObject 교체와 최종 저장
@@ -267,7 +283,7 @@ Excel에서 **노란색 배경과 파란색 글씨가 함께 적용된 셀을 �
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 Aspose.Cells 적용 방향과 주 엔진 채택은 확정했다. 상용 라이선스 환경 검증과 다양한 증권사 Excel 표본 회귀검사를 통과하면 `확정`으로 전환한다.
 
@@ -826,7 +842,7 @@ mask는 rect 또는 path로 저장하고 관련 block·object ID를 연결한다
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 라이브러리 조합과 책임 경계는 확정했다. Artifex 상용 라이선스 확인과 최소 5개 증권사, 총 20~30개 PDF 회귀검사를 통과하면 `확정`으로 전환한다.
 
@@ -1003,7 +1019,7 @@ Excel과 PDF의 대응:
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 렌더러, 최종 판정 DPI, 색공간, anti-aliasing 원칙과 비교 알고리즘은 확정했다. 최소 5개 증권사, 총 20~30개 PDF 회귀검사와 의도적 오류 주입 검사를 통과하고 운영 성능 한도를 정하면 `확정`으로 전환한다.
 
@@ -1210,7 +1226,7 @@ baseline image와 검증 image는 원본 PDF hash와 renderProfile hash를 함�
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 UI 엔진과 서버 계산 엔진의 책임 경계는 확정했다. SpreadJS 상용·SaaS 배포 라이선스 확인, 실제 증권사 Excel 재현 검증과 성능 목표를 통과하면 `확정`으로 전환한다.
 
@@ -1467,7 +1483,7 @@ client 표시 불일치는 원본 또는 server 작업 사본을 수정해 맞�
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 저장·실행 구조와 기본 정책은 확정한다. 실제 PDF·Excel·조사 작업의 p50·p95, peak RSS, 동시 처리량과 비용을 측정해 작업별 자원 한도와 제한시간을 보정하면 `확정`으로 전환한다.
 
@@ -1676,7 +1692,7 @@ ReportWorkflow
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 원문과 Evidence의 불변 저장, locator와 provenance 구조는 확정한다. 뉴스·유료 자료의 보존 권한, 고객 삭제 요청과 감사 보존기간을 법무·운영 정책으로 확정하고 표본 문서의 위치 재현 검증을 통과하면 `확정`으로 전환한다.
 
@@ -1921,7 +1937,7 @@ CSS selector, XPath, character offset 또는 Text Fragment 중 하나만으로 �
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 FnGuide의 서버 자동수집, 캐시, 원본 저장, 정규화, 파생 계산과 보고서 출력 권한을 확보했다는 제품 책임자의 확인을 전제로 한다. 공급자 계약과 저장 경계는 확정했으며, PostgreSQL·객체 저장소·Temporal 운영 경로와 세전이익·추정기관수의 추가 공급 경로를 연결하면 `확정`으로 전환한다.
 
@@ -2070,7 +2086,7 @@ transport를 바꾸더라도 job ID, `operationStatus`, phase, progress, heartbe
 
 ### 상태
 
-`조건부 확정`
+`일단 확정`
 
 Agent framework와 provider는 확정했다. Agent별 정확한 GPT model ID, model settings와 비용 한도는 평가 후 확정한다.
 
@@ -2095,26 +2111,97 @@ REFLO의 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft A
 4. 검증을 통과한 PydanticAI와 OpenAI SDK의 정확한 version을 lock file에 고정한다.
 5. provider 장애, rate limit, malformed output, timeout과 stale input version 회귀검사를 통과한다.
 
+## TD-018. Google OIDC·PostgreSQL 구현 도구
+
+### 상태
+
+`확정`
+
+### 결정
+
+Next.js server의 Google OIDC와 PostgreSQL access·migration 도구를 다음 exact version으로 고정한다.
+
+| 역할 | package | version | 설치 위치 |
+|---|---|---:|---|
+| Google OAuth 2.0·OIDC client | `openid-client` | `6.8.4` | `source-react` runtime dependency |
+| PostgreSQL client·pool | `pg` | `8.22.0` | `source-react` runtime dependency |
+| PostgreSQL TypeScript type | `@types/pg` | `8.20.0` | `source-react` development dependency |
+| PostgreSQL migration runner | `node-pg-migrate` | `9.0.0` | `source-react` development dependency |
+
+`source-react/package-lock.json`이 설치 version의 단일 lock이다. 범위 version과 별도 인증 framework를 추가하지 않는다.
+
+### 인증 구현 경계
+
+1. `openid-client`의 Google discovery와 Authorization Code Flow를 사용한다.
+2. 매 login attempt마다 PKCE `code_verifier`, `state`와 OIDC `nonce`를 생성한다.
+3. callback에서 redirect URI, state, PKCE, nonce, issuer, audience와 ID Token을 검증한다.
+4. 검증된 `iss`와 `sub`만 identity key로 사용한다. email은 표시·연락 metadata다.
+5. Google access token과 refresh token은 REFLO session token으로 사용하거나 browser cookie에 저장하지 않는다.
+6. login attempt의 verifier·state·nonce는 짧은 TTL, 일회성, hash 또는 authenticated encryption 상태로 저장하고 callback 성공·실패 뒤 폐기한다.
+7. callback 완료 뒤 REFLO가 별도 random opaque session token을 발급한다.
+8. PostgreSQL에는 session token 원문이 아니라 SHA-256 hash만 저장한다.
+9. 상태 변경 요청은 same-origin 검증과 session-bound CSRF secret 검증을 모두 통과한다.
+10. `returnTo`는 same-origin allowlist path만 허용한다.
+
+Auth.js·Better Auth 같은 상위 인증 framework의 기본 session table을 사용하지 않는다. 기본 token 저장 방식이 TD-014의 hash-only session 계약과 달라질 수 있고, REFLO의 identity·session rotation·CSRF·감사 경계를 custom adapter에 숨기기 때문이다.
+
+### PostgreSQL 구현 경계
+
+1. application query는 `pg.Pool`을 공유한다.
+2. parameterized query만 사용하고 identifier는 allowlist 밖에서 문자열 조합하지 않는다.
+3. transaction은 `pool.query`가 아니라 `pool.connect()`로 얻은 같은 client에서 `BEGIN`·`COMMIT`·`ROLLBACK`을 수행한다.
+4. checked-out client는 성공·실패와 무관하게 `finally`에서 release한다.
+5. domain transaction helper는 callback 밖으로 client를 노출하지 않는다.
+6. migration은 `node-pg-migrate`의 timestamped TypeScript migration으로 작성한다.
+7. migration table은 application table과 구분하고 advisory lock을 사용한다. CI·배포의 concurrent invocation은 wait 또는 단일 runner로 직렬화한다.
+8. production runtime role은 migration 권한을 갖지 않는다. migration은 `reflo_migrator` 전용 credential로 실행한다.
+9. down migration은 local·test 복구 보조다. production rollback은 forward-fix와 복구 절차를 기본으로 한다.
+
+### 선택 이유
+
+- `openid-client`는 framework session 정책을 강제하지 않고 OIDC discovery, PKCE, state, nonce와 authorization response validation을 제공한다.
+- `pg`는 PostgreSQL protocol과 transaction 경계를 직접 드러내 ERD의 transaction invariant와 role 분리를 구현하기 쉽다.
+- `node-pg-migrate`는 SQL에 가까운 versioned migration과 PostgreSQL advisory lock을 제공한다.
+- ORM model을 권위 원본으로 추가하지 않아 ERD, migration SQL과 OpenAPI·Worker schema의 책임이 겹치지 않는다.
+
+### 검증 기준
+
+1. Google callback의 state·nonce·PKCE 누락, 재사용, issuer·audience mismatch와 외부 `returnTo`가 거부된다.
+2. 같은 Google issuer·subject의 동시 첫 login이 계정을 중복 생성하지 않는다.
+3. DB dump, log와 browser cookie 어디에도 Google token·REFLO session 원문이 없다.
+4. session idle 7일, absolute 30일, rotation, revoke와 logout이 TD-014를 따른다.
+5. transaction 중간 실패가 부분 write를 남기지 않는다.
+6. migration concurrent 실행이 advisory lock으로 직렬화되고 이미 적용한 migration을 중복 실행하지 않는다.
+7. application runtime role로 DDL과 migration table 변경이 거부된다.
+
+### 참고
+
+- openid-client v6.8.4: <https://github.com/panva/openid-client/tree/v6.8.4>
+- node-postgres pooling: <https://node-postgres.com/features/pooling>
+- node-postgres transactions: <https://node-postgres.com/features/transactions>
+- node-pg-migrate migrations: <https://salsita.github.io/node-pg-migrate/migrations/>
+
 ---
 
 ## 3. 변경 이력
 
 | 날짜 | 변경 내용 |
 |---|---|
-| 2026-07-22 | 문서 생성. TD-001 객체 보존형 하이브리드 PDF 패치 전략 조건부 확정 |
+| 2026-07-22 | 문서 생성. TD-001 객체 보존형 하이브리드 PDF 패치 전략 일단 확정 |
 | 2026-07-22 | TD-002 확정. 원본 폰트가 없어도 대체 폰트로 전체 초안을 생성하고 경고하며, 폰트 업로드는 선택 절차로 제공 |
 | 2026-07-22 | TD-002 보완. 내장 폰트, 관리형 저장소, 고객 등록 폰트, 대체 폰트 순서와 임의 웹 다운로드 금지 정책 명시 |
 | 2026-07-22 | TD-003 확정. 노란색 배경과 파란색 글씨 조합을 Excel 사용자 직접 입력 셀로 판정 |
-| 2026-07-22 | TD-004 조건부 확정. Aspose.Cells for .NET 독립 계산 서비스를 Excel 주 재계산 엔진으로 채택하고 표본 검증 결과 기록 |
+| 2026-07-22 | TD-004 일단 확정. Aspose.Cells for .NET 독립 계산 서비스를 Excel 주 재계산 엔진으로 채택하고 표본 검증 결과 기록 |
 | 2026-07-22 | TD-005 확정. 의미 슬롯 기반 Scalar·Keyed Table·Chart-series PDF↔Excel 매핑, 구조 해시, MappingSet과 `_REFLO_BRIDGE` 정책 명시 |
 | 2026-07-22 | TD-006 확정. Page·Block·Slot·Physical Object 계층, 원본 PDF 좌표·source locator·patch strategy·validation mask를 포함하는 버전형 Template IR 채택 |
-| 2026-07-23 | TD-007 조건부 확정. 리노공업 PDF·Excel 표본 구조 분석을 바탕으로 PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정·최종 저장 엔진 조합 채택 |
-| 2026-07-23 | TD-008 조건부 확정. PDFium 288 DPI·불투명 sRGB 렌더링과 OpenCV validation mask별 RGB 절대차·연결요소·좌표 edge 검사를 채택하고 SSIM은 진단용으로 제한 |
-| 2026-07-23 | TD-010 조건부 확정. SpreadJS React를 웹 Excel 표시·입력 UI로 채택하고 Aspose.Cells를 유일한 서버 권위 계산·검증·최종 XLSX 저장 엔진으로 유지 |
-| 2026-07-23 | TD-011 조건부 확정. S3 호환 불변 객체 저장소, PostgreSQL 파일 메타데이터, Temporal workflow와 사전 가동 격리 워커를 채택하고 queue·timeout·retry·취소 정책 명시 |
-| 2026-07-23 | TD-012 조건부 확정. 원문·대형 파생물은 객체 저장소, Evidence·locator·validation·provenance는 PostgreSQL에 append-only로 보존하는 구조 채택 |
-| 2026-07-23 | TD-013 조건부 확정. FnGuide JSON 공급자 격리, 명시적 연결·별도 기준, 불변 원본·정규화 snapshot, look-ahead 방지와 보고서 snapshot 고정 규칙을 채택하고 리노공업 live smoke test 통과 |
+| 2026-07-23 | TD-007 일단 확정. 리노공업 PDF·Excel 표본 구조 분석을 바탕으로 PyMuPDF/MuPDF 분석 엔진과 pikepdf/qpdf 정밀 수정·최종 저장 엔진 조합 채택 |
+| 2026-07-23 | TD-008 일단 확정. PDFium 288 DPI·불투명 sRGB 렌더링과 OpenCV validation mask별 RGB 절대차·연결요소·좌표 edge 검사를 채택하고 SSIM은 진단용으로 제한 |
+| 2026-07-23 | TD-010 일단 확정. SpreadJS React를 웹 Excel 표시·입력 UI로 채택하고 Aspose.Cells를 유일한 서버 권위 계산·검증·최종 XLSX 저장 엔진으로 유지 |
+| 2026-07-23 | TD-011 일단 확정. S3 호환 불변 객체 저장소, PostgreSQL 파일 메타데이터, Temporal workflow와 사전 가동 격리 워커를 채택하고 queue·timeout·retry·취소 정책 명시 |
+| 2026-07-23 | TD-012 일단 확정. 원문·대형 파생물은 객체 저장소, Evidence·locator·validation·provenance는 PostgreSQL에 append-only로 보존하는 구조 채택 |
+| 2026-07-23 | TD-013 일단 확정. FnGuide JSON 공급자 격리, 명시적 연결·별도 기준, 불변 원본·정규화 snapshot, look-ahead 방지와 보고서 snapshot 고정 규칙을 채택하고 리노공업 live smoke test 통과 |
 | 2026-07-24 | TD-014 확정. Google 로그인과 PostgreSQL 불투명 server session, cookie·소유권·CSRF 기준 채택 |
 | 2026-07-24 | TD-015 확정. `Asia/Seoul` date-only 기준일과 KST 일말 `cutoffAt` 파생 규칙 채택 |
 | 2026-07-24 | TD-016 확정. 3초 visibility-aware polling과 terminal stop·error backoff를 MVP 상태 전달 방식으로 채택 |
-| 2026-07-24 | TD-017 조건부 확정. PydanticAI와 OpenAI GPT provider 조합을 채택하고 정확한 model·비용 한도는 평가 후 고정 |
+| 2026-07-24 | TD-017 일단 확정. PydanticAI와 OpenAI GPT provider 조합을 채택하고 정확한 model·비용 한도는 평가 후 고정 |
+| 2026-07-25 | TD-018 확정. `openid-client@6.8.4`, `pg@8.22.0`, `node-pg-migrate@9.0.0`, `@types/pg@8.20.0`을 채택하고 package lock에 고정 |

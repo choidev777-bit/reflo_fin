@@ -1,0 +1,1369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/template-ir.schema.json",
+  "title": "REFLO Template IR v1",
+  "description": "Immutable PDF structure, semantic blocks and slots, physical patch locators, resources, and validation masks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "templateId",
+    "templateVersion",
+    "source",
+    "pages",
+    "resources",
+    "validationProfile",
+    "analysisWarnings"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "templateId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "templateVersion": {
+      "$ref": "common.schema.json#/$defs/VersionNumber"
+    },
+    "source": {
+      "$ref": "#/$defs/TemplateSource"
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Page"
+      }
+    },
+    "resources": {
+      "$ref": "#/$defs/Resources"
+    },
+    "validationProfile": {
+      "$ref": "#/$defs/ValidationProfile"
+    },
+    "analysisWarnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Warning"
+      }
+    }
+  },
+  "$defs": {
+    "TemplateSource": {
+      "title": "TemplateSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pdfHash",
+        "pdfVersion",
+        "parser"
+      ],
+      "properties": {
+        "pdfHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "pdfVersion": {
+          "type": "string",
+          "pattern": "^[1-2]\\.[0-9]$"
+        },
+        "parser": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        },
+        "taggedPdf": {
+          "type": "boolean"
+        },
+        "linearized": {
+          "type": "boolean"
+        }
+      }
+    },
+    "PageBoxes": {
+      "title": "PageBoxes",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mediaBox",
+        "cropBox"
+      ],
+      "properties": {
+        "mediaBox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "cropBox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "bleedBox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "trimBox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "artBox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        }
+      }
+    },
+    "ContentStreamRef": {
+      "title": "ContentStreamRef",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectRef",
+        "tokenHash",
+        "byteLength"
+      ],
+      "properties": {
+        "objectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "tokenHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ResourceInheritance": {
+      "title": "ResourceInheritance",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inherited",
+        "ownerObjectRef"
+      ],
+      "properties": {
+        "inherited": {
+          "type": "boolean"
+        },
+        "ownerObjectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        }
+      }
+    },
+    "Page": {
+      "title": "TemplatePage",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageId",
+        "pageNumber",
+        "pageObjectRef",
+        "boxes",
+        "rotation",
+        "userUnit",
+        "pdfToViewMatrix",
+        "viewToPdfMatrix",
+        "contentStreams",
+        "resourceInheritance",
+        "blocks",
+        "slots",
+        "objects",
+        "validationMasks",
+        "taggedStatus"
+      ],
+      "properties": {
+        "pageId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "pageNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pageLabel": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "pageObjectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "boxes": {
+          "$ref": "#/$defs/PageBoxes"
+        },
+        "rotation": {
+          "type": "integer",
+          "enum": [
+            0,
+            90,
+            180,
+            270
+          ]
+        },
+        "userUnit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "pdfToViewMatrix": {
+          "$ref": "common.schema.json#/$defs/Matrix"
+        },
+        "viewToPdfMatrix": {
+          "$ref": "common.schema.json#/$defs/Matrix"
+        },
+        "contentStreams": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ContentStreamRef"
+          }
+        },
+        "resourceInheritance": {
+          "$ref": "#/$defs/ResourceInheritance"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Slot"
+          }
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PhysicalObject"
+          }
+        },
+        "validationMasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ValidationMask"
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PageLink"
+          }
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PageAnnotation"
+          }
+        },
+        "taggedStatus": {
+          "type": "string",
+          "enum": [
+            "not_tagged",
+            "tagged_valid",
+            "tagged_needs_revalidation",
+            "tagged_invalid"
+          ]
+        }
+      }
+    },
+    "PhysicalSourceLocator": {
+      "title": "PhysicalSourceLocator",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageObjectRef",
+        "containerPath",
+        "streamObjectRef",
+        "operatorStart",
+        "operatorEnd",
+        "tokenHash"
+      ],
+      "properties": {
+        "pageObjectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "containerPath": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ]
+          }
+        },
+        "streamObjectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "operatorStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operatorEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mcid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "sharedXObject": {
+          "type": "boolean"
+        },
+        "cloneOnWriteRequired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Color": {
+      "title": "PdfColor",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "colorSpace",
+        "components"
+      ],
+      "properties": {
+        "colorSpace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number"
+          }
+        },
+        "iccProfileRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "Glyph": {
+      "title": "Glyph",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "characterCode",
+        "unicode",
+        "glyphId",
+        "advance",
+        "offset"
+      ],
+      "properties": {
+        "characterCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "unicode": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "glyphId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "advance": {
+          "type": "number"
+        },
+        "offset": {
+          "$ref": "common.schema.json#/$defs/Point"
+        }
+      }
+    },
+    "TextRunData": {
+      "title": "TextRunData",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "glyphs",
+        "glyphSequenceHash",
+        "textMatrix",
+        "baseline",
+        "fontRef",
+        "fontSize",
+        "writingMode",
+        "characterSpacing",
+        "wordSpacing",
+        "horizontalScaling",
+        "textRise",
+        "renderingMode",
+        "fillColor",
+        "opacity",
+        "blendMode"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "glyphs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Glyph"
+          }
+        },
+        "glyphSequenceHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "textMatrix": {
+          "$ref": "common.schema.json#/$defs/Matrix"
+        },
+        "baseline": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "$ref": "common.schema.json#/$defs/Point"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/Point"
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "fontRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "fontSize": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "writingMode": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "vertical"
+          ]
+        },
+        "characterSpacing": {
+          "type": "number"
+        },
+        "wordSpacing": {
+          "type": "number"
+        },
+        "horizontalScaling": {
+          "type": "number"
+        },
+        "textRise": {
+          "type": "number"
+        },
+        "renderingMode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "fillColor": {
+          "$ref": "#/$defs/Color"
+        },
+        "strokeColor": {
+          "$ref": "#/$defs/Color"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "blendMode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "lineHeight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "alignment": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify",
+            "unknown"
+          ]
+        },
+        "markedContentTag": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "mcid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actualTextPresent": {
+          "type": "boolean"
+        }
+      }
+    },
+    "PhysicalObject": {
+      "title": "PhysicalObject",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId",
+        "type",
+        "role",
+        "bbox",
+        "zOrder",
+        "ctm",
+        "sourceLocator",
+        "clipStack",
+        "resourceRefs"
+      ],
+      "properties": {
+        "objectId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text_run",
+            "path",
+            "image",
+            "form_xobject",
+            "shading",
+            "annotation",
+            "marked_content"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "fixed_design",
+            "dynamic_value",
+            "dynamic_text",
+            "dynamic_table",
+            "dynamic_chart",
+            "protected",
+            "ignored",
+            "unknown"
+          ]
+        },
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "quad": {
+          "$ref": "common.schema.json#/$defs/Quad"
+        },
+        "zOrder": {
+          "type": "integer"
+        },
+        "ctm": {
+          "$ref": "common.schema.json#/$defs/Matrix"
+        },
+        "sourceLocator": {
+          "$ref": "#/$defs/PhysicalSourceLocator"
+        },
+        "styleRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "clipStack": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "resourceRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "textRun": {
+          "$ref": "#/$defs/TextRunData"
+        },
+        "pathData": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "imageRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "formXObjectRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "markedContentTag": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text_run"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "textRun"
+            ],
+            "properties": {
+              "textRun": {
+                "$ref": "#/$defs/TextRunData"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "path"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "pathData"
+            ],
+            "properties": {
+              "pathData": {
+                "type": "string",
+                "maxLength": 200000
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "imageRef"
+            ],
+            "properties": {
+              "imageRef": {
+                "$ref": "common.schema.json#/$defs/OpaqueId"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "form_xobject"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "formXObjectRef"
+            ],
+            "properties": {
+              "formXObjectRef": {
+                "$ref": "common.schema.json#/$defs/OpaqueId"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Block": {
+      "title": "TemplateBlock",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blockId",
+        "role",
+        "bbox",
+        "objectIds",
+        "slotIds",
+        "allowedRegion",
+        "patchStrategy",
+        "fallbackStrategies",
+        "overflow",
+        "validationMaskIds",
+        "intersections"
+      ],
+      "properties": {
+        "blockId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "fixed_design",
+            "title",
+            "narrative",
+            "scalar_group",
+            "table",
+            "chart",
+            "disclosure",
+            "page_number",
+            "evidence_text",
+            "user_judgment"
+          ]
+        },
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "objectIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "slotIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "allowedRegion": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "patchStrategy": {
+          "$ref": "#/$defs/PatchStrategy"
+        },
+        "fallbackStrategies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/PatchStrategy"
+          }
+        },
+        "overflow": {
+          "type": "string",
+          "enum": [
+            "reject",
+            "shrink_to_fit",
+            "wrap_within_region"
+          ]
+        },
+        "validationMaskIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "intersections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ObjectIntersection"
+          }
+        },
+        "generationRule": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "PatchStrategy": {
+      "title": "PatchStrategy",
+      "type": "string",
+      "enum": [
+        "fixed",
+        "in_place_glyph_replace",
+        "operator_replace",
+        "form_xobject_replace",
+        "block_vector_replace",
+        "region_background_patch"
+      ]
+    },
+    "ObjectIntersection": {
+      "title": "ObjectIntersection",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId",
+        "risk"
+      ],
+      "properties": {
+        "objectId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "none",
+            "overlap",
+            "clip_dependency",
+            "shared_resource",
+            "unsafe_delete"
+          ]
+        }
+      }
+    },
+    "SemanticKey": {
+      "title": "SemanticKey",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "estimateType": {
+          "type": "string",
+          "enum": [
+            "actual",
+            "estimate",
+            "user_assumption",
+            "not_applicable"
+          ]
+        }
+      }
+    },
+    "Slot": {
+      "title": "TemplateSlot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slotId",
+        "blockId",
+        "valueType",
+        "semanticKey",
+        "required",
+        "targetObjectIds",
+        "bindingRefs",
+        "overflow"
+      ],
+      "properties": {
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "blockId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "money",
+            "percent",
+            "integer",
+            "date",
+            "string",
+            "boolean",
+            "table",
+            "chart",
+            "decision"
+          ]
+        },
+        "semanticKey": {
+          "$ref": "#/$defs/SemanticKey"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "styleRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "targetObjectIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "bindingRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "valueAuthority": {
+          "type": "string",
+          "enum": [
+            "mapping",
+            "evidence",
+            "user_judgment",
+            "fixed"
+          ]
+        },
+        "overflow": {
+          "type": "string",
+          "enum": [
+            "reject",
+            "shrink_to_fit",
+            "wrap_within_region"
+          ]
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "ValidationMask": {
+      "title": "ValidationMask",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maskId",
+        "kind",
+        "geometry",
+        "blockIds",
+        "objectIds"
+      ],
+      "properties": {
+        "maskId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "fixed",
+            "dynamic",
+            "ignore",
+            "protected"
+          ]
+        },
+        "geometry": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/BBox"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200000
+                }
+              }
+            }
+          ]
+        },
+        "blockIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "objectIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "FontResource": {
+      "title": "FontResource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resourceId",
+        "resourceName",
+        "objectRef",
+        "baseFont",
+        "subtype",
+        "embedded",
+        "subset",
+        "licenseStatus",
+        "glyphIds"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "resourceName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "objectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "baseFont": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "fullName": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "subtype": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "encoding": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "toUnicodePresent": {
+          "type": "boolean"
+        },
+        "embedded": {
+          "type": "boolean"
+        },
+        "fontProgramHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "subset": {
+          "type": "boolean"
+        },
+        "glyphIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "managedFontId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "licenseStatus": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "customer_provided",
+            "substitution_required",
+            "unknown"
+          ]
+        },
+        "substituteFontId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "metricDifference": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "ImageResource": {
+      "title": "ImageResource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resourceId",
+        "objectRef",
+        "widthPx",
+        "heightPx",
+        "colorSpace",
+        "filters",
+        "sha256"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "objectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "widthPx": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heightPx": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "colorSpace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "XObjectResource": {
+      "title": "XObjectResource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resourceId",
+        "objectRef",
+        "bbox",
+        "matrix",
+        "usedOnPageIds",
+        "shared",
+        "replacementPolicy"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "objectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "matrix": {
+          "$ref": "common.schema.json#/$defs/Matrix"
+        },
+        "usedOnPageIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "replacementPolicy": {
+          "type": "string",
+          "enum": [
+            "reuse",
+            "clone_on_write",
+            "replace"
+          ]
+        },
+        "contentHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "StyleResource": {
+      "title": "StyleResource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resourceId",
+        "propertiesHash"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "propertiesHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "ClipPathResource": {
+      "title": "ClipPathResource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resourceId",
+        "path",
+        "fillRule"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "fillRule": {
+          "type": "string",
+          "enum": [
+            "nonzero",
+            "evenodd"
+          ]
+        }
+      }
+    },
+    "Resources": {
+      "title": "TemplateResources",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fonts",
+        "images",
+        "xobjects",
+        "styles",
+        "clipPaths"
+      ],
+      "properties": {
+        "fonts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FontResource"
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImageResource"
+          }
+        },
+        "xobjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/XObjectResource"
+          }
+        },
+        "styles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StyleResource"
+          }
+        },
+        "clipPaths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClipPathResource"
+          }
+        }
+      }
+    },
+    "ValidationProfile": {
+      "title": "TemplateValidationProfile",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "renderDpi",
+        "background",
+        "fixedPixelMatchThreshold",
+        "channelDifferenceThreshold",
+        "maxCoordinateErrorPt",
+        "maxEdgeDisplacementPx"
+      ],
+      "properties": {
+        "profileId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderDpi": {
+          "type": "integer",
+          "const": 288
+        },
+        "background": {
+          "const": "opaque_srgb"
+        },
+        "fixedPixelMatchThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "const": 0.995
+        },
+        "channelDifferenceThreshold": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "const": 2
+        },
+        "maxCoordinateErrorPt": {
+          "type": "number",
+          "minimum": 0,
+          "const": 0.5
+        },
+        "maxEdgeDisplacementPx": {
+          "type": "integer",
+          "minimum": 0,
+          "const": 2
+        },
+        "profileHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "PageLink": {
+      "title": "PageLink",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bbox",
+        "target"
+      ],
+      "properties": {
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "PageAnnotation": {
+      "title": "PageAnnotation",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectRef",
+        "subtype",
+        "bbox"
+      ],
+      "properties": {
+        "objectRef": {
+          "$ref": "common.schema.json#/$defs/PdfObjectRef"
+        },
+        "subtype": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "bbox": {
+          "$ref": "common.schema.json#/$defs/BBox"
+        }
+      }
+    }
+  }
+}

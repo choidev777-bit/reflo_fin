@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/artifact-descriptor.schema.json",
+  "title": "REFLO Artifact Descriptor v1",
+  "description": "Internal-only descriptor for immutable or temporary worker artifacts. Browser responses must never expose bucket or objectKey.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "artifactRole",
+    "artifactKind",
+    "storageStatus",
+    "bucket",
+    "objectKey",
+    "sha256",
+    "byteSize",
+    "mediaType",
+    "retentionClass",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "artifactId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "artifactRole": {
+      "type": "string",
+      "enum": [
+        "source",
+        "source_snapshot",
+        "file_scan",
+        "template_ir",
+        "workbook_analysis",
+        "mapping_set",
+        "render_plan",
+        "rendered_pdf",
+        "rendered_xlsx",
+        "page_render",
+        "structural_validation",
+        "visual_validation",
+        "evidence",
+        "agent_raw_response",
+        "agent_structured_output",
+        "diagnostic",
+        "final_pdf",
+        "final_xlsx"
+      ]
+    },
+    "artifactKind": {
+      "type": "string",
+      "enum": [
+        "upload",
+        "source",
+        "working_copy",
+        "analysis",
+        "render",
+        "validation",
+        "agent_output",
+        "diagnostic",
+        "final"
+      ]
+    },
+    "storageStatus": {
+      "type": "string",
+      "enum": [
+        "temporary",
+        "verified",
+        "committed",
+        "published"
+      ]
+    },
+    "bucket": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "objectKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(temporary|immutable|quarantine|final)/"
+    },
+    "objectVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "sha256": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "byteSize": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mediaType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^/\\s]+/[^\\s]+$"
+    },
+    "originalFilename": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^/\\\\\\u0000]+$"
+    },
+    "retentionClass": {
+      "type": "string",
+      "enum": [
+        "temporary",
+        "project",
+        "evidence",
+        "final",
+        "legal_hold"
+      ]
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "supersedesArtifactId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "contentSchemaId": {
+      "type": "string",
+      "format": "uri"
+    },
+    "contentSchemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "storageStatus": {
+            "enum": [
+              "committed",
+              "published"
+            ]
+          }
+        },
+        "required": [
+          "storageStatus"
+        ]
+      },
+      "then": {
+        "required": [
+          "artifactId",
+          "objectVersion"
+        ],
+        "properties": {
+          "artifactId": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          },
+          "objectVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    }
+  ]
+}

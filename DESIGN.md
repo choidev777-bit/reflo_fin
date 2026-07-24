@@ -217,9 +217,13 @@ REFLO brings research work into one continuous flow from project setup and sourc
 
 ## 13. Personas
 
-<!-- omd:limitation Reference §13 requires validated project-specific target segments. Replace before external brand publication; do not fabricate. -->
+### MVP primary user
 
-[FILL IN: validated REFLO user segments and research contexts]
+- 국내 상장사의 분기 실적, 투자 가설, Evidence, PER 밸류에이션과 리서치 보고서를 한 흐름에서 작성하는 금융 리서치 애널리스트
+- 원본 PDF·Excel의 구조를 유지하면서 출처, 계산과 사용자 판단을 추적해야 하는 사용자
+- 빠른 초안보다 재현 가능한 숫자, 원문 provenance와 최종 승인 통제를 우선하는 사용자
+
+리서치 팀 검토자, 운영자와 고객 관리자 persona는 실제 사용 범위가 검증된 뒤 추가한다.
 
 ## 14. States
 
@@ -240,4 +244,10 @@ REFLO brings research work into one continuous flow from project setup and sourc
 - Slow: 320ms for page-level transitions.
 - Use steady easing (`cubic-bezier(0.25, 0.1, 0.25, 1)`), no bounce.
 - Under `prefers-reduced-motion: reduce`, transitions collapse to instant.
+
+## 16. Canonical UI Corrections
+
+`.omd/preferences.history.md`의 사용자 교정 245건은 2026-07-25에 검토·통합했다. 같은 대상을 여러 번 수정한 경우 가장 마지막의 명시적 교정을 사용한다.
+
+화면별 typography, spacing, copy, validation workspace, valuation, report outline과 report editor의 현재 구현값은 [`docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`](./docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md)를 따른다. 과거 prototype 값과 해당 문서가 충돌하면 해당 문서가 우선한다.
 

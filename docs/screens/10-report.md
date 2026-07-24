@@ -1194,16 +1194,15 @@ features/report/
 
 두 기준 문서가 아직 확정하지 않은 항목:
 
-1. Google 인증·세션 구현 라이브러리와 만료 정책
-2. 구조화 report text editor 라이브러리와 저장 schema
-3. edit session lease TTL·heartbeat·편집권 takeover 상세 정책
-4. PDF preview viewer·thumbnail 생성 방식
-5. AI proposal에 사용할 정확한 GPT model ID, timeout, 비용 한도와 사용자별 rate limit
-6. 빈 텍스트 영역 생성 mode의 MVP 포함 여부
-7. report table·chart 첨부 파일별 최대 크기와 이미지 OCR 지원 범위
-8. 원본 PDF page가 매우 많을 때 page resource virtualization 기준
-9. report version·preview·diff·실패 export artifact의 보존기간
-10. 승인 warning 중 사용자가 확인만으로 통과할 수 있는 code 목록
-11. 파일명 규칙의 한글·영문 표준과 조직별 표기
+1. 구조화 report text editor 라이브러리와 저장 schema
+2. edit session lease TTL·heartbeat·편집권 takeover 상세 정책
+3. PDF preview viewer·thumbnail 생성 방식
+4. AI proposal에 사용할 정확한 GPT model ID, timeout, 비용 한도와 사용자별 rate limit
+5. 빈 텍스트 영역 생성 mode의 MVP 포함 여부
+6. report table·chart 첨부 파일별 최대 크기와 이미지 OCR 지원 범위
+7. 원본 PDF page가 매우 많을 때 page resource virtualization 기준
+8. report version·preview·diff·실패 export artifact의 보존기간
+9. 승인 warning 중 사용자가 확인만으로 통과할 수 있는 code 목록
+10. 파일명 규칙의 한글·영문 표준과 조직별 표기
 
-job 상태 전달은 TD-016의 polling으로, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로 확정됐다. TD-001, TD-004, TD-007, TD-008, TD-011과 TD-012의 조건부 확정 항목은 해당 문서의 확정 전환 검증을 완료해야 production 품질 기준으로 사용할 수 있다. 이 불확정 사항이 남아 있어도 이 문서의 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙은 변경하지 않는다.
+인증은 TD-014·TD-018, job 상태 전달은 TD-016의 polling, Agent framework와 provider는 TD-017의 PydanticAI·OpenAI GPT로 확정됐다. TD-001, TD-004, TD-007, TD-008, TD-011과 TD-012의 production gate는 해당 결정의 확정 전환 검증을 완료해야 해제된다. 이 불확정 사항이 남아 있어도 이 문서의 소유권, 버전 불변성, PDF·XLSX 산출물, 서버 권위 계산, validation 차단과 기존 레이아웃 보존 원칙은 변경하지 않는다.

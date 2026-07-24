@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "1.0",
+  "fileRole": "previous_report_pdf",
+  "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "byteSize": 1024,
+  "declaredMediaType": "application/pdf",
+  "detectedMediaType": "application/pdf",
+  "format": "pdf",
+  "magicBytesValid": true,
+  "encryptionStatus": "not_encrypted",
+  "malwareStatus": "clean",
+  "supportStatus": "accepted",
+  "checks": [
+    {
+      "code": "size",
+      "status": "passed"
+    },
+    {
+      "code": "media_type",
+      "status": "passed"
+    },
+    {
+      "code": "magic_bytes",
+      "status": "passed"
+    },
+    {
+      "code": "encryption",
+      "status": "passed"
+    },
+    {
+      "code": "malware",
+      "status": "passed"
+    }
+  ],
+  "inspectedAt": "2026-07-24T10:00:10+09:00",
+  "tool": {
+    "name": "reflo-file-scan",
+    "version": "1.0.0"
+  },
+  "warnings": []
+}

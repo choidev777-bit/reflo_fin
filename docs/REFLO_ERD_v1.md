@@ -28,7 +28,7 @@
 
 대형 PDF·XLSX·원문 snapshot·page image·render 결과의 byte는 PostgreSQL에 저장하지 않는다. 이 파일들은 S3 호환 객체 저장소에 두고 PostgreSQL에는 `artifact` metadata와 관계만 저장한다. Temporal event history도 PostgreSQL에 복제하지 않으며 사용자 화면에 필요한 projection만 저장한다.
 
-이 문서는 API endpoint별 request·response schema나 실제 migration SQL을 대신하지 않는다. HTTP 계약은 [API 명세](./REFLO_API_SPEC_v1.md)와 [`contracts/openapi/reflo-v1.yaml`](../contracts/openapi/reflo-v1.yaml), worker artifact 계약은 `contracts/schemas/`에서 정의한다.
+이 문서는 API endpoint별 request·response schema나 실제 migration SQL을 대신하지 않는다. HTTP 계약은 [API 명세](./REFLO_API_SPEC_v1.md)와 [`contracts/openapi/reflo-v1.yaml`](../contracts/openapi/reflo-v1.yaml), worker artifact 계약은 [`contracts/schemas/`](../contracts/schemas/README.md)에서 정의한다.
 
 ## 2. 모델링 원칙
 
@@ -1212,7 +1212,7 @@ MVP ERD에는 다음을 넣지 않는다.
 
 다음은 ERD 방향을 바꾸지는 않지만 column 크기·retention·운영 설정을 확정해야 하는 항목이다.
 
-1. session TTL·rotation 주기와 revoked session 보존기간
+1. session rotation 주기와 revoked session 보존기간; idle 7일·absolute 30일 TTL은 TD-014로 확정
 2. source type별 원문·인용문·snapshot 보존 권한과 삭제 정책
 3. temporary·preview·diff·실패 export·agent raw response artifact의 TTL
 4. report edit session lease TTL·heartbeat·takeover 세부값

@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/activity-input.schema.json",
+  "title": "REFLO Worker Activity Input v1",
+  "description": "Small, replay-safe Temporal activity input. Large bytes stay in object storage and are referenced by immutable descriptors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "projectId",
+    "jobType",
+    "activityType",
+    "taskQueue",
+    "attempt",
+    "inputFingerprint",
+    "inputVersionRefs",
+    "inputArtifacts",
+    "parameters",
+    "requestedAt",
+    "deadlineAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "jobId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "projectId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "jobType": {
+      "$ref": "#/$defs/JobType"
+    },
+    "activityType": {
+      "$ref": "#/$defs/ActivityType"
+    },
+    "taskQueue": {
+      "$ref": "#/$defs/TaskQueue"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "inputFingerprint": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "inputVersionRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+      }
+    },
+    "inputArtifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "artifact-descriptor.schema.json"
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "requestedAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "deadlineAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "traceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "validate_upload"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "file-scan"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "analyze_pdf",
+              "build_template_ir"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "pdf-analysis"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "render_pdf"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "pdf-render"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "visual_validation"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "pdf-visual-verify"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "analyze_excel",
+              "build_mapping_set",
+              "recalculate_excel"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "excel-calc"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "collect_source",
+              "extract_candidate"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "research-network"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "validate_evidence"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "evidence-validation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "structural_validation"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "pdf-render"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "generate_hypothesis_questions",
+              "generate_valuation_proposal",
+              "generate_report_outline",
+              "generate_report_text"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "llm"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "activityType": {
+            "enum": [
+              "freeze_evidence",
+              "build_render_plan",
+              "publish_draft"
+            ]
+          }
+        },
+        "required": [
+          "activityType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "taskQueue": {
+            "const": "publish"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "JobType": {
+      "title": "JobType",
+      "type": "string",
+      "enum": [
+        "file_ingest",
+        "hypothesis_generation",
+        "research",
+        "validation",
+        "valuation",
+        "report_outline",
+        "report_draft",
+        "report_ai_proposal",
+        "report_preview",
+        "report_validation",
+        "report_export",
+        "reconciliation",
+        "deletion"
+      ]
+    },
+    "ActivityType": {
+      "title": "ActivityType",
+      "type": "string",
+      "enum": [
+        "validate_upload",
+        "analyze_pdf",
+        "analyze_excel",
+        "build_template_ir",
+        "build_mapping_set",
+        "collect_source",
+        "extract_candidate",
+        "validate_evidence",
+        "generate_hypothesis_questions",
+        "generate_valuation_proposal",
+        "generate_report_outline",
+        "generate_report_text",
+        "recalculate_excel",
+        "freeze_evidence",
+        "build_render_plan",
+        "render_pdf",
+        "structural_validation",
+        "visual_validation",
+        "publish_draft"
+      ]
+    },
+    "TaskQueue": {
+      "title": "TaskQueue",
+      "type": "string",
+      "enum": [
+        "workflow-control",
+        "file-scan",
+        "pdf-analysis",
+        "pdf-render",
+        "pdf-visual-verify",
+        "excel-calc",
+        "research-network",
+        "evidence-validation",
+        "llm",
+        "publish"
+      ]
+    }
+  }
+}

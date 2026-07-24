@@ -671,8 +671,8 @@ Reflo_fin/
 
 - [x] ERD 문서 작성
 - [x] API 통합 문서와 기준 OpenAPI 작성
-- [ ] worker JSON Schema, 오류 code와 TS·Python·C# 생성 규칙 작성
-- [ ] Google OAuth/OIDC package, PostgreSQL access·migration 도구 확정
+- [x] worker JSON Schema, 오류 code와 TS·Python·C# 생성 규칙 작성
+- [x] Google OAuth/OIDC package, PostgreSQL access·migration 도구 확정
 
 ### Phase 1. 기반 수직 흐름
 
@@ -720,14 +720,14 @@ Reflo_fin/
 
 ## 21. 남은 결정
 
-아키텍처 구현 전에 다음을 확정한다.
+Phase 0 공통 구현을 막는 architecture 결정은 없다. 다음 항목은 관련 feature 통합 또는 production 배포 전에 확정한다.
 
-1. Google OAuth/OIDC package와 정확한 version
-2. PostgreSQL client·query·migration 도구
-3. production infrastructure provider
-4. SpreadJS와 Aspose.Cells 상용 배포 라이선스
-5. Agent별 GPT model ID, token·비용·timeout 한도
-6. worker별 production resource·동시성·autoscaling 값
+1. production infrastructure provider
+2. SpreadJS와 Aspose.Cells 상용 배포 라이선스
+3. Agent별 GPT model ID, token·비용·timeout 한도
+4. worker별 production resource·동시성·autoscaling 값
+
+Google OIDC와 PostgreSQL 도구·version·구현 경계는 TD-018에서 확정했다.
 7. artifact·Evidence·감사 로그의 보존·삭제 정책
 
 ERD는 이 문서의 소유권·version·artifact·Evidence·job 경계를 table 관계로 구체화한다. API 문서는 application use case, 오류, idempotency와 polling 계약을 endpoint별로 구체화한다.

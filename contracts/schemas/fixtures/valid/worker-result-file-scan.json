@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "attempt": 1,
+  "sequence": 2,
+  "inputVersionIds": [
+    "file_version_01"
+  ],
+  "resultType": "file_scan",
+  "payload": {
+    "schemaVersion": "1.0",
+    "fileRole": "previous_report_pdf",
+    "fileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "byteSize": 1024,
+    "declaredMediaType": "application/pdf",
+    "detectedMediaType": "application/pdf",
+    "format": "pdf",
+    "magicBytesValid": true,
+    "encryptionStatus": "not_encrypted",
+    "malwareStatus": "clean",
+    "supportStatus": "accepted",
+    "checks": [
+      {
+        "code": "size",
+        "status": "passed"
+      },
+      {
+        "code": "media_type",
+        "status": "passed"
+      },
+      {
+        "code": "magic_bytes",
+        "status": "passed"
+      },
+      {
+        "code": "encryption",
+        "status": "passed"
+      },
+      {
+        "code": "malware",
+        "status": "passed"
+      }
+    ],
+    "inspectedAt": "2026-07-24T10:00:10+09:00",
+    "tool": {
+      "name": "reflo-file-scan",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  "results": [
+    {
+      "entityType": "project_file_version",
+      "entityId": "file_version_01",
+      "version": 1,
+      "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "artifacts": [
+    {
+      "schemaVersion": "1.0",
+      "artifactRole": "file_scan",
+      "artifactKind": "analysis",
+      "storageStatus": "temporary",
+      "bucket": "reflo-worker",
+      "objectKey": "temporary/job_01/validate_upload/input_hash",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "byteSize": 2048,
+      "mediaType": "application/json",
+      "retentionClass": "temporary",
+      "createdAt": "2026-07-24T10:00:10+09:00",
+      "contentSchemaId": "https://schemas.reflo.dev/worker/v1/file-inspection-result.schema.json",
+      "contentSchemaVersion": "1.0"
+    }
+  ],
+  "tool": {
+    "name": "reflo-file-scan",
+    "version": "1.0.0"
+  }
+}

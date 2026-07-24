@@ -20,8 +20,10 @@ npm run dev
 - [ERD](./docs/REFLO_ERD_v1.md)
 - [API 명세](./docs/REFLO_API_SPEC_v1.md)
 - [OpenAPI 단일 원본](./contracts/openapi/reflo-v1.yaml)
+- [Worker JSON Schema](./contracts/schemas/README.md)
 - [서비스 동작 명세](./docs/REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [기술 결정 사항](./docs/REFLO_TECHNICAL_DECISIONS_v1.md)
 - [화면 구현 명세](./docs/REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
+- [UI 구현 결정](./docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md)
 
 현재 문맥과 작업 이력은 [REFLO_WORKLOG.md](./docs/REFLO_WORKLOG.md)에서 관리합니다.

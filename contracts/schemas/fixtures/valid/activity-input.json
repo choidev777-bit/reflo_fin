@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "jobId": "job_01",
+  "projectId": "prj_01",
+  "jobType": "file_ingest",
+  "activityType": "validate_upload",
+  "taskQueue": "file-scan",
+  "attempt": 1,
+  "inputFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "inputVersionRefs": [
+    {
+      "role": "uploaded_file",
+      "resourceVersionId": "file_version_01",
+      "version": 1,
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "inputArtifacts": [],
+  "parameters": {
+    "fileRole": "previous_report_pdf"
+  },
+  "requestedAt": "2026-07-24T10:00:00+09:00",
+  "deadlineAt": "2026-07-24T10:01:00+09:00",
+  "traceId": "trace_01"
+}

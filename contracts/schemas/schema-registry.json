@@ -1,0 +1,215 @@
+{
+  "manifestVersion": 1,
+  "schemaVersion": "1.0",
+  "dialect": "https://json-schema.org/draft/2020-12/schema",
+  "canonicalBaseUri": "https://schemas.reflo.dev/worker/v1/",
+  "roots": [
+    {
+      "name": "ActivityInput",
+      "file": "v1/activity-input.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/activity-input.schema.json"
+    },
+    {
+      "name": "ArtifactDescriptor",
+      "file": "v1/artifact-descriptor.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/artifact-descriptor.schema.json"
+    },
+    {
+      "name": "WorkerError",
+      "file": "v1/worker-error.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/worker-error.schema.json"
+    },
+    {
+      "name": "WorkerResultEnvelope",
+      "file": "v1/worker-result-envelope.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/worker-result-envelope.schema.json"
+    },
+    {
+      "name": "FileInspectionResult",
+      "file": "v1/file-inspection-result.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/file-inspection-result.schema.json"
+    },
+    {
+      "name": "TemplateIR",
+      "file": "v1/template-ir.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/template-ir.schema.json"
+    },
+    {
+      "name": "WorkbookAnalysis",
+      "file": "v1/workbook-analysis.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/workbook-analysis.schema.json"
+    },
+    {
+      "name": "MappingSet",
+      "file": "v1/mapping-set.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/mapping-set.schema.json"
+    },
+    {
+      "name": "ResearchResult",
+      "file": "v1/research-result.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/research-result.schema.json"
+    },
+    {
+      "name": "EvidenceValidationResult",
+      "file": "v1/evidence-validation-result.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/evidence-validation-result.schema.json"
+    },
+    {
+      "name": "AgentOutput",
+      "file": "v1/agent-output.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/agent-output.schema.json"
+    },
+    {
+      "name": "ReportWorkerArtifact",
+      "file": "v1/report-worker-artifact.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/report-worker-artifact.schema.json"
+    }
+  ],
+  "resultTypes": [
+    {
+      "resultType": "file_scan",
+      "activityTypes": [
+        "validate_upload"
+      ],
+      "taskQueue": "file-scan",
+      "payloadRef": "v1/file-inspection-result.schema.json"
+    },
+    {
+      "resultType": "pdf_template_ir",
+      "activityTypes": [
+        "analyze_pdf",
+        "build_template_ir"
+      ],
+      "taskQueue": "pdf-analysis",
+      "payloadRef": "v1/template-ir.schema.json"
+    },
+    {
+      "resultType": "workbook_analysis",
+      "activityTypes": [
+        "analyze_excel"
+      ],
+      "taskQueue": "excel-calc",
+      "payloadRef": "v1/workbook-analysis.schema.json"
+    },
+    {
+      "resultType": "mapping_set",
+      "activityTypes": [
+        "build_mapping_set"
+      ],
+      "taskQueue": "excel-calc",
+      "payloadRef": "v1/mapping-set.schema.json"
+    },
+    {
+      "resultType": "source_collection",
+      "activityTypes": [
+        "collect_source"
+      ],
+      "taskQueue": "research-network",
+      "payloadRef": "v1/research-result.schema.json#/$defs/SourceCollectionResult"
+    },
+    {
+      "resultType": "research_candidates",
+      "activityTypes": [
+        "extract_candidate"
+      ],
+      "taskQueue": "research-network",
+      "payloadRef": "v1/research-result.schema.json#/$defs/ResearchCandidateResult"
+    },
+    {
+      "resultType": "evidence_validation",
+      "activityTypes": [
+        "validate_evidence"
+      ],
+      "taskQueue": "evidence-validation",
+      "payloadRef": "v1/evidence-validation-result.schema.json"
+    },
+    {
+      "resultType": "hypothesis_questions",
+      "activityTypes": [
+        "generate_hypothesis_questions"
+      ],
+      "taskQueue": "llm",
+      "payloadRef": "v1/agent-output.schema.json#/$defs/HypothesisQuestionOutput"
+    },
+    {
+      "resultType": "valuation_proposal",
+      "activityTypes": [
+        "generate_valuation_proposal"
+      ],
+      "taskQueue": "llm",
+      "payloadRef": "v1/agent-output.schema.json#/$defs/ValuationProposalOutput"
+    },
+    {
+      "resultType": "report_outline_proposal",
+      "activityTypes": [
+        "generate_report_outline"
+      ],
+      "taskQueue": "llm",
+      "payloadRef": "v1/agent-output.schema.json#/$defs/ReportOutlineProposalOutput"
+    },
+    {
+      "resultType": "report_text_proposal",
+      "activityTypes": [
+        "generate_report_text"
+      ],
+      "taskQueue": "llm",
+      "payloadRef": "v1/agent-output.schema.json#/$defs/ReportTextProposalOutput"
+    },
+    {
+      "resultType": "workbook_recalculation",
+      "activityTypes": [
+        "recalculate_excel"
+      ],
+      "taskQueue": "excel-calc",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/WorkbookRecalculationResult"
+    },
+    {
+      "resultType": "evidence_snapshot",
+      "activityTypes": [
+        "freeze_evidence"
+      ],
+      "taskQueue": "publish",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/EvidenceSnapshot"
+    },
+    {
+      "resultType": "render_plan",
+      "activityTypes": [
+        "build_render_plan"
+      ],
+      "taskQueue": "publish",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/RenderPlan"
+    },
+    {
+      "resultType": "pdf_render",
+      "activityTypes": [
+        "render_pdf"
+      ],
+      "taskQueue": "pdf-render",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/PdfRenderResult"
+    },
+    {
+      "resultType": "structural_validation",
+      "activityTypes": [
+        "structural_validation"
+      ],
+      "taskQueue": "pdf-render",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/StructuralValidationResult"
+    },
+    {
+      "resultType": "visual_validation",
+      "activityTypes": [
+        "visual_validation"
+      ],
+      "taskQueue": "pdf-visual-verify",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/VisualValidationResult"
+    },
+    {
+      "resultType": "publish",
+      "activityTypes": [
+        "publish_draft"
+      ],
+      "taskQueue": "publish",
+      "payloadRef": "v1/report-worker-artifact.schema.json#/$defs/PublishResult"
+    }
+  ]
+}

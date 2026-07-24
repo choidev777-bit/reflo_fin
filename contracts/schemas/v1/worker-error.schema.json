@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/worker-error.schema.json",
+  "title": "REFLO Worker Error v1",
+  "description": "Safe, typed worker failure. stack traces and source content belong in restricted diagnostic artifacts, never in message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "code",
+    "category",
+    "retryable",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "code": {
+      "$ref": "#/$defs/WorkerErrorCode"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "input",
+        "security",
+        "compatibility",
+        "source",
+        "calculation",
+        "validation",
+        "provider",
+        "infrastructure",
+        "cancellation",
+        "internal"
+      ]
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "phase": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "diagnosticArtifact": {
+      "$ref": "artifact-descriptor.schema.json"
+    }
+  },
+  "$defs": {
+    "WorkerErrorCode": {
+      "title": "WorkerErrorCode",
+      "type": "string",
+      "enum": [
+        "WORKER_INPUT_INVALID",
+        "INPUT_VERSION_MISMATCH",
+        "ARTIFACT_NOT_FOUND",
+        "ARTIFACT_HASH_MISMATCH",
+        "ARTIFACT_CONFLICT",
+        "FILE_TOO_LARGE",
+        "FILE_TYPE_UNSUPPORTED",
+        "FILE_ENCRYPTED",
+        "FILE_MALWARE_DETECTED",
+        "FILE_SCAN_UNAVAILABLE",
+        "FILE_CORRUPT",
+        "PDF_UNSUPPORTED",
+        "PDF_PARSE_FAILED",
+        "PDF_FONT_UNAVAILABLE",
+        "PDF_PATCH_TARGET_STALE",
+        "PDF_RENDER_FAILED",
+        "PDF_STRUCTURE_INVALID",
+        "PDF_VISUAL_MISMATCH",
+        "WORKBOOK_UNSUPPORTED",
+        "WORKBOOK_ENCRYPTED",
+        "WORKBOOK_EXTERNAL_LINK_UNRESOLVED",
+        "WORKBOOK_CALCULATION_FAILED",
+        "WORKBOOK_STRUCTURE_CHANGED",
+        "SOURCE_ACCESS_DENIED",
+        "SOURCE_NOT_FOUND",
+        "SOURCE_RATE_LIMITED",
+        "SOURCE_CONTENT_CHANGED",
+        "SOURCE_PARSE_FAILED",
+        "EVIDENCE_NOT_FOUND",
+        "EVIDENCE_LOCATOR_INVALID",
+        "EVIDENCE_VALUE_MISMATCH",
+        "EVIDENCE_CONTEXT_MISMATCH",
+        "AGENT_OUTPUT_INVALID",
+        "AGENT_PROVIDER_UNAVAILABLE",
+        "AGENT_RATE_LIMITED",
+        "AGENT_TIMEOUT",
+        "PUBLISH_PRECONDITION_FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "RESOURCE_EXHAUSTED",
+        "INTERNAL_ERROR"
+      ]
+    }
+  }
+}

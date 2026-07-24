@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/mapping-set.schema.json",
+  "title": "REFLO Mapping Set v1",
+  "description": "Versioned typed mapping from workbook sources to stable Template IR slots.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "mappingSetId",
+    "mappingSetVersion",
+    "templateId",
+    "templateVersion",
+    "workbookVersionId",
+    "workbookFileHash",
+    "workbookStructureHash",
+    "status",
+    "bindings",
+    "unmappedRequiredSlots",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "mappingSetId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "mappingSetVersion": {
+      "$ref": "common.schema.json#/$defs/VersionNumber"
+    },
+    "templateId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "templateVersion": {
+      "$ref": "common.schema.json#/$defs/VersionNumber"
+    },
+    "workbookVersionId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "workbookFileHash": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "workbookStructureHash": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "suggested",
+        "confirmed",
+        "revalidation_required",
+        "invalid"
+      ]
+    },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Binding"
+      }
+    },
+    "unmappedRequiredSlots": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/OpaqueId"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Warning"
+      }
+    }
+  },
+  "$defs": {
+    "CellSource": {
+      "title": "CellSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetId",
+        "sheet",
+        "address",
+        "readMode",
+        "authority",
+        "structureFingerprint"
+      ],
+      "properties": {
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sheet": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "address": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "readMode": {
+          "const": "calculated_value"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "authoritative",
+            "verification"
+          ]
+        },
+        "formulaHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "numberFormat": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "RangeSource": {
+      "title": "RangeSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetId",
+        "sheet",
+        "range",
+        "authority",
+        "structureFingerprint"
+      ],
+      "properties": {
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sheet": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "range": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "authoritative",
+            "verification"
+          ]
+        },
+        "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "DisplayRule": {
+      "title": "DisplayRule",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "scale": {
+          "$ref": "common.schema.json#/$defs/DecimalString"
+        },
+        "roundingIncrement": {
+          "$ref": "common.schema.json#/$defs/DecimalString"
+        },
+        "roundingMode": {
+          "type": "string",
+          "enum": [
+            "half_up",
+            "half_even",
+            "floor",
+            "ceiling",
+            "truncate"
+          ]
+        },
+        "pattern": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "suffix": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "negativeStyle": {
+          "type": "string",
+          "enum": [
+            "minus",
+            "parentheses"
+          ]
+        },
+        "blankDisplay": {
+          "type": "string",
+          "maxLength": 50
+        }
+      }
+    },
+    "ScalarBinding": {
+      "title": "ScalarBinding",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "slotId",
+        "kind",
+        "valueType",
+        "source",
+        "verificationSources",
+        "display",
+        "status"
+      ],
+      "properties": {
+        "bindingId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "const": "scalar"
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "money",
+            "percent",
+            "integer",
+            "date",
+            "string",
+            "boolean"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/CellSource"
+        },
+        "verificationSources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CellSource"
+          }
+        },
+        "display": {
+          "$ref": "#/$defs/DisplayRule"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "suggested",
+            "confirmed",
+            "invalid"
+          ]
+        }
+      }
+    },
+    "TableBinding": {
+      "title": "TableBinding",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "slotId",
+        "kind",
+        "source",
+        "rowKeyColumn",
+        "columnHeaderRow",
+        "expectedRows",
+        "expectedColumns",
+        "status"
+      ],
+      "properties": {
+        "bindingId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "const": "table"
+        },
+        "source": {
+          "$ref": "#/$defs/RangeSource"
+        },
+        "rowKeyColumn": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}$"
+        },
+        "columnHeaderRow": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expectedRows": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expectedColumns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subtotalRows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "unitRows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "display": {
+          "$ref": "#/$defs/DisplayRule"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "suggested",
+            "confirmed",
+            "invalid"
+          ]
+        }
+      }
+    },
+    "ChartSeries": {
+      "title": "ChartSeries",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seriesId",
+        "source"
+      ],
+      "properties": {
+        "seriesId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "source": {
+          "$ref": "#/$defs/RangeSource"
+        }
+      }
+    },
+    "ChartBinding": {
+      "title": "ChartBinding",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bindingId",
+        "slotId",
+        "kind",
+        "categories",
+        "series",
+        "status"
+      ],
+      "properties": {
+        "bindingId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "const": "chart"
+        },
+        "categories": {
+          "$ref": "#/$defs/RangeSource"
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ChartSeries"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "suggested",
+            "confirmed",
+            "invalid"
+          ]
+        }
+      }
+    },
+    "Binding": {
+      "title": "Binding",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ScalarBinding"
+        },
+        {
+          "$ref": "#/$defs/TableBinding"
+        },
+        {
+          "$ref": "#/$defs/ChartBinding"
+        }
+      ]
+    }
+  }
+}

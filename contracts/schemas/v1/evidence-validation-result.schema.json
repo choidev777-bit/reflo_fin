@@ -1,0 +1,378 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/evidence-validation-result.schema.json",
+  "title": "REFLO Evidence Validation Result v1",
+  "description": "Independent validation of source-backed evidence candidates. Existing source bytes and candidates remain immutable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "validationRunId",
+    "inputVersionRefs",
+    "status",
+    "evidence",
+    "conflicts",
+    "validatedAt",
+    "tool"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "validationRunId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "inputVersionRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "needs_review"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EvidenceResult"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EvidenceConflict"
+      }
+    },
+    "validatedAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "tool": {
+      "$ref": "common.schema.json#/$defs/ToolDescriptor"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Warning"
+      }
+    }
+  },
+  "$defs": {
+    "EvidenceValue": {
+      "title": "EvidenceValue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valueType",
+        "rawValue",
+        "normalizedValue",
+        "estimateType"
+      ],
+      "properties": {
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "integer",
+            "string",
+            "boolean",
+            "date"
+          ]
+        },
+        "rawValue": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normalizedValue": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/DecimalString"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "periodStart": {
+          "$ref": "common.schema.json#/$defs/Date"
+        },
+        "periodEnd": {
+          "$ref": "common.schema.json#/$defs/Date"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "consolidated",
+            "separate",
+            "not_applicable",
+            "unknown"
+          ]
+        },
+        "estimateType": {
+          "type": "string",
+          "enum": [
+            "actual",
+            "estimate",
+            "consensus",
+            "user_assumption",
+            "not_applicable"
+          ]
+        }
+      }
+    },
+    "ValidationCheck": {
+      "title": "EvidenceValidationCheck",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "status"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "source_exists",
+            "source_hash_matches",
+            "locator_resolves",
+            "quote_matches",
+            "company_matches",
+            "period_matches",
+            "unit_matches",
+            "context_matches",
+            "value_normalizes",
+            "calculation_reconciles",
+            "cutoff_compliant"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review",
+            "not_applicable"
+          ]
+        },
+        "expected": {},
+        "observed": {},
+        "message": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "EvidenceResult": {
+      "title": "EvidenceResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "sourceVersionId",
+        "locator",
+        "quoteExact",
+        "quoteNormalized",
+        "quoteSha256",
+        "claimType",
+        "validationStatus",
+        "checks",
+        "provenance"
+      ],
+      "properties": {
+        "candidateId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "evidenceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "locator": {
+          "$ref": "common.schema.json#/$defs/SourceLocator"
+        },
+        "quoteExact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "quoteNormalized": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "quoteSha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "claimType": {
+          "type": "string",
+          "enum": [
+            "fact",
+            "metric",
+            "event",
+            "definition",
+            "supporting",
+            "contradicting"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "validationStatus": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ValidationCheck"
+          }
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProvenanceEdge"
+          }
+        },
+        "failureReason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "ProvenanceEdge": {
+      "title": "ProvenanceEdge",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fromType",
+        "fromId",
+        "toType",
+        "toId",
+        "relationType"
+      ],
+      "properties": {
+        "fromType": {
+          "type": "string",
+          "enum": [
+            "source_version",
+            "evidence_candidate",
+            "evidence",
+            "excel_cell_value",
+            "claim",
+            "report_block",
+            "render_plan"
+          ]
+        },
+        "fromId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "toType": {
+          "type": "string",
+          "enum": [
+            "evidence_candidate",
+            "evidence",
+            "excel_cell_value",
+            "claim",
+            "report_block",
+            "render_plan"
+          ]
+        },
+        "toId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "relationType": {
+          "type": "string",
+          "enum": [
+            "extracted_from",
+            "normalized_from",
+            "calculated_from",
+            "supports",
+            "contradicts",
+            "rendered_in",
+            "supersedes"
+          ]
+        }
+      }
+    },
+    "EvidenceConflict": {
+      "title": "EvidenceConflict",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conflictId",
+        "kind",
+        "candidateIds",
+        "status"
+      ],
+      "properties": {
+        "conflictId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "value",
+            "period",
+            "unit",
+            "scope",
+            "source_revision",
+            "context"
+          ]
+        },
+        "candidateIds": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "needs_user_decision"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    }
+  }
+}

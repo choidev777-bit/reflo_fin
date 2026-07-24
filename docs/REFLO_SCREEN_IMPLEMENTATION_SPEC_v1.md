@@ -12,7 +12,7 @@
 판단 우선순위는 다음과 같다.
 
 1. [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)의 제품 동작과 MVP 불변조건
-2. [`REFLO_TECHNICAL_DECISIONS_v1.md`](./REFLO_TECHNICAL_DECISIONS_v1.md)의 확정·조건부 확정 기술 결정
+2. [`REFLO_TECHNICAL_DECISIONS_v1.md`](./REFLO_TECHNICAL_DECISIONS_v1.md)의 확정·일단 확정 기술 결정과 delivery gate
 3. [`REFLO_API_SPEC_v1.md`](./REFLO_API_SPEC_v1.md)와 [`contracts/openapi/reflo-v1.yaml`](../contracts/openapi/reflo-v1.yaml)의 HTTP 계약
 4. 현재 `source-react`의 화면 디자인과 상호작용
 5. 각 URL 상세 명세에서 확정한 구현 계약
@@ -221,9 +221,10 @@ SpreadJS는 validation에서 읽기 전용, valuation에서 허용 셀 편집용
 
 구현 전에 별도 제품·기술 결정으로 확정해야 하는 주요 항목:
 
-1. TD-014 계약을 구현할 Google OAuth/OIDC package와 정확한 package version
-2. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
-3. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
-4. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
-5. Agent별 GPT model ID·비용 한도·prompt/schema version과 원시 prompt·응답 보존 정책
-6. polling 부하 또는 사용자 지연이 실제로 문제가 되었을 때 SSE·WebSocket으로 전환할 측정 기준
+1. SpreadJS 라이선스·package version·배포 hostname과 지원 browser
+2. Temporal·PDF·Excel worker의 production timeout·resource·동시성 한도
+3. PDF 처리 라이브러리의 상용 라이선스와 실제 증권사 표본 통과 결과
+4. Agent별 GPT model ID·비용 한도·prompt/schema version과 원시 prompt·응답 보존 정책
+5. polling 부하 또는 사용자 지연이 실제로 문제가 되었을 때 SSE·WebSocket으로 전환할 측정 기준
+
+Google OIDC, PostgreSQL client와 migration 도구는 TD-018에서 exact version까지 확정했다.
