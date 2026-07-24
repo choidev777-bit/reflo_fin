@@ -10,8 +10,8 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 1. 프로젝트와 분석 기준 설정
 2. PDF·Excel 업로드 및 검사
 3. 투자 의견과 조사 질문 설정
-4. 자료 조사 계획 및 수집
-5. 수집 결과와 원문 검증
+4. 자료 수집 및 계획
+5. 조사 결과 검증
 6. Excel 기반 밸류에이션
 7. 보고서 구성 및 생성
 
@@ -61,8 +61,8 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 | 1. 프로젝트 설정 | `/projects/:projectId/process/setup` |
 | 2. 파일 업로드·검사 | `/projects/:projectId/process/files` |
 | 3. 투자 의견·조사 질문 | `/projects/:projectId/process/hypothesis` |
-| 4. 자료 조사 계획 | `/projects/:projectId/process/research-plan` |
-| 5. 수집 결과 검증 | `/projects/:projectId/process/validation` |
+| 4. 자료 수집 및 계획 | `/projects/:projectId/process/research-plan` |
+| 5. 조사 결과 검증 | `/projects/:projectId/process/validation` |
 | 6. PER 밸류에이션 | `/projects/:projectId/process/valuation` |
 | 7. 페이지 내용 설정 | `/projects/:projectId/process/report-outline` |
 | 보고서 | `/projects/:projectId/report` |
@@ -81,6 +81,44 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 백엔드 기술은 UI 디자인 코드와 분리한다.
 
 ## 4. 2026-07-24 작업 기록
+
+### 2026-07-24 — 03~10 화면 명세 통합 및 전체 교차 검수
+
+#### 결과
+
+- 별도 작업에서 작성한 `03-setup.md`부터 `10-report.md`까지의 커밋을 화면 번호순으로 `main`에 통합했다.
+- `/`, `/projects`, 7개 프로세스 단계, 완료 후 보고서 작업 공간까지 총 10개 URL의 1차 화면 구현 명세를 완성했다.
+- 공식 단계명과 stage key, URL 이동 순서, `{projectId}` API path 표기, 공통 프로젝트 context와 `targetPeriod`, 오류·권한·멱등성, 비동기 작업 상태와 산출물 version 무효화 규칙을 전 화면에서 통일했다.
+- 마스터 명세에 URL별 기술 배치 표를 추가해 SpreadJS, PostgreSQL, S3, Temporal, PDF·Excel 워커와 Agent의 사용 위치 및 사용하지 않을 위치를 명확히 했다.
+- 보고서 화면은 8번째 프로세스 단계가 아니라 7단계 완료 후 진입하는 작업 공간으로 확정했다.
+
+#### 검증
+
+- Markdown 내부 링크, code fence, JSON 예시 문법 검사: 통과
+- 03→04→05→06→07→08→09→10 단계 이동 경로 검사: 통과
+- 구 단계명, `:projectId` API 표기, 문자열 `targetPeriod`, `canceled`, `report-outline` stage key, `412` 선행 단계 응답 잔존 검사: 없음
+- `git diff --check`: 통과
+- 문서만 변경했으므로 애플리케이션 build와 브라우저 동작 검사는 생략했다.
+
+#### 미해결 결정
+
+- Google OAuth/OIDC 라이브러리, session 저장·만료·회전, CSRF 정책
+- `cutoffDate`를 권위 시각 `cutoffAt`으로 바꾸는 timezone·day-end 규칙
+- SpreadJS 라이선스, package version, 배포 hostname과 지원 브라우저
+- Temporal·PDF·Excel worker의 production timeout, resource와 동시성 제한
+- PDF 처리 라이브러리의 상용 배포 라이선스와 실제 증권사 표본 검증
+- Agent model·provider·비용 한도·prompt/schema version·원시 응답 보존 정책
+- 실시간 상태 전송을 초기 polling에서 SSE·WebSocket으로 바꿀 기준
+
+#### 다음 작업
+
+- 위 미해결 결정 중 구현 기반을 막는 항목을 먼저 확정한 뒤, 데이터 모델·API 모듈·구현 순서가 포함된 개발 계획을 작성한다.
+- 첫 구현 단위는 인증/session, PostgreSQL 프로젝트·workflow 기반, `/projects`와 `process/setup`의 실제 데이터 연결로 잡는다.
+
+#### Git
+
+- 03~10 번호순 통합: `6e1f5ec`, `4eea358`, `62b56aa`, `9810647`, `26f8bfc`, `1ea451c`, `b816382`, `b69f19e`
+- 전체 교차 검수 및 마스터 명세 갱신: `4f58339`
 
 ### 2026-07-24 — `/projects` 프로젝트 목록 구현 명세
 
@@ -249,13 +287,13 @@ npm run start
 
 ## 6. 다음 우선 작업
 
-1. 문서 기준으로 URL별 화면 명세서를 작성한다.
-2. 각 화면의 컴포넌트, 버튼, 입력값, 출력값, 상태와 이동 조건을 확정한다.
-3. 현재 하드코딩 데이터와 실제 API 데이터의 교체 지점을 표시한다.
-4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 단계별 컴포넌트로 분리한다.
-5. 프로젝트·파일·작업·Evidence·보고서 데이터 모델과 API 계약을 설계한다.
-6. 밸류에이션 화면의 가짜 Excel 영역을 SpreadJS로 교체한다.
-7. Python PDF 워커, .NET Excel 워커, Temporal 연결을 별도 백엔드 작업으로 진행한다.
+1. 인증/session, `cutoffDate` 변환, SpreadJS 라이선스와 worker 운영 한도를 기술 결정 문서에 확정한다.
+2. 화면 명세를 기준으로 프로젝트·파일·작업·Evidence·밸류에이션·보고서 데이터 모델과 API 모듈을 설계한다.
+3. PostgreSQL migration, 인증/session, 프로젝트 소유권과 7단계 workflow 기반을 구현한다.
+4. `app/page.tsx`와 `app/process.tsx`를 디자인 변화 없이 URL별 컴포넌트로 분리한다.
+5. `/projects`와 `process/setup`부터 실제 API·데이터를 연결하고 로컬 서버에서 확인한다.
+6. `files`부터 `report`까지 한 화면씩 구현하며 각 단계마다 lint, typecheck, test, build와 브라우저 동작을 확인한다.
+7. 밸류에이션 화면의 가짜 Excel 영역은 SpreadJS로 교체하고, 권위 계산·저장은 Aspose.Cells worker에 연결한다.
 
 ## 7. 작업 기록 규칙
 
