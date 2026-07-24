@@ -86,6 +86,36 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 
 ## 4. 2026-07-24 작업 기록
 
+### 2026-07-24 — API 계약 기준선 작성
+
+#### 결과
+
+- `REFLO_API_SPEC_v1.md`와 machine-readable 단일 원본 `contracts/openapi/reflo-v1.yaml`을 작성했다.
+- public path 80개·operation 86개와 Internal Worker API path·operation 5개를 인증, CSRF, project 소유권, version, idempotency와 공통 오류 계약으로 묶었다.
+- 10개 화면 명세의 endpoint를 전부 포함하고 주요 request·response field와 `operationStatus`·`progressPercent` job projection을 화면·아키텍처·ERD 기준에 맞췄다.
+- validation의 SpreadJS endpoint는 편집용 XLSX가 아니라 read-only import descriptor로 확정했다.
+- report import에 upload 완료 검증 endpoint가 빠져 있음을 발견해 `/report/imports/{importId}/complete`를 API와 보고서 화면 명세에 추가했다.
+- `redocly.yaml`을 추가하고 README·아키텍처·ERD·기술 결정문·화면 명세 인덱스에서 API 계약으로 이동할 수 있게 연결했다.
+
+#### 검증
+
+- Redocly OpenAPI lint: 오류·경고 없이 통과
+- YAML parse, local `$ref` 843개 해석과 operationId 중복 검사: 통과
+- public mutation CSRF, project owner marker, idempotency header와 internal workload identity 검사: 통과
+- OpenAPI operation 91개와 Markdown catalog 91개 양방향 일치: 통과
+- 화면 명세의 API path 누락 검사: 0개
+- API 명세 JSON 예제와 관련 Markdown 상대 링크 검사: 통과
+- 문서 계약만 변경했으므로 애플리케이션 build와 브라우저 검사는 생략했다.
+
+#### 다음 작업
+
+- Internal Worker가 교환하는 artifact·Agent output의 JSON Schema와 TS·Python·C# 생성 규칙을 작성한다.
+- 이후 PostgreSQL migration, Google 로그인·server session과 project·setup 수직 흐름을 구현한다.
+
+#### Git
+
+- API 계약 기준선: `6f6aa1c`
+
 ### 2026-07-24 — PostgreSQL ERD 기준선 작성
 
 #### 결과
