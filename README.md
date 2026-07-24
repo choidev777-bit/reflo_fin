@@ -14,4 +14,11 @@ npm run dev
 - `docs/`: 서비스 동작 및 기술 결정 문서
 - `DESIGN.md`: 디자인 시스템 기준
 
+주요 문서:
+
+- [시스템 아키텍처](./docs/REFLO_SYSTEM_ARCHITECTURE_v1.md)
+- [서비스 동작 명세](./docs/REFLO_URL_SERVICE_BEHAVIOR_v1.md)
+- [기술 결정 사항](./docs/REFLO_TECHNICAL_DECISIONS_v1.md)
+- [화면 구현 명세](./docs/REFLO_SCREEN_IMPLEMENTATION_SPEC_v1.md)
+
 현재 문맥과 작업 이력은 [REFLO_WORKLOG.md](./docs/REFLO_WORKLOG.md)에서 관리합니다.

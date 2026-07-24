@@ -15,10 +15,11 @@ REFLO는 금융 리서치 업무를 다음 흐름으로 연결하는 서비스�
 6. Excel 기반 밸류에이션
 7. 보고서 구성 및 생성
 
-제품 동작과 기술 판단의 기준 문서는 다음 두 파일이다.
+제품 동작과 기술 판단의 기준 문서는 다음 세 파일이다.
 
 - [REFLO_URL_SERVICE_BEHAVIOR_v1.md](./REFLO_URL_SERVICE_BEHAVIOR_v1.md)
 - [REFLO_TECHNICAL_DECISIONS_v1.md](./REFLO_TECHNICAL_DECISIONS_v1.md)
+- [REFLO_SYSTEM_ARCHITECTURE_v1.md](./REFLO_SYSTEM_ARCHITECTURE_v1.md)
 
 화면별 실제 구현 계약의 목차와 공통 원칙은 다음 인덱스에서 관리하고, 상세 명세는 `docs/screens/` 아래에 URL별로 분리한다.
 
