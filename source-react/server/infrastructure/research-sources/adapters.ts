@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import yauzl from "yauzl";
 import {
   normalizePublicResearchUrl,
   type ResearchCandidate,
   type ResearchExcelTarget,
   type ResearchPlanQuestion,
+  type ResearchSourceReference,
   type ResearchSourceSnapshot,
   type ResearchSourceType,
 } from "../../domain/research-validation";
@@ -13,6 +15,15 @@ import {
   fetchKrxClosingPrice,
   type KrxMarket,
 } from "../market-data/krx";
+import {
+  createWorkerDownloadUrl,
+  putImmutableObject,
+  readObjectBytes,
+} from "../object-storage/s3";
+
+export type ResearchMaterialInput = ResearchSourceReference & {
+  objectKey: string | null;
+};
 
 export type ResearchCollectionContext = {
   projectId: string;
@@ -28,6 +39,7 @@ export type ResearchCollectionContext = {
   questions: ResearchPlanQuestion[];
   excelTargets: ResearchExcelTarget[];
   userUrls: string[];
+  sourceReferences: ResearchMaterialInput[];
 };
 
 export type CollectionBundle = {
@@ -49,6 +61,178 @@ function reportCode(quarter: number): string {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+async function unzipFirstFile(bytes: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(
+      bytes,
+      { lazyEntries: true, validateEntrySizes: true },
+      (error, zip) => {
+        if (error || !zip) {
+          reject(error ?? new Error("ZIP_OPEN_FAILED"));
+          return;
+        }
+        zip.readEntry();
+        zip.once("entry", (entry) => {
+          zip.openReadStream(entry, (streamError, stream) => {
+            if (streamError || !stream) {
+              reject(streamError ?? new Error("ZIP_ENTRY_OPEN_FAILED"));
+              return;
+            }
+            const chunks: Buffer[] = [];
+            stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+            stream.on("end", () => {
+              zip.close();
+              resolve(Buffer.concat(chunks));
+            });
+            stream.on("error", reject);
+          });
+        });
+        zip.once("end", () => reject(new Error("ZIP_EMPTY")));
+        zip.once("error", reject);
+      },
+    );
+  });
+}
+
+declare global {
+  var __refloDartCorpCodeCache:
+    | { expiresAt: number; byTicker: Map<string, string> }
+    | undefined;
+}
+
+function xmlValue(block: string, name: string): string {
+  return (
+    new RegExp(`<${name}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${name}>`).exec(
+      block,
+    )?.[1] ??
+    new RegExp(`<${name}>\\s*([^<]*?)\\s*</${name}>`).exec(block)?.[1] ??
+    ""
+  ).trim();
+}
+
+async function dartCorpCode(ticker: string, apiKey: string): Promise<string> {
+  const cached = globalThis.__refloDartCorpCodeCache;
+  if (cached && cached.expiresAt > Date.now()) {
+    const corpCode = cached.byTicker.get(ticker);
+    if (!corpCode) throw new Error(`DART_CORP_CODE_NOT_FOUND:${ticker}`);
+    return corpCode;
+  }
+  const endpoint = new URL("https://opendart.fss.or.kr/api/corpCode.xml");
+  endpoint.searchParams.set("crtfc_key", apiKey);
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`DART_CORP_CODE_HTTP_${response.status}`);
+  const archive = Buffer.from(await response.arrayBuffer());
+  let xml: string;
+  try {
+    xml = (await unzipFirstFile(archive)).toString("utf8");
+  } catch {
+    throw new Error("DART_CORP_CODE_RESPONSE_INVALID");
+  }
+  const byTicker = new Map<string, string>();
+  for (const match of xml.matchAll(/<list>([\s\S]*?)<\/list>/g)) {
+    const stockCode = xmlValue(match[1], "stock_code");
+    const corpCode = xmlValue(match[1], "corp_code");
+    if (/^\d{6}$/.test(stockCode) && /^\d{8}$/.test(corpCode)) {
+      byTicker.set(stockCode, corpCode);
+    }
+  }
+  globalThis.__refloDartCorpCodeCache = {
+    expiresAt: Date.now() + 24 * 60 * 60 * 1_000,
+    byTicker,
+  };
+  const corpCode = byTicker.get(ticker);
+  if (!corpCode) throw new Error(`DART_CORP_CODE_NOT_FOUND:${ticker}`);
+  return corpCode;
+}
+
+type PdfInspection = {
+  compatible?: boolean;
+  issues?: Array<{ code?: string; severity?: string }>;
+  parserName?: string;
+  parserVersion?: string;
+  templateIr?: {
+    pages?: Array<{
+      pageNumber?: number;
+      objects?: Array<{
+        type?: string;
+        textRun?: { text?: string };
+      }>;
+    }>;
+  };
+};
+
+async function extractPdfText(objectKey: string): Promise<{
+  pages: Array<{ pageNumber: number; text: string }>;
+  parser: { name: string; version: string };
+}> {
+  const downloadUrl = await createWorkerDownloadUrl(objectKey, 10 * 60);
+  const response = await fetch(
+    `${(process.env.REFLO_PDF_WORKER_URL || "http://127.0.0.1:8091").replace(/\/$/, "")}/inspect`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ downloadUrl }),
+      signal: AbortSignal.timeout(120_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`SOURCE_PDF_PARSE_${response.status}`);
+  }
+  const result = (await response.json()) as PdfInspection;
+  if (!result.compatible || !result.templateIr?.pages) {
+    const blocking = result.issues
+      ?.filter((issue) => issue.severity === "blocking")
+      .map((issue) => issue.code)
+      .filter(Boolean)
+      .join(",");
+    throw new Error(`SOURCE_PDF_INCOMPATIBLE${blocking ? `:${blocking}` : ""}`);
+  }
+  const pages = result.templateIr.pages.map((page, index) => ({
+    pageNumber: Number(page.pageNumber ?? index + 1),
+    text: (page.objects ?? [])
+      .filter((object) => object.type === "text_run")
+      .map((object) => object.textRun?.text ?? "")
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 500_000),
+  }));
+  if (!pages.some((page) => page.text.trim())) {
+    throw new Error("SOURCE_PDF_TEXT_LAYER_MISSING");
+  }
+  return {
+    pages,
+    parser: {
+      name: result.parserName ?? "PyMuPDF",
+      version: result.parserVersion ?? "unknown",
+    },
+  };
+}
+
+async function putResearchPdf(
+  projectId: string,
+  bytes: Buffer,
+): Promise<string> {
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const objectKey = `immutable/${projectId}/research-public/${digest}.pdf`;
+  try {
+    await putImmutableObject({
+      objectKey,
+      body: bytes,
+      mediaType: "application/pdf",
+      metadata: { sha256: digest },
+    });
+  } catch (error) {
+    const existing = await readObjectBytes(objectKey).catch(() => null);
+    if (
+      !existing ||
+      createHash("sha256").update(existing).digest("hex") !== digest
+    ) {
+      throw error;
+    }
+  }
+  return objectKey;
 }
 
 function literalPrivateIp(hostname: string): boolean {
@@ -90,6 +274,13 @@ async function assertPublicResolution(url: URL): Promise<void> {
 export async function fetchPublicSource(
   rawUrl: string,
   cutoffAt: string,
+  input: {
+    projectId: string;
+    sourceType: ResearchSourceType;
+    title?: string;
+    publisher?: string;
+    publishedAt?: string | null;
+  },
 ): Promise<ResearchSourceSnapshot> {
   let current = new URL(normalizePublicResearchUrl(rawUrl));
   const redirectChain: string[] = [];
@@ -116,15 +307,23 @@ export async function fetchPublicSource(
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.byteLength > 50 * 1024 * 1024) throw new Error("SOURCE_TOO_LARGE");
-  const body =
-    contentType.includes("text") || contentType.includes("json")
+  const isPdf =
+    contentType.toLowerCase().includes("application/pdf") ||
+    bytes.subarray(0, 5).toString("ascii") === "%PDF-";
+  const pdfObjectKey = isPdf
+    ? await putResearchPdf(input.projectId, bytes)
+    : null;
+  const pdf = pdfObjectKey ? await extractPdfText(pdfObjectKey) : null;
+  const body = pdf
+    ? null
+    : contentType.includes("text") || contentType.includes("json")
       ? bytes.toString("utf8").slice(0, 2_000_000)
       : `[binary ${contentType} ${bytes.byteLength} bytes]`;
   const publishedHeader =
     response.headers.get("last-modified") ?? response.headers.get("date");
-  const publishedAt = publishedHeader
-    ? new Date(publishedHeader).toISOString()
-    : null;
+  const publishedAt =
+    input.publishedAt ??
+    (publishedHeader ? new Date(publishedHeader).toISOString() : null);
   if (
     publishedAt &&
     new Date(publishedAt).getTime() > new Date(cutoffAt).getTime()
@@ -136,20 +335,104 @@ export async function fetchPublicSource(
     redirectChain,
     contentType,
     body,
+    pages: pdf?.pages,
+    parser: pdf?.parser,
+    objectKey: pdfObjectKey,
   };
-  return {
+  const source: ResearchSourceSnapshot = {
     sourceKey: `url:${hash(current.toString()).slice(0, 32)}`,
-    sourceType: "USER_MATERIAL",
-    title: current.hostname,
-    publisher: current.hostname,
+    sourceType: input.sourceType,
+    title: input.title ?? current.hostname,
+    publisher: input.publisher ?? current.hostname,
     canonicalUrl: current.toString(),
     publishedAt,
     collectedAt: nowIso(),
     responseHash: hash(snapshot),
-    locator: { kind: "html", canonicalUrl: current.toString() },
+    locator: {
+      kind: pdf ? "pdf" : "html",
+      canonicalUrl: current.toString(),
+      ...(pdfObjectKey ? { objectKey: pdfObjectKey, pageCount: pdf?.pages.length } : {}),
+    },
     content: snapshot,
-    collectorVersion: "public-url-v1",
+    collectorVersion: pdf ? "public-pdf-v1" : "public-url-v1",
   };
+  return source;
+}
+
+async function collectUploadedMaterial(
+  reference: ResearchMaterialInput,
+  context: ResearchCollectionContext,
+): Promise<ResearchSourceSnapshot> {
+  if (!reference.objectKey) throw new Error("SOURCE_ARTIFACT_UNAVAILABLE");
+  const extracted = await extractPdfText(reference.objectKey);
+  const content = {
+    pages: extracted.pages,
+    parser: extracted.parser,
+    sha256: reference.sha256,
+    byteSize: reference.byteSize,
+    originalFilename: reference.originalFilename,
+  };
+  const source: ResearchSourceSnapshot = {
+    sourceKey: `upload:${reference.referenceId}`,
+    sourceType: reference.sourceType,
+    title: reference.title,
+    publisher: reference.publisher,
+    canonicalUrl: null,
+    publishedAt: reference.publishedAt,
+    collectedAt: nowIso(),
+    responseHash: hash(content),
+    locator: {
+      kind: "pdf",
+      referenceId: reference.referenceId,
+      objectKey: reference.objectKey,
+      pageCount: extracted.pages.length,
+    },
+    content,
+    collectorVersion: "user-pdf-pymupdf-v1",
+  };
+  assertMaterialIdentity(source, context);
+  return source;
+}
+
+function assertMaterialIdentity(
+  source: ResearchSourceSnapshot,
+  context: ResearchCollectionContext,
+): void {
+  if (source.publishedAt) {
+    if (
+      new Date(source.publishedAt).getTime() >
+      new Date(context.cutoffAt).getTime()
+    ) {
+      throw new Error("SOURCE_CUTOFF_VIOLATION");
+    }
+  } else if (source.sourceType === "COMPANY_IR" || source.sourceType === "NEWS") {
+    throw new Error("SOURCE_PUBLISHED_AT_MISSING");
+  }
+  if (source.sourceType !== "COMPANY_IR" && source.sourceType !== "NEWS") {
+    return;
+  }
+  const body = JSON.stringify(source.content).toLocaleLowerCase("ko-KR");
+  const companyTokens = [
+    context.companyName.toLocaleLowerCase("ko-KR"),
+    context.ticker,
+  ].filter((token) => token.length >= 3);
+  if (!companyTokens.some((token) => body.includes(token))) {
+    throw new Error("SOURCE_COMPANY_MISMATCH");
+  }
+  if (source.sourceType === "COMPANY_IR") {
+    const shortYear = String(context.targetYear).slice(-2);
+    const quarter = String(context.targetQuarter);
+    const periodPatterns = [
+      `${context.targetYear}년 ${quarter}분기`,
+      `${context.targetYear}년${quarter}분기`,
+      `${quarter}q${shortYear}`,
+      `${shortYear}년 ${quarter}분기`,
+      `${context.targetYear} ${quarter}q`,
+    ];
+    if (!periodPatterns.some((period) => body.includes(period.toLowerCase()))) {
+      throw new Error("SOURCE_PERIOD_MISMATCH");
+    }
+  }
 }
 
 type DartRow = {
@@ -170,12 +453,14 @@ type DartRow = {
 
 async function collectDart(
   context: ResearchCollectionContext,
-): Promise<ResearchSourceSnapshot | null> {
+): Promise<ResearchSourceSnapshot> {
   const apiKey = process.env.OPENDART_API_KEY?.trim();
-  if (!apiKey || !context.corpCode) return null;
+  if (!apiKey) throw new Error("DART_API_KEY_MISSING");
+  const corpCode =
+    context.corpCode ?? (await dartCorpCode(context.ticker, apiKey));
   const query = new URLSearchParams({
     crtfc_key: apiKey,
-    corp_code: context.corpCode,
+    corp_code: corpCode,
     bsns_year: String(context.targetYear),
     reprt_code: reportCode(context.targetQuarter),
     fs_div: "CFS",
@@ -193,19 +478,32 @@ async function collectDart(
   }
   const publicQuery = new URLSearchParams(query);
   publicQuery.set("crtfc_key", "[redacted]");
+  const receiptNumber = payload.list.find((row) =>
+    /^\d{14}$/.test(row.rcept_no ?? ""),
+  )?.rcept_no;
+  const receiptDate = receiptNumber?.slice(0, 8);
+  const publishedAt =
+    receiptDate && /^\d{8}$/.test(receiptDate)
+      ? `${receiptDate.slice(0, 4)}-${receiptDate.slice(4, 6)}-${receiptDate.slice(6, 8)}T00:00:00+09:00`
+      : null;
   return {
-    sourceKey: `dart:${context.corpCode}:${context.targetYear}:${reportCode(context.targetQuarter)}`,
+    sourceKey: `dart:${corpCode}:${context.targetYear}:${reportCode(context.targetQuarter)}`,
     sourceType: "DART",
     title: `${context.companyName} ${context.targetYear}년 ${context.targetQuarter}분기 재무제표`,
     publisher: "금융감독원 전자공시시스템",
-    canonicalUrl: "https://dart.fss.or.kr/",
-    publishedAt: null,
+    canonicalUrl: receiptNumber
+      ? `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`
+      : "https://dart.fss.or.kr/",
+    publishedAt,
     collectedAt: nowIso(),
     responseHash: hash(payload),
     locator: {
       kind: "structured_api",
       endpoint: "/api/fnlttSinglAcntAll.json",
-      parameters: Object.fromEntries(publicQuery),
+      parameters: {
+        ...Object.fromEntries(publicQuery),
+        ...(receiptNumber ? { rceptNo: receiptNumber } : {}),
+      },
     },
     content: { rows: payload.list },
     collectorVersion: "opendart-fnltt-v1",
@@ -214,14 +512,16 @@ async function collectDart(
 
 async function collectKrx(
   context: ResearchCollectionContext,
-): Promise<ResearchSourceSnapshot | null> {
+): Promise<ResearchSourceSnapshot> {
   const result = await fetchKrxClosingPrice({
     companyMasterId: context.companyMasterId,
     ticker: context.ticker,
     exchange: context.exchange,
     cutoffDate: context.cutoffDate,
   });
-  if (result.status !== "available") return null;
+  if (result.status !== "available") {
+    throw new Error(result.errorCode ?? "KRX_MARKET_PRICE_UNAVAILABLE");
+  }
   return {
     sourceKey: `krx:${context.ticker}:${result.tradingDate}`,
     sourceType: "KRX",
@@ -244,13 +544,16 @@ async function collectKrx(
 
 async function collectEcos(
   context: ResearchCollectionContext,
-): Promise<ResearchSourceSnapshot | null> {
+): Promise<ResearchSourceSnapshot> {
   const apiKey = process.env.ECOS_API_KEY?.trim();
-  if (!apiKey) return null;
-  const end = context.cutoffDate.replaceAll("-", "").slice(0, 6);
+  if (!apiKey) throw new Error("ECOS_API_KEY_MISSING");
+  const end = context.cutoffDate.replaceAll("-", "");
+  const cutoff = new Date(`${context.cutoffDate}T00:00:00Z`);
+  cutoff.setUTCDate(cutoff.getUTCDate() - 45);
+  const start = cutoff.toISOString().slice(0, 10).replaceAll("-", "");
   const url =
     `https://ecos.bok.or.kr/api/StatisticSearch/${encodeURIComponent(apiKey)}` +
-    `/json/kr/1/100/731Y001/M/${end}/${end}/0000001`;
+    `/json/kr/1/100/731Y001/D/${start}/${end}/0000001`;
   const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(`ECOS_HTTP_${response.status}`);
   const payload = (await response.json()) as Record<string, unknown>;
@@ -260,14 +563,24 @@ async function collectEcos(
         | { row?: Array<Record<string, unknown>> }
         | undefined
     )?.row ?? [];
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    const error = payload.RESULT as
+      | { CODE?: string; MESSAGE?: string }
+      | undefined;
+    throw new Error(`ECOS_${error?.CODE ?? "NO_DATA"}`);
+  }
+  const latest = rows.at(-1)!;
+  const latestTime = String(latest.TIME ?? end);
+  const publishedAt = /^\d{8}$/.test(latestTime)
+    ? `${latestTime.slice(0, 4)}-${latestTime.slice(4, 6)}-${latestTime.slice(6, 8)}T00:00:00+09:00`
+    : `${context.cutoffDate}T00:00:00+09:00`;
   return {
-    sourceKey: `ecos:731Y001:0000001:${end}`,
+    sourceKey: `ecos:731Y001:0000001:${latestTime}`,
     sourceType: "ECOS",
     title: "원/미국달러 환율",
     publisher: "한국은행 경제통계시스템",
     canonicalUrl: "https://ecos.bok.or.kr/",
-    publishedAt: `${context.cutoffDate}T00:00:00+09:00`,
+    publishedAt,
     collectedAt: nowIso(),
     responseHash: hash(payload),
     locator: {
@@ -275,13 +588,13 @@ async function collectEcos(
       endpoint: "/api/StatisticSearch",
       parameters: {
         statCode: "731Y001",
-        cycle: "M",
+        cycle: "D",
         itemCode: "0000001",
-        period: end,
+        period: `${start}-${end}`,
       },
-      jsonPointer: "/StatisticSearch/row/0/DATA_VALUE",
+      jsonPointer: `/StatisticSearch/row/${rows.length - 1}/DATA_VALUE`,
     },
-    content: { rows },
+    content: { rows, latest },
     collectorVersion: "ecos-statistic-search-v1",
   };
 }
@@ -400,12 +713,34 @@ export async function collectResearchSources(
   const selected = selectedSourceTypes(context);
   const warnings: CollectionBundle["warnings"] = [];
   const sources: ResearchSourceSnapshot[] = [];
-  const tasks: Array<Promise<ResearchSourceSnapshot | null>> = [];
+  const tasks: Array<Promise<ResearchSourceSnapshot>> = [];
   if (selected.has("DART")) tasks.push(collectDart(context));
   if (selected.has("KRX")) tasks.push(collectKrx(context));
   if (selected.has("ECOS")) tasks.push(collectEcos(context));
+  for (const reference of context.sourceReferences) {
+    if (!selected.has(reference.sourceType)) continue;
+    tasks.push(
+      reference.ingestionMethod === "user_upload"
+        ? collectUploadedMaterial(reference, context)
+        : fetchPublicSource(reference.canonicalUrl ?? "", context.cutoffAt, {
+            projectId: context.projectId,
+            sourceType: reference.sourceType,
+            title: reference.title,
+            publisher: reference.publisher,
+            publishedAt: reference.publishedAt,
+          }).then((source) => {
+            assertMaterialIdentity(source, context);
+            return source;
+          }),
+    );
+  }
   for (const url of context.userUrls) {
-    tasks.push(fetchPublicSource(url, context.cutoffAt));
+    tasks.push(
+      fetchPublicSource(url, context.cutoffAt, {
+        projectId: context.projectId,
+        sourceType: "USER_MATERIAL",
+      }),
+    );
   }
   const settled = await Promise.allSettled(tasks);
   for (const result of settled) {
@@ -413,12 +748,57 @@ export async function collectResearchSources(
       sources.push(result.value);
     } else if (result.status === "rejected") {
       warnings.push({
-        code: "SOURCE_OPTIONAL_FAILED",
+        code:
+          result.reason instanceof Error &&
+          /^[A-Z][A-Z0-9_:-]{2,200}$/.test(result.reason.message)
+            ? result.reason.message.split(":")[0]
+            : "SOURCE_COLLECTION_FAILED",
         message:
           result.reason instanceof Error
             ? result.reason.message.slice(0, 200)
             : "자료 수집에 실패했습니다.",
       });
+    }
+  }
+  if (sources.length === 0) {
+    throw new Error(
+      `RESEARCH_NO_SOURCES${
+        warnings.length > 0
+          ? `:${warnings.map((warning) => warning.code).join(",")}`
+          : ""
+      }`,
+    );
+  }
+  const collectedTypes = new Set(sources.map((source) => source.sourceType));
+  for (const sourceType of [
+    "COMPANY_IR",
+    "NEWS",
+    "USER_MATERIAL",
+  ] as const) {
+    if (selected.has(sourceType) && !collectedTypes.has(sourceType)) {
+      throw new Error(`REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`);
+    }
+  }
+  for (const question of context.questions.filter((item) => item.included)) {
+    if (
+      !question.sourceBindingIds.some((sourceType) =>
+        collectedTypes.has(sourceType),
+      )
+    ) {
+      throw new Error(`QUESTION_SOURCE_UNAVAILABLE:${question.questionId}`);
+    }
+  }
+  for (const target of context.excelTargets.filter(
+    (item) => item.included && item.required,
+  )) {
+    const authorityTypes = target.sourcePolicy
+      .filter((policy) => policy.role === "authority")
+      .map((policy) => policy.sourceType);
+    if (
+      authorityTypes.length === 0 ||
+      !authorityTypes.some((sourceType) => collectedTypes.has(sourceType))
+    ) {
+      throw new Error(`EXCEL_SOURCE_UNAVAILABLE:${target.targetId}`);
     }
   }
   return { sources, candidates: [], warnings };

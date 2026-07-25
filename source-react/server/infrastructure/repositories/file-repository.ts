@@ -2956,6 +2956,16 @@ export async function failWorkerJob(
   input: { errorCode: string; message: string; retryable: boolean },
 ): Promise<void> {
   await withTransaction(async (client) => {
+    const job = await client.query<{
+      project_id: string;
+      job_type: string;
+    }>(
+      `SELECT project_id, job_type
+       FROM workflow_job
+       WHERE job_id = $1
+       FOR UPDATE`,
+      [jobId],
+    );
     await client.query(
       `UPDATE workflow_job
        SET operation_status = 'failed', current_phase = 'failed',
@@ -2965,6 +2975,20 @@ export async function failWorkerJob(
          AND operation_status NOT IN ('succeeded', 'cancelled')`,
       [jobId, input.retryable, input.errorCode, input.message.slice(0, 1000)],
     );
+    if (job.rows[0]?.job_type === "evidence_reinvestigation") {
+      await client.query(
+        `UPDATE validation_result
+         SET exception_status = 'AVAILABLE'
+         WHERE project_id = $1 AND exception_status = 'REINVESTIGATING'`,
+        [job.rows[0].project_id],
+      );
+      await client.query(
+        `UPDATE validation_workspace
+         SET workspace_status = 'REVIEW_BLOCKED', updated_at = now()
+         WHERE project_id = $1`,
+        [job.rows[0].project_id],
+      );
+    }
   });
 }
 

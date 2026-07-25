@@ -492,6 +492,7 @@ export async function runResearchValidation(
     questions: input.questions,
     excelTargets: input.excelTargets,
     userUrls: input.userUrls,
+    sourceReferences: input.sourceReferences ?? [],
   });
   await recordJobProgress(
     input.jobId,
@@ -505,6 +506,9 @@ export async function runResearchValidation(
     bundle.candidates.length > 0
       ? bundle.candidates
       : await callResearchAgent(input, bundle.sources);
+  if (researchCandidates.length === 0) {
+    throw new Error("RESEARCH_CANDIDATES_EMPTY");
+  }
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -526,6 +530,9 @@ export async function runResearchValidation(
     if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
     return validateEvidenceCandidate(candidate, source, input.cutoffAt);
   });
+  if (evidence.length === 0) {
+    throw new Error("RESEARCH_EVIDENCE_EMPTY");
+  }
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,

@@ -392,6 +392,36 @@ test("Phase 2 완료 → Phase 3 승인 → Phase 4 수집·검증 완료", asyn
   await expect(page.locator(".phase4-excel-list article").first()).toBeVisible();
   await page.getByRole("tab", { name: /HYPOTHESIS/ }).click();
 
+  await expect(
+    page.getByText(
+      "기업 IR 출처를 사용하려면 공식 PDF를 올리거나 공식 IR URL을 입력해주세요.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "다음", exact: false })).toBeDisabled();
+  const researchPdf = path.resolve(
+    "../fixtures/ISC_1Q26_실적리뷰_삼성증권.pdf",
+  );
+  await page.getByLabel("자료명").fill("ISC 2026년 2분기 기업 IR");
+  await page.getByLabel("발행일").fill("2026-07-15");
+  await page
+    .locator(".phase4-material-form input[type=file]")
+    .setInputFiles(researchPdf);
+  await page.getByRole("button", { name: "자료 연결" }).click();
+  await expect(page.getByText("사용자 제공 기업 IR", { exact: true })).toBeVisible({
+    timeout: 45_000,
+  });
+
+  await page.getByLabel("자료 유형").selectOption("USER_MATERIAL");
+  await page.getByLabel("자료명").fill("사용자 제공 산업 자료");
+  await page
+    .locator(".phase4-material-form input[type=file]")
+    .setInputFiles(researchPdf);
+  await page.getByRole("button", { name: "자료 연결" }).click();
+  await expect(page.getByText("사용자 제공 자료", { exact: true })).toBeVisible({
+    timeout: 45_000,
+  });
+
   await page.getByRole("button", { name: "다음", exact: false }).click();
   await expect(
     page.getByRole("heading", { name: "자료 조사 준비 완료" }),

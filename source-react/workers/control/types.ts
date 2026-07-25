@@ -92,6 +92,11 @@ export type ResearchValidationWorkflowInput = {
   questions: import("../../server/domain/research-validation").ResearchPlanQuestion[];
   excelTargets: import("../../server/domain/research-validation").ResearchExcelTarget[];
   userUrls: string[];
+  sourceReferences: Array<
+    import("../../server/domain/research-validation").ResearchSourceReference & {
+      objectKey: string | null;
+    }
+  >;
   researchAgentProfile: {
     version: string;
     model: string;

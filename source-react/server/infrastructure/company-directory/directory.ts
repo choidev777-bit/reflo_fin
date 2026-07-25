@@ -59,7 +59,7 @@ function withIds(
 function testDirectory(): Omit<DirectoryCompany, "companyId">[] {
   return [
     {
-      corpCode: null,
+      corpCode: "00126380",
       name: "삼성전자",
       ticker: "005930",
       exchange: "KOSPI",
@@ -69,7 +69,7 @@ function testDirectory(): Omit<DirectoryCompany, "companyId">[] {
       ineligibilityReason: null,
     },
     {
-      corpCode: null,
+      corpCode: "00572905",
       name: "ISC",
       ticker: "095340",
       exchange: "KOSDAQ",

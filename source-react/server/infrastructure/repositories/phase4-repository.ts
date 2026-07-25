@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
@@ -13,6 +14,7 @@ import {
   type ResearchExcelTarget,
   type ResearchPlanQuestion,
   type ResearchPlanSnapshot,
+  type ResearchSourceReference,
   type ResearchSourceSnapshot,
   type ResearchSourceType,
   type ValidatedEvidence,
@@ -20,8 +22,15 @@ import {
 import { ApiError } from "../../http/api-error";
 import type { TransactionClient } from "../database/transaction";
 import { withTransaction } from "../database/transaction";
+import {
+  objectStoreBucket,
+  putImmutableObject,
+} from "../object-storage/s3";
+import { inspectResearchPdf } from "../security/research-material";
 
 type IdempotentResult = { status: number; body: unknown };
+const MAX_RESEARCH_PDF_REFERENCES = 10;
+const MAX_RESEARCH_URL_REFERENCES = 20;
 
 type ProjectContext = {
   projectId: string;
@@ -458,7 +467,7 @@ async function buildDefaultSnapshot(
         excludedReason: null,
       };
     });
-  return { questions, excelTargets, userUrls: [] };
+  return { questions, excelTargets, userUrls: [], sourceReferences: [] };
 }
 
 async function insertPlanSnapshot(
@@ -628,6 +637,12 @@ async function loadPlan(
   );
   const row = result.rows[0];
   if (!row) return null;
+  const snapshot: ResearchPlanSnapshot = {
+    ...row.plan_snapshot_json,
+    userUrls: row.plan_snapshot_json.userUrls ?? [],
+    sourceReferences: row.plan_snapshot_json.sourceReferences ?? [],
+  };
+  const issues = validateResearchPlan(snapshot);
   return {
     planId: row.plan_id,
     resourceId: row.resource_id,
@@ -637,8 +652,8 @@ async function loadPlan(
     questionSetResourceVersionId: row.question_set_resource_version_id,
     workbookResourceVersionId: row.workbook_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
-    snapshot: row.plan_snapshot_json,
-    validationSummary: row.validation_summary_json,
+    snapshot,
+    validationSummary: { valid: issues.length === 0, issues },
     lastSavedAt: row.last_saved_at.toISOString(),
   };
 }
@@ -724,6 +739,7 @@ async function ensurePlan(
 async function activeResearchJob(
   client: TransactionClient,
   projectId: string,
+  approvedPlanResourceVersionId?: string,
 ): Promise<JobProjection | null> {
   const result = await client.query<{
     job_id: string;
@@ -745,8 +761,9 @@ async function activeResearchJob(
      FROM research_run rr
      JOIN workflow_job wj ON wj.job_id = rr.job_id
      WHERE rr.project_id = $1
+       AND ($2::uuid IS NULL OR rr.approved_plan_resource_version_id = $2)
      ORDER BY wj.requested_at DESC LIMIT 1`,
-    [projectId],
+    [projectId, approvedPlanResourceVersionId ?? null],
   );
   const row = result.rows[0];
   if (!row) return null;
@@ -777,8 +794,11 @@ function sourceOptions() {
     { label: string; description: string }
   > = {
     DART: { label: "DART 공시", description: "공식 공시·재무제표" },
-    COMPANY_IR: { label: "기업 IR", description: "실적발표·컨퍼런스콜" },
-    NEWS: { label: "뉴스", description: "실제 기사 원문" },
+    COMPANY_IR: {
+      label: "기업 IR",
+      description: "사용자가 제공한 공식 PDF 또는 IR URL",
+    },
+    NEWS: { label: "뉴스", description: "사용자가 연결한 실제 기사 원문 URL" },
     KRX: { label: "KRX", description: "주가·거래 데이터" },
     ECOS: { label: "한국은행 ECOS", description: "금리·환율 등 거시지표" },
     FNGUIDE_CONSENSUS: {
@@ -790,7 +810,9 @@ function sourceOptions() {
       description: "검사한 파일 또는 공개 URL",
     },
   };
-  return RESEARCH_SOURCE_TYPES.map((sourceType) => ({
+  return RESEARCH_SOURCE_TYPES.filter(
+    (sourceType) => sourceType !== "FNGUIDE_CONSENSUS",
+  ).map((sourceType) => ({
     sourceType,
     ...labels[sourceType],
     collectionMethod: defaultCollectionMethod(sourceType),
@@ -835,6 +857,7 @@ export async function getResearchPlanWorkspace(
         questions: plan.snapshot.questions,
         excelTargets: plan.snapshot.excelTargets,
         userUrls: plan.snapshot.userUrls,
+        sourceReferences: plan.snapshot.sourceReferences ?? [],
         validationSummary: plan.validationSummary,
         lastSavedAt: plan.lastSavedAt,
       },
@@ -849,7 +872,11 @@ export async function getResearchPlanWorkspace(
           { extension: ".txt", maxBytes: 5 * 1024 * 1024 },
         ],
       },
-      activeJob: await activeResearchJob(client, projectId),
+      activeJob: await activeResearchJob(
+        client,
+        projectId,
+        plan.resourceVersionId,
+      ),
       workflow: {
         stageStates: stages,
         allowedRoutes: stages
@@ -982,13 +1009,6 @@ export async function saveResearchPlan(input: {
         "자료 수집 중에는 승인 계획을 수정할 수 없습니다.",
       );
     }
-    if (plan.status === "approved") {
-      throw new ApiError(
-        409,
-        "PLAN_LOCKED_BY_ACTIVE_JOB",
-        "승인한 계획은 직접 수정할 수 없습니다.",
-      );
-    }
     if (plan.version !== expectedVersion) {
       throw new ApiError(
         409,
@@ -998,37 +1018,423 @@ export async function saveResearchPlan(input: {
       );
     }
     const snapshot = applyPlanChanges(plan.snapshot, input.changes);
-    await client.query(
-      `UPDATE resource_version SET lifecycle_status = 'superseded'
-       WHERE resource_version_id = $1`,
-      [plan.resourceVersionId],
-    );
-    await client.query(
-      `UPDATE research_plan_version SET status = 'superseded'
-       WHERE resource_version_id = $1`,
-      [plan.resourceVersionId],
-    );
-    const created = await insertPlanSnapshot(client, {
+    const created = await replacePlanSnapshot(client, {
       context,
+      plan,
       userId: input.userId,
-      planId: plan.planId,
-      resourceId: plan.resourceId,
-      version: plan.version + 1,
-      previousResourceVersionId: plan.resourceVersionId,
       snapshot,
     });
-    await client.query(
-      `UPDATE research_plan
-       SET current_resource_version_id = $2, current_version = $3,
-           status = 'draft', updated_by_user_id = $4, last_saved_at = now()
-       WHERE plan_id = $1`,
-      [plan.planId, created.resourceVersionId, created.version, input.userId],
-    );
     return {
       version: created.version,
       questions: snapshot.questions,
       excelTargets: snapshot.excelTargets,
       userUrls: snapshot.userUrls,
+      sourceReferences: snapshot.sourceReferences ?? [],
+      validationSummary: created.validationSummary,
+      lastSavedAt: created.lastSavedAt,
+    };
+  });
+}
+
+type ManualResearchSourceType = ResearchSourceReference["sourceType"];
+
+function requireManualSourceType(value: unknown): ManualResearchSourceType {
+  if (
+    value !== "COMPANY_IR" &&
+    value !== "NEWS" &&
+    value !== "USER_MATERIAL"
+  ) {
+    throw new ApiError(
+      422,
+      "SOURCE_TYPE_INVALID",
+      "사용자가 제공할 자료 유형을 다시 선택해주세요.",
+    );
+  }
+  return value;
+}
+
+function cleanMaterialText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string {
+  if (typeof value !== "string") {
+    throw new ApiError(422, "SOURCE_METADATA_INVALID", `${label}을 입력해주세요.`);
+  }
+  const result = value
+    .normalize("NFC")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!result || result.length > maxLength) {
+    throw new ApiError(
+      422,
+      "SOURCE_METADATA_INVALID",
+      `${label}은 ${maxLength}자 이하로 입력해주세요.`,
+    );
+  }
+  return result;
+}
+
+function materialPublishedAt(
+  value: unknown,
+  cutoffAt: string,
+  required: boolean,
+): string | null {
+  if ((value === null || value === undefined || value === "") && !required) {
+    return null;
+  }
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+    throw new ApiError(
+      422,
+      "SOURCE_PUBLISHED_AT_INVALID",
+      "자료 발행일을 확인해주세요.",
+    );
+  }
+  const publishedAt = new Date(value).toISOString();
+  if (new Date(publishedAt).getTime() > new Date(cutoffAt).getTime()) {
+    throw new ApiError(
+      422,
+      "SOURCE_CUTOFF_VIOLATION",
+      "보고서 기준일 이후에 발행된 자료는 사용할 수 없습니다.",
+    );
+  }
+  return publishedAt;
+}
+
+function assertResearchMaterialCapacity(
+  snapshot: ResearchPlanSnapshot,
+  ingestionMethod: ResearchSourceReference["ingestionMethod"],
+): void {
+  const limit =
+    ingestionMethod === "user_upload"
+      ? MAX_RESEARCH_PDF_REFERENCES
+      : MAX_RESEARCH_URL_REFERENCES;
+  const count = (snapshot.sourceReferences ?? []).filter(
+    (reference) => reference.ingestionMethod === ingestionMethod,
+  ).length;
+  if (count >= limit) {
+    throw new ApiError(
+      422,
+      "SOURCE_REFERENCE_LIMIT_EXCEEDED",
+      ingestionMethod === "user_upload"
+        ? `PDF 자료는 프로젝트당 ${limit}개까지 연결할 수 있습니다.`
+        : `URL 자료는 프로젝트당 ${limit}개까지 연결할 수 있습니다.`,
+    );
+  }
+}
+
+async function replacePlanSnapshot(
+  client: TransactionClient,
+  input: {
+    context: ProjectContext;
+    plan: PlanRow;
+    userId: string;
+    snapshot: ResearchPlanSnapshot;
+  },
+): Promise<PlanRow> {
+  await client.query(
+    `UPDATE resource_version SET lifecycle_status = 'superseded'
+     WHERE resource_version_id = $1`,
+    [input.plan.resourceVersionId],
+  );
+  await client.query(
+    `UPDATE research_plan_version SET status = 'superseded'
+     WHERE resource_version_id = $1`,
+    [input.plan.resourceVersionId],
+  );
+  const created = await insertPlanSnapshot(client, {
+    context: input.context,
+    userId: input.userId,
+    planId: input.plan.planId,
+    resourceId: input.plan.resourceId,
+    version: input.plan.version + 1,
+    previousResourceVersionId: input.plan.resourceVersionId,
+    snapshot: input.snapshot,
+  });
+  await client.query(
+    `UPDATE research_plan
+     SET current_resource_version_id = $2, current_version = $3,
+         status = 'draft', updated_by_user_id = $4, last_saved_at = now()
+     WHERE plan_id = $1`,
+    [
+      input.plan.planId,
+      created.resourceVersionId,
+      created.version,
+      input.userId,
+    ],
+  );
+  if (input.plan.status === "approved") {
+    await client.query(
+      `UPDATE project_stage_state
+       SET stage_status = 'in_progress', current_completion_id = NULL,
+           blocker_codes = '{}', completed_at = NULL, updated_at = now()
+       WHERE project_id = $1 AND stage_key = 'research_plan'`,
+      [input.context.projectId],
+    );
+    await client.query(
+      `UPDATE project_stage_state
+       SET stage_status = 'blocked',
+           blocker_codes = ARRAY['PLAN_REVALIDATION_REQUIRED']::text[],
+           updated_at = now()
+       WHERE project_id = $1 AND stage_key = 'validation'`,
+      [input.context.projectId],
+    );
+    await client.query(
+      `UPDATE validation_workspace
+       SET workspace_status = 'REVIEW_BLOCKED', updated_at = now()
+       WHERE project_id = $1`,
+      [input.context.projectId],
+    );
+  }
+  return created;
+}
+
+export async function addResearchMaterial(input: {
+  projectId: string;
+  userId: string;
+  expectedVersion: unknown;
+  sourceType: unknown;
+  title: unknown;
+  publishedAt: unknown;
+  url?: unknown;
+  file?: { name: string; mediaType: string; bytes: Buffer };
+}): Promise<unknown> {
+  const expectedVersion = requireVersion(input.expectedVersion, "조사 계획");
+  const sourceType = requireManualSourceType(input.sourceType);
+  if (sourceType === "NEWS" && input.file) {
+    throw new ApiError(
+      422,
+      "SOURCE_INGESTION_METHOD_INVALID",
+      "뉴스는 실제 기사 원문 URL로만 등록할 수 있습니다.",
+    );
+  }
+  if (!!input.file === (input.url !== undefined && input.url !== null && input.url !== "")) {
+    throw new ApiError(
+      422,
+      "SOURCE_INPUT_INVALID",
+      "PDF 파일 또는 공개 URL 중 하나만 입력해주세요.",
+    );
+  }
+  const ingestionMethod = input.file ? "user_upload" : "user_url";
+  const referenceId = uuidv7();
+  const artifactId = input.file ? uuidv7() : null;
+  const title = cleanMaterialText(input.title, "자료명", 200);
+  await withTransaction(async (client) => {
+    const context = await projectContext(client, input.projectId, input.userId, true);
+    const plan = await ensurePlan(client, context, input.userId);
+    if (plan.version !== expectedVersion) {
+      throw new ApiError(
+        409,
+        "PLAN_VERSION_CONFLICT",
+        "최신 조사 계획을 다시 확인해주세요.",
+      );
+    }
+    const active = await activeResearchJob(client, input.projectId);
+    if (
+      active &&
+      ["queued", "running", "cancel_requested"].includes(active.operationStatus)
+    ) {
+      throw new ApiError(
+        409,
+        "PLAN_LOCKED_BY_ACTIVE_JOB",
+        "자료 수집 중에는 자료를 변경할 수 없습니다.",
+      );
+    }
+    assertResearchMaterialCapacity(plan.snapshot, ingestionMethod);
+  });
+  let stored:
+    | {
+        objectKey: string;
+        objectVersion: string;
+        sha256: string;
+        byteSize: number;
+        mediaType: string;
+        originalFilename: string;
+      }
+    | undefined;
+  if (input.file) {
+    await inspectResearchPdf(input.file.bytes);
+    const sha256 = createHash("sha256").update(input.file.bytes).digest("hex");
+    const objectKey = `immutable/${input.projectId}/research-materials/${referenceId}.pdf`;
+    const object = await putImmutableObject({
+      objectKey,
+      body: input.file.bytes,
+      mediaType: "application/pdf",
+      metadata: { sha256 },
+    });
+    stored = {
+      objectKey,
+      objectVersion: object.objectVersion,
+      sha256,
+      byteSize: input.file.bytes.byteLength,
+      mediaType: "application/pdf",
+      originalFilename: cleanMaterialText(input.file.name, "파일명", 255),
+    };
+  }
+  return withTransaction(async (client) => {
+    const context = await projectContext(client, input.projectId, input.userId, true);
+    const plan = await ensurePlan(client, context, input.userId);
+    if (plan.version !== expectedVersion) {
+      throw new ApiError(
+        409,
+        "PLAN_VERSION_CONFLICT",
+        "최신 조사 계획을 다시 확인해주세요.",
+      );
+    }
+    const active = await activeResearchJob(client, input.projectId);
+    if (
+      active &&
+      ["queued", "running", "cancel_requested"].includes(active.operationStatus)
+    ) {
+      throw new ApiError(
+        409,
+        "PLAN_LOCKED_BY_ACTIVE_JOB",
+        "자료 수집 중에는 자료를 변경할 수 없습니다.",
+      );
+    }
+    assertResearchMaterialCapacity(plan.snapshot, ingestionMethod);
+    const publishedAt = materialPublishedAt(
+      input.publishedAt,
+      context.cutoffAt,
+      sourceType !== "USER_MATERIAL",
+    );
+    const canonicalUrl = stored ? null : normalizePublicResearchUrls([input.url])[0];
+    const publisher =
+      sourceType === "COMPANY_IR"
+        ? context.companyName
+        : canonicalUrl
+          ? new URL(canonicalUrl).hostname
+          : "사용자 제공 자료";
+    if (stored && artifactId) {
+      await client.query(
+        `INSERT INTO artifact (
+           artifact_id, project_id, artifact_kind, storage_status, bucket_name,
+           object_key, object_version, sha256, byte_size, media_type,
+           original_filename, retention_class, created_by_actor_type
+         ) VALUES (
+           $1, $2, 'source', 'accepted', $3, $4, $5, $6, $7, $8, $9,
+           'evidence', 'user'
+         )`,
+        [
+          artifactId,
+          input.projectId,
+          objectStoreBucket(),
+          stored.objectKey,
+          stored.objectVersion,
+          stored.sha256,
+          stored.byteSize,
+          stored.mediaType,
+          stored.originalFilename,
+        ],
+      );
+    }
+    await client.query(
+      `INSERT INTO research_source_reference (
+         source_reference_id, project_id, plan_id, source_type,
+         canonical_url, artifact_id, status, ingestion_method,
+         title, publisher, published_at, created_by_user_id
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, 'accepted', $7, $8, $9, $10, $11
+       )`,
+      [
+        referenceId,
+        input.projectId,
+        plan.planId,
+        sourceType,
+        canonicalUrl,
+        artifactId,
+        ingestionMethod,
+        title,
+        publisher,
+        publishedAt,
+        input.userId,
+      ],
+    );
+    const reference: ResearchSourceReference = {
+      referenceId,
+      sourceType,
+      ingestionMethod,
+      title,
+      publisher,
+      publishedAt,
+      canonicalUrl,
+      artifactId,
+      originalFilename: stored?.originalFilename ?? null,
+      mediaType: stored?.mediaType ?? null,
+      byteSize: stored?.byteSize ?? null,
+      sha256: stored?.sha256 ?? null,
+    };
+    const snapshot: ResearchPlanSnapshot = {
+      ...structuredClone(plan.snapshot),
+      sourceReferences: [...(plan.snapshot.sourceReferences ?? []), reference],
+    };
+    const created = await replacePlanSnapshot(client, {
+      context,
+      plan,
+      userId: input.userId,
+      snapshot,
+    });
+    return {
+      version: created.version,
+      sourceReferences: snapshot.sourceReferences,
+      validationSummary: created.validationSummary,
+      lastSavedAt: created.lastSavedAt,
+    };
+  });
+}
+
+export async function removeResearchMaterial(input: {
+  projectId: string;
+  userId: string;
+  referenceId: string;
+  expectedVersion: unknown;
+}): Promise<unknown> {
+  const expectedVersion = requireVersion(input.expectedVersion, "조사 계획");
+  return withTransaction(async (client) => {
+    const context = await projectContext(client, input.projectId, input.userId, true);
+    const plan = await ensurePlan(client, context, input.userId);
+    if (plan.version !== expectedVersion) {
+      throw new ApiError(
+        409,
+        "PLAN_VERSION_CONFLICT",
+        "최신 조사 계획을 다시 확인해주세요.",
+      );
+    }
+    const reference = (plan.snapshot.sourceReferences ?? []).find(
+      (item) => item.referenceId === input.referenceId,
+    );
+    if (!reference) {
+      throw new ApiError(404, "SOURCE_REFERENCE_NOT_FOUND", "자료를 찾을 수 없습니다.");
+    }
+    await client.query(
+      `UPDATE research_source_reference
+       SET status = 'superseded'
+       WHERE source_reference_id = $1 AND project_id = $2`,
+      [input.referenceId, input.projectId],
+    );
+    if (reference.artifactId) {
+      await client.query(
+        `UPDATE artifact SET storage_status = 'superseded'
+         WHERE artifact_id = $1 AND project_id = $2`,
+        [reference.artifactId, input.projectId],
+      );
+    }
+    const snapshot: ResearchPlanSnapshot = {
+      ...structuredClone(plan.snapshot),
+      sourceReferences: (plan.snapshot.sourceReferences ?? []).filter(
+        (item) => item.referenceId !== input.referenceId,
+      ),
+    };
+    const created = await replacePlanSnapshot(client, {
+      context,
+      plan,
+      userId: input.userId,
+      snapshot,
+    });
+    return {
+      version: created.version,
+      sourceReferences: snapshot.sourceReferences,
       validationSummary: created.validationSummary,
       lastSavedAt: created.lastSavedAt,
     };
@@ -1041,6 +1447,9 @@ function workflowPayload(input: {
   jobId: string;
   runId: string;
   attempt: number;
+  sourceReferences: Array<
+    ResearchSourceReference & { objectKey: string | null }
+  >;
 }) {
   return {
     workflowType: "researchValidationWorkflow",
@@ -1062,6 +1471,7 @@ function workflowPayload(input: {
     questions: input.plan.snapshot.questions,
     excelTargets: input.plan.snapshot.excelTargets,
     userUrls: input.plan.snapshot.userUrls,
+    sourceReferences: input.sourceReferences,
     researchAgentProfile: {
       version: RESEARCH_AGENT_PROFILE,
       model: "gpt-5.6-terra",
@@ -1088,12 +1498,52 @@ async function createResearchJob(
 ): Promise<{ jobId: string; runId: string }> {
   const jobId = uuidv7();
   const runId = uuidv7();
+  const referenceIds = (input.plan.snapshot.sourceReferences ?? []).map(
+    (reference) => reference.referenceId,
+  );
+  const materialRows =
+    referenceIds.length === 0
+      ? { rows: [] as Array<{ source_reference_id: string; object_key: string | null }> }
+      : await client.query<{
+          source_reference_id: string;
+          object_key: string | null;
+        }>(
+          `SELECT rsr.source_reference_id, a.object_key
+           FROM research_source_reference rsr
+           LEFT JOIN artifact a ON a.artifact_id = rsr.artifact_id
+           WHERE rsr.project_id = $1
+             AND rsr.source_reference_id = ANY($2::uuid[])
+             AND rsr.status = 'accepted'`,
+          [input.context.projectId, referenceIds],
+        );
+  const objectKeyByReference = new Map(
+    materialRows.rows.map((row) => [row.source_reference_id, row.object_key]),
+  );
+  const sourceReferences = (input.plan.snapshot.sourceReferences ?? []).map(
+    (reference) => ({
+      ...reference,
+      objectKey: objectKeyByReference.get(reference.referenceId) ?? null,
+    }),
+  );
+  if (
+    sourceReferences.some(
+      (reference) =>
+        reference.ingestionMethod === "user_upload" && !reference.objectKey,
+    )
+  ) {
+    throw new ApiError(
+      409,
+      "SOURCE_ARTIFACT_UNAVAILABLE",
+      "등록한 자료 파일을 찾을 수 없습니다. 자료를 다시 올려주세요.",
+    );
+  }
   const payload = workflowPayload({
     context: input.context,
     plan: input.plan,
     jobId,
     runId,
     attempt: 1,
+    sourceReferences,
   });
   await client.query(
     `INSERT INTO workflow_job (
@@ -1597,11 +2047,29 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
       "자료 수집 결과 형식이 올바르지 않습니다.",
     );
   }
+  if (payload.sources.length === 0) {
+    throw new ApiError(
+      422,
+      "RESEARCH_NO_SOURCES",
+      "수집된 원문이 없어 작업을 완료할 수 없습니다.",
+    );
+  }
+  if (payload.candidates.length === 0 || payload.evidence.length === 0) {
+    throw new ApiError(
+      422,
+      "RESEARCH_EVIDENCE_EMPTY",
+      "검증 가능한 Evidence가 없어 작업을 완료할 수 없습니다.",
+    );
+  }
   const sourceKeys = new Set(payload.sources.map((source) => source.sourceKey));
+  const candidateKeys = new Set(
+    payload.candidates.map((candidate) => candidate.candidateKey),
+  );
   if (
     payload.evidence.some(
       (item) =>
         !sourceKeys.has(item.sourceKey) ||
+        !candidateKeys.has(item.candidateKey) ||
         !["passed", "failed", "needs_review"].includes(item.machineStatus),
     )
   ) {
@@ -1667,9 +2135,15 @@ async function recomputeStageGate(
     evidence_ids: string[];
     required: boolean;
     critical_numeric: boolean;
+    source_version_ids: string[];
   }>(
     `SELECT result_id, question_id, target_id, title, one_line_value, stance,
-       machine_status, exception_status, evidence_ids, required, critical_numeric
+       machine_status, exception_status, evidence_ids, required, critical_numeric,
+       COALESCE(ARRAY(
+         SELECT DISTINCT e.source_version_id::text
+         FROM evidence e
+         WHERE e.evidence_id = ANY(validation_result.evidence_ids)
+       ), '{}'::text[]) AS source_version_ids
      FROM validation_result
      WHERE project_id = $1
        AND exception_status <> 'SUPERSEDED'`,
@@ -1705,7 +2179,9 @@ async function recomputeStageGate(
           (count, result) => count + result.evidence_ids.length,
           0,
         ),
-        sourceCount: new Set(usable.flatMap((result) => result.evidence_ids)).size,
+        sourceCount: new Set(
+          usable.flatMap((result) => result.source_version_ids),
+        ).size,
         criticalNumericFailed: questionResults.some(
           (result) =>
             result.critical_numeric && result.machine_status !== "passed",

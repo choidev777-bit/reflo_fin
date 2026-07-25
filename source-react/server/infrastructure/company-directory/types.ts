@@ -2,7 +2,7 @@ export type ExchangeCode = "KOSPI" | "KOSDAQ" | "KONEX";
 
 export type DirectoryCompany = {
   companyId: string;
-  corpCode: null;
+  corpCode: string | null;
   name: string;
   ticker: string;
   exchange: ExchangeCode;

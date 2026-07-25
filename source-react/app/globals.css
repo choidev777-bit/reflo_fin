@@ -10563,9 +10563,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-weight: 700;
 }
 
-.phase4-materials textarea {
+.phase4-material-form {
+  display: grid;
+  grid-template-columns: minmax(120px, .7fr) minmax(220px, 1.6fr) minmax(150px, .8fr);
+  gap: 12px;
+}
+
+.phase4-material-form > label,
+.phase4-material-form fieldset {
+  min-width: 0;
+  margin: 0;
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.phase4-material-form > label:last-child {
+  grid-column: 2 / -1;
+}
+
+.phase4-material-form input,
+.phase4-material-form select {
   width: 100%;
-  min-height: 112px;
+  min-height: 44px;
+  margin-top: 6px;
   padding: 12px;
   border: 1px solid var(--p4-line);
   border-radius: 9px;
@@ -10573,17 +10594,93 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--p4-ink);
   font: inherit;
   font-size: 12px;
-  line-height: 1.55;
-  resize: vertical;
 }
 
-.phase4-materials textarea:focus {
+.phase4-material-form input:focus,
+.phase4-material-form select:focus {
   border-color: var(--p4-lime-deep);
   outline: 3px solid rgba(117, 169, 0, .14);
 }
 
+.phase4-material-form fieldset {
+  padding: 0;
+  border: 0;
+}
+
+.phase4-material-form fieldset label {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 14px;
+  color: var(--p4-ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.phase4-material-form fieldset input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
 .phase4-materials > button {
   margin-top: 10px;
+}
+
+.phase4-material-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phase4-material-list li {
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 9px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phase4-material-list li div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.phase4-material-list strong {
+  color: var(--p4-lime-deep);
+  font-size: 10px;
+}
+
+.phase4-material-list span {
+  color: var(--p4-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.phase4-material-list small {
+  overflow: hidden;
+  color: var(--p4-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase4-material-list button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: #b53731;
+  cursor: pointer;
 }
 
 .phase4-excel-list {
@@ -11706,6 +11803,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   }
   .phase4-excel-list > article > header span {
     grid-column: 1 / -1;
+  }
+  .phase4-material-form {
+    grid-template-columns: 1fr;
+  }
+  .phase4-material-form > label:last-child {
+    grid-column: auto;
+  }
+  .phase4-material-list li {
+    align-items: stretch;
+    flex-direction: column;
   }
   .phase4-job {
     grid-template-columns: 1fr auto;

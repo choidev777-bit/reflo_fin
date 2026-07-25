@@ -61,6 +61,21 @@ export type PlanValidationIssue = {
   message: string;
 };
 
+export type ResearchSourceReference = {
+  referenceId: string;
+  sourceType: Extract<SourceType, "COMPANY_IR" | "NEWS" | "USER_MATERIAL">;
+  ingestionMethod: "user_upload" | "user_url";
+  title: string;
+  publisher: string;
+  publishedAt: string | null;
+  canonicalUrl: string | null;
+  artifactId: string | null;
+  originalFilename: string | null;
+  mediaType: string | null;
+  byteSize: number | null;
+  sha256: string | null;
+};
+
 export type ResearchJob = {
   jobId: string;
   researchRunId: string;
@@ -107,6 +122,7 @@ export type ResearchPlanWorkspace = {
     questions: PlanQuestion[];
     excelTargets: ExcelTarget[];
     userUrls: string[];
+    sourceReferences: ResearchSourceReference[];
     validationSummary: {
       valid: boolean;
       issues: PlanValidationIssue[];

@@ -15,6 +15,7 @@ import type {
   PlanQuestion,
   ResearchJob,
   ResearchPlanWorkspace,
+  ResearchSourceReference,
   SourceType,
 } from "./types";
 
@@ -27,7 +28,17 @@ function message(error: unknown): string {
     : "요청을 처리하지 못했습니다. 다시 시도해주세요.";
 }
 
-function methodLabel(value: string | undefined): string {
+function methodLabel(
+  value: string | undefined,
+  sourceType?: SourceType,
+): string {
+  if (
+    sourceType === "COMPANY_IR" ||
+    sourceType === "NEWS" ||
+    sourceType === "USER_MATERIAL"
+  ) {
+    return "사용자 제공 원문 + AI 해석";
+  }
   if (value === "code") return "코드 수집";
   if (value === "code_then_agent") return "코드 수집 후 AI 해석";
   return "AI 해석";
@@ -58,7 +69,18 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     "bulk" | { questionId: string } | null
   >(null);
   const [sourceDraft, setSourceDraft] = useState<SourceType[]>([]);
-  const [urlDraft, setUrlDraft] = useState("");
+  const [materialType, setMaterialType] = useState<
+    ResearchSourceReference["sourceType"]
+  >("COMPANY_IR");
+  const [materialMethod, setMaterialMethod] = useState<"user_upload" | "user_url">(
+    "user_upload",
+  );
+  const [materialTitle, setMaterialTitle] = useState("");
+  const [materialPublishedAt, setMaterialPublishedAt] = useState("");
+  const [materialUrl, setMaterialUrl] = useState("");
+  const [materialFile, setMaterialFile] = useState<File | null>(null);
+  const [materialSaving, setMaterialSaving] = useState(false);
+  const materialFileInputRef = useRef<HTMLInputElement | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [job, setJob] = useState<ResearchJob | null>(null);
@@ -71,7 +93,6 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
       );
       setWorkspace(next);
       setJob(next.activeJob);
-      setUrlDraft(next.plan.userUrls.join("\n"));
       setPageError("");
       setSaveState("saved");
     } catch (error) {
@@ -164,7 +185,6 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
               }
             : current,
         );
-        setUrlDraft(saved.userUrls.join("\n"));
         setSaveState("saved");
         setPageError("");
       } catch (error) {
@@ -221,15 +241,130 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     }
   };
 
-  const saveUrls = async () => {
-    const urls = urlDraft
-      .split(/\r?\n/)
-      .map((value) => value.trim())
-      .filter(Boolean);
+  const saveMaterial = async () => {
+    if (!workspace || !session.csrfToken) return;
+    if (!materialTitle.trim()) {
+      setPageError("자료명을 입력해주세요.");
+      return;
+    }
+    if (
+      (materialType === "COMPANY_IR" || materialType === "NEWS") &&
+      !materialPublishedAt
+    ) {
+      setPageError("자료 발행일을 입력해주세요.");
+      return;
+    }
+    if (materialMethod === "user_upload" && !materialFile) {
+      setPageError("등록할 PDF를 선택해주세요.");
+      return;
+    }
+    if (materialMethod === "user_url" && !materialUrl.trim()) {
+      setPageError("공식 원문 URL을 입력해주세요.");
+      return;
+    }
+    setMaterialSaving(true);
     try {
-      await saveChanges([{ op: "set_user_urls", urls }]);
-    } catch {
-      // The textarea is intentionally preserved.
+      const response =
+        materialMethod === "user_upload"
+          ? await (() => {
+              const form = new FormData();
+              form.set("expectedVersion", String(workspace.plan.version));
+              form.set("sourceType", materialType);
+              form.set("title", materialTitle.trim());
+              form.set("publishedAt", materialPublishedAt);
+              if (materialFile) form.set("file", materialFile);
+              return apiJson<{
+                version: number;
+                sourceReferences: ResearchSourceReference[];
+                validationSummary: ResearchPlanWorkspace["plan"]["validationSummary"];
+                lastSavedAt: string;
+              }>(`/api/projects/${projectId}/research-plan/materials`, {
+                method: "POST",
+                headers: { "X-CSRF-Token": session.csrfToken },
+                body: form,
+              });
+            })()
+          : await apiJson<{
+              version: number;
+              sourceReferences: ResearchSourceReference[];
+              validationSummary: ResearchPlanWorkspace["plan"]["validationSummary"];
+              lastSavedAt: string;
+            }>(`/api/projects/${projectId}/research-plan/materials`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": session.csrfToken,
+              },
+              body: JSON.stringify({
+                expectedVersion: workspace.plan.version,
+                sourceType: materialType,
+                title: materialTitle.trim(),
+                publishedAt: materialPublishedAt || null,
+                url: materialUrl.trim(),
+              }),
+            });
+      setWorkspace((current) =>
+        current
+          ? {
+              ...current,
+              plan: { ...current.plan, ...response, status: "draft" },
+            }
+          : current,
+      );
+      setMaterialTitle("");
+      setMaterialPublishedAt("");
+      setMaterialUrl("");
+      setMaterialFile(null);
+      if (materialFileInputRef.current) {
+        materialFileInputRef.current.value = "";
+      }
+      setJob(null);
+      setSaveState("saved");
+      setPageError("");
+    } catch (error) {
+      setPageError(message(error));
+      setSaveState(
+        error instanceof ClientApiError && error.status === 409
+          ? "conflict"
+          : "error",
+      );
+    } finally {
+      setMaterialSaving(false);
+    }
+  };
+
+  const removeMaterial = async (referenceId: string) => {
+    if (!workspace || !session.csrfToken) return;
+    try {
+      const response = await apiJson<{
+        version: number;
+        sourceReferences: ResearchSourceReference[];
+        validationSummary: ResearchPlanWorkspace["plan"]["validationSummary"];
+        lastSavedAt: string;
+      }>(
+        `/api/projects/${projectId}/research-plan/materials/${referenceId}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": session.csrfToken,
+          },
+          body: JSON.stringify({ expectedVersion: workspace.plan.version }),
+        },
+      );
+      setWorkspace((current) =>
+        current
+          ? {
+              ...current,
+              plan: { ...current.plan, ...response, status: "draft" },
+            }
+          : current,
+      );
+      setJob(null);
+      setSaveState("saved");
+      setPageError("");
+    } catch (error) {
+      setPageError(message(error));
     }
   };
 
@@ -384,7 +519,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
             <button
               type="button"
               disabled={saveState === "saving" || saveState === "saved"}
-              onClick={() => void saveUrls()}
+              onClick={() => void saveMaterial()}
             >
               임시 저장
             </button>
@@ -599,7 +734,10 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                         {question.sourceBindingIds.map((source) => (
                           <span key={source}>
                             {sourceLabels.get(source)} ·{" "}
-                            {methodLabel(question.collectionMethods[source])}
+                            {methodLabel(
+                              question.collectionMethods[source],
+                              source,
+                            )}
                           </span>
                         ))}
                       </dd>
@@ -630,33 +768,178 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
             <section className="phase4-materials">
               <header>
                 <div>
-                  <h2>사용자 공개 자료 URL</h2>
+                  <h2>사용자 제공 원문</h2>
                   <p>
-                    공개된 원문 URL만 서버에서 안전하게 수집합니다. 한 줄에
-                    하나씩 입력하세요.
+                    기업 IR은 공식 PDF를 올리거나 공식 IR URL을 연결해야
+                    합니다. 등록한 유형과 출처 권위는 Evidence에 그대로
+                    기록됩니다.
                   </p>
                 </div>
                 <span>
-                  {workspace.plan.userUrls.length} / {workspace.policy.urlLimit}
+                  {
+                    workspace.plan.sourceReferences.filter(
+                      (reference) =>
+                        reference.ingestionMethod === "user_upload",
+                    ).length
+                  }{" "}
+                  / {workspace.policy.fileLimit} PDF ·{" "}
+                  {
+                    workspace.plan.sourceReferences.filter(
+                      (reference) => reference.ingestionMethod === "user_url",
+                    ).length
+                  }{" "}
+                  / {workspace.policy.urlLimit} URL
                 </span>
               </header>
-              <textarea
-                aria-label="사용자 공개 자료 URL"
-                value={urlDraft}
-                disabled={activeJob}
-                onChange={(event) => {
-                  setUrlDraft(event.target.value);
-                  setSaveState("idle");
-                }}
-                placeholder="https://company.example.com/ir/document"
-              />
+              <div className="phase4-material-form">
+                <label>
+                  자료 유형
+                  <select
+                    value={materialType}
+                    disabled={activeJob || materialSaving}
+                    onChange={(event) => {
+                      const next = event.target
+                        .value as ResearchSourceReference["sourceType"];
+                      setMaterialType(next);
+                      if (next === "NEWS") setMaterialMethod("user_url");
+                      setSaveState("idle");
+                    }}
+                  >
+                    <option value="COMPANY_IR">기업 IR</option>
+                    <option value="NEWS">뉴스 원문</option>
+                    <option value="USER_MATERIAL">사용자 자료</option>
+                  </select>
+                </label>
+                <label>
+                  자료명
+                  <input
+                    value={materialTitle}
+                    disabled={activeJob || materialSaving}
+                    maxLength={200}
+                    onChange={(event) => {
+                      setMaterialTitle(event.target.value);
+                      setSaveState("idle");
+                    }}
+                    placeholder="2026년 2분기 실적발표 자료"
+                  />
+                </label>
+                <label>
+                  발행일
+                  <input
+                    type="date"
+                    value={materialPublishedAt}
+                    max={workspace.project.cutoffDate}
+                    required={materialType !== "USER_MATERIAL"}
+                    disabled={activeJob || materialSaving}
+                    onChange={(event) => {
+                      setMaterialPublishedAt(event.target.value);
+                      setSaveState("idle");
+                    }}
+                  />
+                </label>
+                <fieldset>
+                  <legend>연결 방식</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="material-method"
+                      value="user_upload"
+                      checked={materialMethod === "user_upload"}
+                      disabled={
+                        activeJob || materialSaving || materialType === "NEWS"
+                      }
+                      onChange={() => {
+                        setMaterialMethod("user_upload");
+                        setSaveState("idle");
+                      }}
+                    />
+                    PDF 업로드
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="material-method"
+                      value="user_url"
+                      checked={materialMethod === "user_url"}
+                      disabled={activeJob || materialSaving}
+                      onChange={() => {
+                        setMaterialMethod("user_url");
+                        setSaveState("idle");
+                      }}
+                    />
+                    공식 URL
+                  </label>
+                </fieldset>
+                {materialMethod === "user_upload" ? (
+                  <label>
+                    PDF 파일
+                    <input
+                      ref={materialFileInputRef}
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      disabled={activeJob || materialSaving}
+                      onChange={(event) => {
+                        setMaterialFile(event.target.files?.[0] ?? null);
+                        setSaveState("idle");
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    공식 원문 URL
+                    <input
+                      type="url"
+                      value={materialUrl}
+                      disabled={activeJob || materialSaving}
+                      onChange={(event) => {
+                        setMaterialUrl(event.target.value);
+                        setSaveState("idle");
+                      }}
+                      placeholder="https://company.example.com/ir/document.pdf"
+                    />
+                  </label>
+                )}
+              </div>
               <button
                 type="button"
-                disabled={activeJob || saveState === "saving"}
-                onClick={() => void saveUrls()}
+                disabled={activeJob || materialSaving}
+                onClick={() => void saveMaterial()}
               >
-                URL 저장
+                {materialSaving ? "보안 검사 중" : "자료 연결"}
               </button>
+              {workspace.plan.sourceReferences.length > 0 && (
+                <ul className="phase4-material-list">
+                  {workspace.plan.sourceReferences.map((reference) => (
+                    <li key={reference.referenceId}>
+                      <div>
+                        <strong>
+                          {reference.sourceType === "COMPANY_IR"
+                            ? "사용자 제공 기업 IR"
+                            : reference.sourceType === "NEWS"
+                              ? "사용자 제공 뉴스 원문"
+                              : "사용자 제공 자료"}
+                        </strong>
+                        <span>{reference.title}</span>
+                        <small>
+                          {reference.ingestionMethod === "user_upload"
+                            ? reference.originalFilename
+                            : reference.canonicalUrl}
+                          {reference.publishedAt
+                            ? ` · ${new Date(reference.publishedAt).toLocaleDateString("ko-KR")}`
+                            : ""}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={activeJob || materialSaving}
+                        onClick={() => void removeMaterial(reference.referenceId)}
+                      >
+                        제거
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           </section>
         ) : (

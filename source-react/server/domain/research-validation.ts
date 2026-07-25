@@ -59,10 +59,29 @@ export type ResearchExcelTarget = {
   excludedReason: string | null;
 };
 
+export type ResearchSourceReference = {
+  referenceId: string;
+  sourceType: Extract<
+    ResearchSourceType,
+    "COMPANY_IR" | "NEWS" | "USER_MATERIAL"
+  >;
+  ingestionMethod: "user_upload" | "user_url";
+  title: string;
+  publisher: string;
+  publishedAt: string | null;
+  canonicalUrl: string | null;
+  artifactId: string | null;
+  originalFilename: string | null;
+  mediaType: string | null;
+  byteSize: number | null;
+  sha256: string | null;
+};
+
 export type ResearchPlanSnapshot = {
   questions: ResearchPlanQuestion[];
   excelTargets: ResearchExcelTarget[];
   userUrls: string[];
+  sourceReferences?: ResearchSourceReference[];
 };
 
 export type PlanValidationIssue = {
@@ -253,6 +272,7 @@ export function validateResearchPlan(
   snapshot: ResearchPlanSnapshot,
 ): PlanValidationIssue[] {
   const issues: PlanValidationIssue[] = [];
+  const references = snapshot.sourceReferences ?? [];
   const includedQuestions = snapshot.questions.filter((question) => question.included);
   if (includedQuestions.length < 3 || includedQuestions.length > 5) {
     issues.push({
@@ -302,6 +322,15 @@ export function validateResearchPlan(
           message: "출처별 수집 방식을 확인해주세요.",
         });
       }
+      if (sourceType === "FNGUIDE_CONSENSUS") {
+        issues.push({
+          code: "FNGUIDE_SOURCE_UNAVAILABLE",
+          targetId: question.questionId,
+          category: "material",
+          message:
+            "FnGuide 자동 수집은 현재 지원하지 않습니다. 다른 공식 출처를 선택해주세요.",
+        });
+      }
     }
   }
   for (const target of snapshot.excelTargets) {
@@ -346,6 +375,44 @@ export function validateResearchPlan(
       category: "material",
       message: "URL은 최대 20개까지 등록할 수 있습니다.",
     });
+  }
+  const selectedManualTypes = new Set<ResearchSourceReference["sourceType"]>();
+  for (const question of includedQuestions) {
+    for (const sourceType of question.sourceBindingIds) {
+      if (
+        sourceType === "COMPANY_IR" ||
+        sourceType === "NEWS" ||
+        sourceType === "USER_MATERIAL"
+      ) {
+        selectedManualTypes.add(sourceType);
+      }
+    }
+  }
+  for (const target of snapshot.excelTargets.filter((item) => item.included)) {
+    for (const policy of target.sourcePolicy) {
+      if (
+        policy.sourceType === "COMPANY_IR" ||
+        policy.sourceType === "NEWS" ||
+        policy.sourceType === "USER_MATERIAL"
+      ) {
+        selectedManualTypes.add(policy.sourceType);
+      }
+    }
+  }
+  for (const sourceType of selectedManualTypes) {
+    if (!references.some((reference) => reference.sourceType === sourceType)) {
+      issues.push({
+        code: "SOURCE_MATERIAL_REQUIRED",
+        targetId: sourceType,
+        category: "material",
+        message:
+          sourceType === "COMPANY_IR"
+            ? "기업 IR 출처를 사용하려면 공식 PDF를 올리거나 공식 IR URL을 입력해주세요."
+            : sourceType === "NEWS"
+              ? "뉴스 출처를 사용하려면 실제 기사 원문 URL을 입력해주세요."
+              : "사용자 자료 출처를 사용하려면 PDF를 올리거나 공개 원문 URL을 입력해주세요.",
+      });
+    }
   }
   return issues;
 }
