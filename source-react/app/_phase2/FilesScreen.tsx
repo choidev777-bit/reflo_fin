@@ -330,7 +330,12 @@ function ResultDialog({
   ) => Promise<void>;
 }) {
   const [tab, setTab] = useState<"pdf" | "excel" | "mapping">("pdf");
-  const mappingEntries = inspection.mappingSet?.entries ?? [];
+  const mappingEntries = (inspection.mappingSet?.entries ?? []).filter(
+    (entry) => entry.metric !== "investment_opinion",
+  );
+  const visibleBindingCount = mappingEntries.filter(
+    (entry) => entry.selectedCandidateId,
+  ).length;
   const analysis = inspection.analysis;
   return (
     <div
@@ -492,7 +497,7 @@ function ResultDialog({
                   <dt>연결 / 전체 슬롯</dt>
                   <dd>
                     {inspection.mappingSet
-                      ? `${inspection.mappingSet.summary.bindingCount} / ${mappingEntries.length}`
+                      ? `${visibleBindingCount} / ${mappingEntries.length}`
                       : "—"}
                   </dd>
                 </div>

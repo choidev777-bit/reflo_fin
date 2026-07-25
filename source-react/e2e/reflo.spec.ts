@@ -313,6 +313,7 @@ test("Phase 2 fixture 업로드 → 격리 검사 → PDF·Excel 분석 → 결�
   await expect(page.getByText("시트·수식·편집 셀·모델 구조")).toBeVisible();
   await page.getByRole("tab", { name: "PDF·Excel 연결" }).click();
   await expect(page.getByText("PDF 구성과 Excel 값 연결")).toBeVisible();
+  await expect(page.getByText("투자의견", { exact: true })).toHaveCount(0);
   await expect(page.getByText("0개", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "매핑 보정 저장" }).click();
   await expect(page.getByText("v2", { exact: true })).toBeVisible();
