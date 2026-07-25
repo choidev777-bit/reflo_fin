@@ -15,6 +15,8 @@
     "calculationStatus",
     "sheets",
     "editableCells",
+    "candidateCells",
+    "candidateRanges",
     "externalLinks",
     "warnings",
     "tool"
@@ -64,6 +66,18 @@
         "$ref": "#/$defs/EditableCell"
       }
     },
+    "candidateCells": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CandidateCell"
+      }
+    },
+    "candidateRanges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CandidateRange"
+      }
+    },
     "externalLinks": {
       "type": "array",
       "items": {
@@ -80,6 +94,21 @@
       "type": "array",
       "items": {
         "$ref": "common.schema.json#/$defs/Warning"
+      }
+    },
+    "calculationErrors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CalculationError"
+      }
+    },
+    "functions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9._]*$",
+        "maxLength": 100
       }
     },
     "tool": {
@@ -214,6 +243,155 @@
         "label": {
           "type": "string",
           "maxLength": 500
+        }
+      }
+    },
+    "CandidateCell": {
+      "title": "CandidateCell",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "sheetId",
+        "sheetName",
+        "address",
+        "valueType",
+        "displayValue",
+        "numberFormat",
+        "label",
+        "formula",
+        "styleFingerprint",
+        "structureFingerprint"
+      ],
+      "properties": {
+        "candidateId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "address": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "string",
+            "boolean",
+            "date",
+            "blank",
+            "error"
+          ]
+        },
+        "displayValue": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "rawValue": {},
+        "numberFormat": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "formula": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 10000
+        },
+        "styleFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "CandidateRange": {
+      "title": "CandidateRange",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "sheetId",
+        "sheetName",
+        "range",
+        "label",
+        "rowCount",
+        "columnCount",
+        "structureFingerprint"
+      ],
+      "properties": {
+        "candidateId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sheetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "range": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "rowCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "columnCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "CalculationError": {
+      "title": "CalculationError",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetName",
+        "address",
+        "code"
+      ],
+      "properties": {
+        "sheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "address": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
         }
       }
     },

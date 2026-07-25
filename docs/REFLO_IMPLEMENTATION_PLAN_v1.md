@@ -64,15 +64,15 @@ npm run test:e2e
 
 **참고 문서:** [비동기 작업·파일 아키텍처](./REFLO_SYSTEM_ARCHITECTURE_v1.md#9-비동기-작업-흐름), [파일 API](./REFLO_API_SPEC_v1.md#83-step-02-파일-업로드검사), [파일 화면](./screens/04-files.md), [Worker Schema](../contracts/schemas/README.md), [TD-019](./REFLO_TECHNICAL_DECISIONS_v1.md#td-019-파일-입력-운영-정책)
 
-- [ ] 로컬 객체 저장소와 Temporal 구성
-- [ ] upload session과 제한된 업로드 URL 구현
-- [ ] quarantine, artifact와 file version 저장 구현
-- [ ] outbox dispatcher와 job projection 구현
-- [ ] Workflow Control Worker와 Internal Worker API 연결
-- [ ] Python PDF worker와 .NET Excel worker의 최소 실행 경로 구현
-- [ ] polling, retry, cancel과 reconciliation 구현
-- [ ] 파일 화면을 실제 API와 작업 상태에 연결
-- [ ] integration test와 E2E 작성
+- [x] 로컬 객체 저장소와 Temporal 구성
+- [x] upload session과 제한된 업로드 URL 구현
+- [x] quarantine, artifact와 file version 저장 구현
+- [x] outbox dispatcher와 job projection 구현
+- [x] Workflow Control Worker와 Internal Worker API 연결
+- [x] Python PDF worker와 .NET Excel worker의 상세 분석 경로 구현
+- [x] polling, retry, cancel과 reconciliation 구현
+- [x] 파일 화면을 실제 API와 작업 상태에 연결
+- [x] integration test와 E2E 작성
 
 **브라우저 확인:** fixture PDF·XLSX 업로드, 검사 진행, 실패·재시도·취소와 재시작 후 복구가 동작한다.
 

@@ -152,7 +152,7 @@ test("stale project version 저장은 409", async ({ page }) => {
     "버전 충돌 검증",
   );
   const projectId = created.project.projectId;
-  const companyResponse = await page.request.get("/api/companies/search?q=005930");
+  const companyResponse = await page.request.get("/api/companies/search?q=095340");
   const company = (await companyResponse.json()).items[0];
   const payload = {
     projectVersion: 1,
@@ -160,6 +160,7 @@ test("stale project version 저장은 409", async ({ page }) => {
       companyId: company.companyId,
       targetPeriod: { year: 2026, quarter: 2 },
       cutoffDate: "2026-07-17",
+      valuationMethod: "PER",
     },
     confirmDownstreamInvalidation: false,
   };
@@ -246,12 +247,13 @@ test("Phase 2 fixture 업로드 → 격리 검사 → PDF·Excel 분석 → 결�
     `Playwright Phase 2 ${Date.now()}`,
   );
   const projectId = created.project.projectId;
-  const companyResponse = await page.request.get("/api/companies/search?q=005930");
+  const companyResponse = await page.request.get("/api/companies/search?q=095340");
   const company = (await companyResponse.json()).items[0];
   const setup = {
     companyId: company.companyId,
     targetPeriod: { year: 2026, quarter: 2 },
     cutoffDate: "2026-07-17",
+    valuationMethod: "PER",
   };
   const saved = await page.request.patch(
     `/api/projects/${projectId}/process/setup`,
@@ -303,11 +305,17 @@ test("Phase 2 fixture 업로드 → 격리 검사 → PDF·Excel 분석 → 결�
 
   await page.getByRole("button", { name: "검사 실행" }).click();
   const resultHeading = page.getByRole("heading", {
-    name: "두 파일의 제작 호환성을 확인했습니다.",
+    name: "분석과 필수 매핑을 모두 확인했습니다.",
   });
   await expect(resultHeading).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("페이지·블록·슬롯·물리 객체")).toBeVisible();
   await page.getByRole("tab", { name: "Excel 모델" }).click();
-  await expect(page.getByText("시트·수식·사용 범위")).toBeVisible();
+  await expect(page.getByText("시트·수식·편집 셀·모델 구조")).toBeVisible();
+  await page.getByRole("tab", { name: "PDF·Excel 연결" }).click();
+  await expect(page.getByText("PDF 구성과 Excel 값 연결")).toBeVisible();
+  await expect(page.getByText("0개", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "매핑 보정 저장" }).click();
+  await expect(page.getByText("v2", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /결과 확정 · 다음/ }).click();
   await expect(page).toHaveURL(/\/process\/hypothesis$/);
   assertNoRuntimeErrors();

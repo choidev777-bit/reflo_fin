@@ -56,11 +56,38 @@ function withIds(
   return [...unique.values()];
 }
 
+function testDirectory(): Omit<DirectoryCompany, "companyId">[] {
+  return [
+    {
+      corpCode: null,
+      name: "삼성전자",
+      ticker: "005930",
+      exchange: "KOSPI",
+      industry: "반도체 제조업",
+      listed: true,
+      mvpEligible: true,
+      ineligibilityReason: null,
+    },
+    {
+      corpCode: null,
+      name: "ISC",
+      ticker: "095340",
+      exchange: "KOSDAQ",
+      industry: "반도체 부품 제조업",
+      listed: true,
+      mvpEligible: true,
+      ineligibilityReason: null,
+    },
+  ];
+}
+
 async function loadDirectory(): Promise<DirectoryState> {
   let provider: CompanyDirectoryProvider = "krx-kind";
   let companies: Omit<DirectoryCompany, "companyId">[];
 
-  if (hasKiwoomCredentials()) {
+  if (process.env.REFLO_TEST_AUTH_ENABLED === "1") {
+    companies = testDirectory();
+  } else if (hasKiwoomCredentials()) {
     try {
       companies = await fetchKiwoomCompanies();
       provider = "kiwoom";

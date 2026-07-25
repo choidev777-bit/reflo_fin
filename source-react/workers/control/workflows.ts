@@ -21,22 +21,10 @@ const scanActivities = proxyActivities<typeof activities>({
   },
 });
 
-const pdfActivities = proxyActivities<typeof activities>({
-  taskQueue: "pdf-analysis",
-  startToCloseTimeout: "10 minutes",
-  heartbeatTimeout: "30 seconds",
-  retry: {
-    initialInterval: "3 seconds",
-    backoffCoefficient: 2,
-    maximumInterval: "1 minute",
-    maximumAttempts: 3,
-  },
-});
-
-const excelActivities = proxyActivities<typeof activities>({
-  taskQueue: "excel-calc",
-  startToCloseTimeout: "15 minutes",
-  heartbeatTimeout: "30 seconds",
+const inspectionActivities = proxyActivities<typeof activities>({
+  taskQueue: "file-scan",
+  startToCloseTimeout: "20 minutes",
+  heartbeatTimeout: "5 minutes",
   retry: {
     initialInterval: "3 seconds",
     backoffCoefficient: 2,
@@ -72,27 +60,7 @@ export async function fileInspectionWorkflow(
   input: FileInspectionWorkflowInput,
 ): Promise<void> {
   try {
-    await scanActivities.recordJobProgress(
-      input.jobId,
-      input.jobAttempt,
-      1,
-      "analysis_started",
-      10,
-      "PDF와 Excel 분석을 시작했습니다.",
-    );
-    const [pdf, workbook] = await Promise.all([
-      pdfActivities.analyzePdf(input),
-      excelActivities.analyzeExcel(input),
-    ]);
-    await scanActivities.recordJobProgress(
-      input.jobId,
-      input.jobAttempt,
-      4,
-      "mapping",
-      85,
-      "PDF와 Excel 연결을 확인하고 있습니다.",
-    );
-    await scanActivities.finalizeInspection(input, pdf, workbook);
+    await inspectionActivities.inspectAndFinalize(input);
   } catch (error) {
     await CancellationScope.nonCancellable(async () => {
       if (isCancellation(error)) {

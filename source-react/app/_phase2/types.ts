@@ -33,12 +33,67 @@ export type InspectionProjection = {
   heartbeatAt: string | null;
   retryable: boolean;
   attempt: number;
-  outcome: "passed" | "failed" | null;
+  outcome: "passed" | "blocked" | "failed" | null;
   issues: InspectionIssue[];
   mappingSet: {
     versionId: string;
     version: number;
     status: "pending" | "confirmed" | "blocked";
+    summary: {
+      bindingCount: number;
+      requiredSlotCount: number;
+      confirmedBindingCount: number;
+      unmappedRequiredCount: number;
+    };
+    entries: Array<{
+      entryId: string;
+      slotId: string;
+      metric: string;
+      kind: "scalar" | "table" | "chart";
+      valueType: string;
+      required: boolean;
+      status: "suggested" | "confirmed" | "unmapped" | "invalid";
+      confidence: number | null;
+      source: unknown;
+      selectedCandidateId: string | null;
+      candidates: Array<{
+        candidateId: string;
+        sourceType: "cell" | "range" | "chart";
+        sheetId: string;
+        sheetName: string;
+        address: string;
+        label: string | null;
+        score: number;
+        reasonCodes: string[];
+        source: unknown;
+        selected: boolean;
+      }>;
+    }>;
+  } | null;
+  analysis: {
+    pdf: {
+      pageCount: number;
+      blockCount: number;
+      slotCount: number;
+      objectCount: number;
+      fontCount: number;
+      imageCount: number;
+      tableCount: number;
+      chartCount: number;
+      warningCount: number;
+    };
+    workbook: {
+      sheetCount: number;
+      hiddenSheetCount: number;
+      usedCellCount: number;
+      formulaCount: number;
+      editableCellCount: number;
+      mergedRangeCount: number;
+      chartCount: number;
+      tableCount: number;
+      externalLinkCount: number;
+      namedRangeCount: number;
+    };
   } | null;
   resultVersions: {
     template: number;

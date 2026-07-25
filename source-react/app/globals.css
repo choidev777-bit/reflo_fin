@@ -10029,7 +10029,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 .phase2-result-dialog {
-  width: min(760px, 100%);
+  width: min(860px, 100%);
   max-height: min(760px, calc(100vh - 48px));
   overflow: auto;
   border: 1px solid #e4e8e1;
@@ -10155,6 +10155,83 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-weight: 700;
 }
 
+.phase2-mapping-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.phase2-mapping-editor > label {
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) minmax(260px, 1.3fr);
+  gap: 14px;
+  align-items: center;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid #e4e8e1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.phase2-mapping-editor > label.needs-selection {
+  border-color: #c47d70;
+}
+
+.phase2-mapping-editor > label > span {
+  display: grid;
+  gap: 4px;
+}
+
+.phase2-mapping-editor > label b {
+  color: #111410;
+  font-size: 13px;
+}
+
+.phase2-mapping-editor > label small {
+  color: #697066;
+  font-size: 10px;
+}
+
+.phase2-mapping-editor select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 34px 0 12px;
+  border: 1px solid #d8ded4;
+  border-radius: 8px;
+  background: #fff;
+  color: #111410;
+  font: inherit;
+  font-size: 12px;
+}
+
+.phase2-mapping-save {
+  justify-self: end;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid #c8ff3d;
+  border-radius: 8px;
+  background: #c8ff3d;
+  color: #111410;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.phase2-mapping-save:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.phase2-mapping-empty {
+  padding: 14px;
+  border: 1px dashed #c8cec4;
+  border-radius: 10px;
+  background: #fff;
+  color: #697066;
+  font-size: 12px;
+}
+
 .phase2-issue-list {
   display: grid;
   gap: 8px;
@@ -10236,6 +10313,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   }
 
   .phase2-result-dialog > footer button {
+    width: 100%;
+  }
+
+  .phase2-mapping-editor > label {
+    grid-template-columns: 1fr;
+  }
+
+  .phase2-mapping-save {
     width: 100%;
   }
 }

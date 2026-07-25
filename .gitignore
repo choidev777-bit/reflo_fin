@@ -13,6 +13,8 @@
 **/.sites-runtime/
 **/*.tsbuildinfo
 **/*.log
+**/__pycache__/
+**/*.pyc
 **/playwright-report/
 **/test-results/
 

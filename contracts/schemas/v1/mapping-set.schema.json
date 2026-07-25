@@ -16,6 +16,7 @@
     "workbookStructureHash",
     "status",
     "bindings",
+    "candidates",
     "unmappedRequiredSlots",
     "warnings"
   ],
@@ -59,6 +60,12 @@
         "$ref": "#/$defs/Binding"
       }
     },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/MappingCandidate"
+      }
+    },
     "unmappedRequiredSlots": {
       "type": "array",
       "uniqueItems": true,
@@ -74,6 +81,66 @@
     }
   },
   "$defs": {
+    "MappingCandidate": {
+      "title": "MappingCandidate",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateId",
+        "slotId",
+        "kind",
+        "source",
+        "score",
+        "reasonCodes",
+        "selected"
+      ],
+      "properties": {
+        "candidateId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "cell",
+            "range",
+            "chart"
+          ]
+        },
+        "source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CellSource"
+            },
+            {
+              "$ref": "#/$defs/RangeSource"
+            }
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasonCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{2,99}$"
+          }
+        },
+        "selected": {
+          "type": "boolean"
+        }
+      }
+    },
     "CellSource": {
       "title": "CellSource",
       "type": "object",

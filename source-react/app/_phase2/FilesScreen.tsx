@@ -80,6 +80,22 @@ function phaseLabel(phase: string | null): string {
   );
 }
 
+const metricLabels: Record<string, string> = {
+  target_price: "목표주가",
+  current_price: "현재주가",
+  revenue: "매출액",
+  operating_profit: "영업이익",
+  net_income: "순이익",
+  eps: "Forward EPS",
+  per: "적용 PER",
+  investment_opinion: "투자의견",
+  quarterly_performance_table: "분기 실적 표",
+  segment_revenue_table: "부문별 매출 표",
+  financial_statements_table: "재무제표 표",
+  target_price_history_table: "목표주가 추이 표",
+  valuation_bridge_table: "밸류에이션 브리지",
+};
+
 async function sha256(file: File): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest))
@@ -217,19 +233,105 @@ function UploadCard({
   );
 }
 
+type MappingEntry = NonNullable<InspectionProjection["mappingSet"]>["entries"][number];
+
+function MappingEditor({
+  entries,
+  versionId,
+  saving,
+  onSave,
+}: {
+  entries: MappingEntry[];
+  versionId: string | undefined;
+  saving: boolean;
+  onSave: (
+    selections: Array<{ entryId: string; candidateId: string | null }>,
+  ) => Promise<void>;
+}) {
+  const [selections, setSelections] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      entries.map((entry) => [entry.entryId, entry.selectedCandidateId ?? ""]),
+    ),
+  );
+  return (
+    <div className="phase2-mapping-editor" data-mapping-version={versionId}>
+      {entries.map((entry) => (
+        <label
+          key={entry.entryId}
+          className={entry.required && !selections[entry.entryId] ? "needs-selection" : ""}
+        >
+          <span>
+            <b>{metricLabels[entry.metric] ?? entry.metric}</b>
+            <small>
+              {entry.required ? "필수" : "선택"} · {entry.kind}
+            </small>
+          </span>
+          <select
+            value={selections[entry.entryId] ?? ""}
+            onChange={(event) =>
+              setSelections((current) => ({
+                ...current,
+                [entry.entryId]: event.target.value,
+              }))
+            }
+          >
+            <option value="">원본을 선택하세요</option>
+            {entry.candidates.map((candidate) => (
+              <option key={candidate.candidateId} value={candidate.candidateId}>
+                {candidate.sheetName}!{candidate.address}
+                {candidate.label ? ` · ${candidate.label}` : ""}
+                {` · ${Math.round(candidate.score * 100)}%`}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+      {entries.length === 0 && (
+        <p className="phase2-mapping-empty">
+          PDF 또는 Excel 분석이 차단되어 매핑 후보를 만들지 못했습니다.
+        </p>
+      )}
+      {entries.length > 0 && (
+        <button
+          type="button"
+          className="phase2-mapping-save"
+          disabled={saving}
+          onClick={() =>
+            void onSave(
+              entries.map((entry) => ({
+                entryId: entry.entryId,
+                candidateId: selections[entry.entryId] || null,
+              })),
+            )
+          }
+        >
+          {saving ? "새 버전 저장 중" : "매핑 보정 저장"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ResultDialog({
   inspection,
   completing,
+  savingMapping,
   onClose,
   onComplete,
+  onSaveMapping,
 }: {
   inspection: InspectionProjection;
   completing: boolean;
+  savingMapping: boolean;
   onClose: () => void;
   onComplete: () => void;
+  onSaveMapping: (
+    selections: Array<{ entryId: string; candidateId: string | null }>,
+  ) => Promise<void>;
 }) {
   const [tab, setTab] = useState<"pdf" | "excel" | "mapping">("pdf");
-  const blocking = inspection.issues.filter((issue) => issue.severity === "blocking");
+  const mappingEntries = inspection.mappingSet?.entries ?? [];
+  const analysis = inspection.analysis;
   return (
     <div
       className="phase2-modal-backdrop"
@@ -246,10 +348,10 @@ function ResultDialog({
             <span>FILE INSPECTION</span>
             <h2 id="phase2-result-title">
               {inspection.outcome === "passed"
-                ? "두 파일의 제작 호환성을 확인했습니다."
-                : "차단 항목을 확인해주세요."}
+                ? "분석과 필수 매핑을 모두 확인했습니다."
+                : "확인이 필요한 분석·매핑 항목이 있습니다."}
             </h2>
-            <p>검사한 원본과 결과 버전은 프로젝트에 함께 보존됩니다.</p>
+            <p>원본, 상세 분석 IR, 매핑 버전은 프로젝트에 함께 보존됩니다.</p>
           </div>
           <button onClick={onClose} aria-label="검사 결과 닫기">
             ×
@@ -276,10 +378,10 @@ function ResultDialog({
           {tab === "pdf" && (
             <section>
               <span>PDF 분석 결과</span>
-              <h3>텍스트 구조와 페이지 템플릿</h3>
+              <h3>페이지·블록·슬롯·물리 객체</h3>
               <p>
-                원본 PDF의 텍스트 레이어, 암호화 여부, 지원하지 않는 동작과 페이지
-                한도를 검사했습니다.
+                페이지 좌표계와 텍스트, 벡터 경로, 이미지, 글꼴을 추출해 재사용할
+                템플릿 구조를 만들었습니다.
               </p>
               <dl>
                 <div>
@@ -287,8 +389,40 @@ function ResultDialog({
                   <dd>v{inspection.resultVersions?.template ?? "—"}</dd>
                 </div>
                 <div>
-                  <dt>차단 항목</dt>
-                  <dd>{blocking.length}건</dd>
+                  <dt>페이지</dt>
+                  <dd>{analysis?.pdf.pageCount ?? "—"}개</dd>
+                </div>
+                <div>
+                  <dt>블록 / 슬롯</dt>
+                  <dd>
+                    {analysis
+                      ? `${analysis.pdf.blockCount} / ${analysis.pdf.slotCount}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>물리 객체</dt>
+                  <dd>{analysis?.pdf.objectCount.toLocaleString() ?? "—"}개</dd>
+                </div>
+                <div>
+                  <dt>글꼴 / 이미지</dt>
+                  <dd>
+                    {analysis
+                      ? `${analysis.pdf.fontCount} / ${analysis.pdf.imageCount}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>표 / 차트</dt>
+                  <dd>
+                    {analysis
+                      ? `${analysis.pdf.tableCount} / ${analysis.pdf.chartCount}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>분석 경고</dt>
+                  <dd>{analysis?.pdf.warningCount ?? "—"}건</dd>
                 </div>
               </dl>
             </section>
@@ -296,10 +430,10 @@ function ResultDialog({
           {tab === "excel" && (
             <section>
               <span>Excel 분석 결과</span>
-              <h3>시트·수식·사용 범위</h3>
+              <h3>시트·수식·편집 셀·모델 구조</h3>
               <p>
-                실제 분석 workbook을 권위 계산 엔진으로 열어 외부 링크와 구조 한도를
-                확인했습니다.
+                workbook을 계산 엔진으로 열어 수식, 병합, 이름 범위, 표·차트,
+                편집 가능 셀과 외부 연결을 검사했습니다.
               </p>
               <dl>
                 <div>
@@ -307,8 +441,36 @@ function ResultDialog({
                   <dd>v{inspection.resultVersions?.workbook ?? "—"}</dd>
                 </div>
                 <div>
-                  <dt>호환 상태</dt>
-                  <dd>{inspection.outcome === "passed" ? "통과" : "확인 필요"}</dd>
+                  <dt>시트 / 숨김</dt>
+                  <dd>
+                    {analysis
+                      ? `${analysis.workbook.sheetCount} / ${analysis.workbook.hiddenSheetCount}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>사용 셀</dt>
+                  <dd>{analysis?.workbook.usedCellCount.toLocaleString() ?? "—"}개</dd>
+                </div>
+                <div>
+                  <dt>수식</dt>
+                  <dd>{analysis?.workbook.formulaCount.toLocaleString() ?? "—"}개</dd>
+                </div>
+                <div>
+                  <dt>입력 셀</dt>
+                  <dd>{analysis?.workbook.editableCellCount.toLocaleString() ?? "—"}개</dd>
+                </div>
+                <div>
+                  <dt>병합 / 이름 범위</dt>
+                  <dd>
+                    {analysis
+                      ? `${analysis.workbook.mergedRangeCount} / ${analysis.workbook.namedRangeCount}`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>외부 연결</dt>
+                  <dd>{analysis?.workbook.externalLinkCount ?? "—"}개</dd>
                 </div>
               </dl>
             </section>
@@ -318,8 +480,8 @@ function ResultDialog({
               <span>연결 결과</span>
               <h3>PDF 구성과 Excel 값 연결</h3>
               <p>
-                다음 단계에서 사용할 템플릿과 workbook 버전을 하나의 매핑 버전으로
-                고정합니다.
+                의미 슬롯별 Excel 셀·범위 후보와 신뢰도를 확인합니다. 필수 슬롯은
+                하나의 권위 원본이 선택되어야 합니다.
               </p>
               <dl>
                 <div>
@@ -327,14 +489,25 @@ function ResultDialog({
                   <dd>v{inspection.resultVersions?.mappingSet ?? "—"}</dd>
                 </div>
                 <div>
-                  <dt>상태</dt>
+                  <dt>연결 / 전체 슬롯</dt>
                   <dd>
-                    {inspection.mappingSet?.status === "confirmed"
-                      ? "확정"
-                      : "보정 필요"}
+                    {inspection.mappingSet
+                      ? `${inspection.mappingSet.summary.bindingCount} / ${mappingEntries.length}`
+                      : "—"}
                   </dd>
                 </div>
+                <div>
+                  <dt>미매핑 필수</dt>
+                  <dd>{inspection.mappingSet?.summary.unmappedRequiredCount ?? "—"}개</dd>
+                </div>
               </dl>
+              <MappingEditor
+                key={inspection.mappingSet?.versionId}
+                entries={mappingEntries}
+                versionId={inspection.mappingSet?.versionId}
+                saving={savingMapping}
+                onSave={onSaveMapping}
+              />
             </section>
           )}
           {inspection.issues.length > 0 && (
@@ -352,7 +525,9 @@ function ResultDialog({
           <span>
             {inspection.outcome === "passed"
               ? "결과를 확정하면 투자 의견·조사 질문 단계가 열립니다."
-              : "원인 파일을 교체한 뒤 새 검사를 실행하세요."}
+              : mappingEntries.length > 0
+                ? "필수 매핑을 모두 선택하면 다음 단계로 진행할 수 있습니다."
+                : "차단 원인을 해결한 파일로 교체한 뒤 새 검사를 실행하세요."}
           </span>
           {inspection.outcome === "passed" && (
             <button disabled={completing} onClick={onComplete}>
@@ -377,6 +552,7 @@ export function FilesScreen({ projectId }: { projectId: string }) {
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [savingMapping, setSavingMapping] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const xhrAbort = useRef<Partial<Record<FileRole, () => void>>>({});
 
@@ -685,6 +861,43 @@ export function FilesScreen({ projectId }: { projectId: string }) {
     }
   };
 
+  const saveMapping = async (
+    selections: Array<{ entryId: string; candidateId: string | null }>,
+  ) => {
+    if (
+      session.status !== "authenticated" ||
+      !bootstrap?.inspection?.mappingSet
+    ) {
+      return;
+    }
+    setSavingMapping(true);
+    try {
+      await apiJson(
+        `/api/projects/${projectId}/mapping-sets/${bootstrap.inspection.mappingSet.versionId}/revisions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": session.csrfToken,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+          body: JSON.stringify({
+            expectedVersion: bootstrap.inspection.mappingSet.version,
+            selections,
+          }),
+        },
+      );
+      await load();
+      setShowResult(true);
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : "매핑 보정을 저장하지 못했습니다.",
+      );
+    } finally {
+      setSavingMapping(false);
+    }
+  };
+
   if (!bootstrap) {
     return (
       <div className="phase1-page-loading" aria-label="파일 상태 불러오는 중">
@@ -910,10 +1123,13 @@ export function FilesScreen({ projectId }: { projectId: string }) {
       </div>
       {showResult && inspection?.outcome && (
         <ResultDialog
+          key={inspection.inspectionId}
           inspection={inspection}
           completing={completing}
+          savingMapping={savingMapping}
           onClose={() => setShowResult(false)}
           onComplete={() => void complete()}
+          onSaveMapping={saveMapping}
         />
       )}
     </div>

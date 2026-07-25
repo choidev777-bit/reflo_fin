@@ -13,6 +13,7 @@ import type {
   PdfInspectionResult,
   WorkbookInspectionResult,
 } from "./types";
+import { buildMappingSet } from "./mapping";
 
 const internalApiUrl =
   process.env.REFLO_INTERNAL_API_URL?.replace(/\/$/, "") ||
@@ -250,6 +251,45 @@ export async function analyzeExcel(
   );
 }
 
+export async function inspectAndFinalize(
+  input: FileInspectionWorkflowInput,
+): Promise<void> {
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    "analysis_started",
+    10,
+    "PDF와 Excel 상세 분석을 시작합니다.",
+  );
+  const pdfPromise = callIsolatedWorker<PdfInspectionResult>(
+    process.env.REFLO_PDF_WORKER_URL || "http://127.0.0.1:8091",
+    input.pdf.objectKey,
+  );
+  const workbookPromise = callIsolatedWorker<WorkbookInspectionResult>(
+    process.env.REFLO_EXCEL_WORKER_URL || "http://127.0.0.1:8092",
+    input.workbook.objectKey,
+  );
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    2,
+    "structure_analysis",
+    35,
+    "PDF 레이아웃과 Excel 계산 모델을 분석하고 있습니다.",
+  );
+  const [pdf, workbook] = await Promise.all([pdfPromise, workbookPromise]);
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    3,
+    "mapping",
+    80,
+    "PDF 슬롯과 Excel 원본 후보를 의미 단위로 매핑하고 있습니다.",
+  );
+  await finalizeInspection(input, pdf, workbook);
+}
+
 function descriptor(
   role: string,
   objectKey: string,
@@ -267,36 +307,85 @@ function descriptor(
   };
 }
 
+async function putInspectionArtifact(
+  objectKey: string,
+  bytes: Buffer,
+): Promise<{ objectVersion: string }> {
+  try {
+    return await putImmutableObject({
+      objectKey,
+      body: bytes,
+      mediaType: "application/json",
+    });
+  } catch (error) {
+    let existing: Buffer;
+    try {
+      existing = await readObjectBytes(objectKey);
+    } catch {
+      throw error;
+    }
+    const expectedHash = createHash("sha256").update(bytes).digest("hex");
+    const existingHash = createHash("sha256").update(existing).digest("hex");
+    if (expectedHash !== existingHash) {
+      throw new Error(`IMMUTABLE_ARTIFACT_CONFLICT:${objectKey}`, {
+        cause: error,
+      });
+    }
+    return { objectVersion: `sha256:${existingHash}` };
+  }
+}
+
 export async function finalizeInspection(
   input: FileInspectionWorkflowInput,
   pdf: PdfInspectionResult,
   workbook: WorkbookInspectionResult,
 ): Promise<void> {
-  const mapping = {
-    status:
-      pdf.compatible && workbook.compatible ? ("confirmed" as const) : ("blocked" as const),
-    slotCount: pdf.compatible && workbook.compatible ? Math.max(1, Math.min(24, workbook.sheetCount)) : 0,
-  };
+  const builtMapping =
+    pdf.compatible &&
+    workbook.compatible &&
+    pdf.templateIr &&
+    workbook.workbookAnalysis
+      ? buildMappingSet(pdf.templateIr, workbook.workbookAnalysis)
+      : null;
+  const mapping = builtMapping
+    ? {
+        ...builtMapping.summary,
+        mappingSet: builtMapping.mappingSet,
+        issues:
+          builtMapping.summary.unmappedRequiredCount > 0
+            ? [
+                {
+                  code: "REQUIRED_MAPPING_UNRESOLVED",
+                  severity: "blocking" as const,
+                  message: `필수 슬롯 ${builtMapping.summary.unmappedRequiredCount}개의 Excel 원본을 확인해야 합니다.`,
+                },
+              ]
+            : [],
+      }
+    : {
+        status: "blocked" as const,
+        slotCount: pdf.summary.slotCount ?? 0,
+        requiredSlotCount: pdf.summary.requiredSlotCount ?? 0,
+        bindingCount: 0,
+        confirmedBindingCount: 0,
+        unmappedRequiredCount: pdf.summary.requiredSlotCount ?? 0,
+        mappingSet: null,
+        issues: [
+          {
+            code: "MAPPING_INPUT_UNAVAILABLE",
+            severity: "blocking" as const,
+            message: "PDF 또는 Excel 분석이 차단되어 매핑을 생성하지 못했습니다.",
+          },
+        ],
+      };
   const prefix = `immutable/${input.projectId}/file-inspections/${input.inspectionId}`;
-  const pdfBytes = Buffer.from(JSON.stringify(pdf));
-  const workbookBytes = Buffer.from(JSON.stringify(workbook));
-  const mappingBytes = Buffer.from(JSON.stringify(mapping));
+  const pdfBytes = Buffer.from(JSON.stringify(pdf.templateIr));
+  const workbookBytes = Buffer.from(JSON.stringify(workbook.workbookAnalysis));
+  const mappingBytes = Buffer.from(JSON.stringify(mapping.mappingSet));
   const [pdfObject, workbookObject, mappingObject] = await Promise.all([
-    putImmutableObject({
-      objectKey: `${prefix}/template-ir.json`,
-      body: pdfBytes,
-      mediaType: "application/json",
-    }),
-    putImmutableObject({
-      objectKey: `${prefix}/workbook-analysis.json`,
-      body: workbookBytes,
-      mediaType: "application/json",
-    }),
-    putImmutableObject({
-      objectKey: `${prefix}/mapping-set.json`,
-      body: mappingBytes,
-      mediaType: "application/json",
-    }),
+    putInspectionArtifact(`${prefix}/template-ir.json`, pdfBytes),
+    putInspectionArtifact(`${prefix}/workbook-analysis.json`, workbookBytes),
+    putInspectionArtifact(`${prefix}/mapping-set.json`, mappingBytes),
   ]);
   await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
     schemaVersion: "1.0.0",

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES } from "../../domain/project";
@@ -8,6 +9,7 @@ import {
   createUploadUrl,
   deleteObject,
   objectStoreBucket,
+  putImmutableObject,
   verifyUploadedObject,
 } from "../object-storage/s3";
 
@@ -832,7 +834,7 @@ async function inspectionProjection(
     finished_at: Date | null;
     error_code: string | null;
     error_summary: string | null;
-    outcome: "passed" | "failed" | null;
+    outcome: "passed" | "blocked" | "failed" | null;
     issues_json: unknown;
     mapping_set_resource_version_id: string | null;
     template_version_no: string | null;
@@ -840,6 +842,29 @@ async function inspectionProjection(
     mapping_set_version_no: string | null;
     mapping_status: string;
     attempt: number;
+    pdf_page_count: number | null;
+    pdf_block_count: number | null;
+    pdf_slot_count: number | null;
+    pdf_object_count: number | null;
+    pdf_font_count: number | null;
+    pdf_image_count: number | null;
+    pdf_table_count: number | null;
+    pdf_chart_count: number | null;
+    pdf_warning_count: number | null;
+    workbook_sheet_count: number | null;
+    workbook_hidden_sheet_count: number | null;
+    workbook_used_cell_count: string | null;
+    workbook_formula_count: number | null;
+    workbook_editable_cell_count: number | null;
+    workbook_merged_range_count: number | null;
+    workbook_chart_count: number | null;
+    workbook_table_count: number | null;
+    workbook_external_link_count: number | null;
+    workbook_named_range_count: number | null;
+    mapping_binding_count: number | null;
+    mapping_required_slot_count: number | null;
+    mapping_confirmed_binding_count: number | null;
+    mapping_unmapped_required_count: number | null;
   }>(
     `SELECT fi.inspection_id, fi.job_id, wj.operation_status,
        wj.validity_status, wj.current_phase, wj.progress_percent,
@@ -847,9 +872,38 @@ async function inspectionProjection(
        wj.finished_at, wj.error_code, wj.error_summary, wj.attempt,
        fi.outcome, fi.issues_json, fi.mapping_set_resource_version_id,
        fi.template_version_no, fi.workbook_version_no,
-       fi.mapping_set_version_no, fi.mapping_status
+       fi.mapping_set_version_no, fi.mapping_status,
+       tiv.page_count AS pdf_page_count,
+       tiv.block_count AS pdf_block_count,
+       tiv.slot_count AS pdf_slot_count,
+       tiv.object_count AS pdf_object_count,
+       tiv.font_count AS pdf_font_count,
+       tiv.image_count AS pdf_image_count,
+       tiv.table_count AS pdf_table_count,
+       tiv.chart_count AS pdf_chart_count,
+       tiv.warning_count AS pdf_warning_count,
+       wv.sheet_count AS workbook_sheet_count,
+       wv.hidden_sheet_count AS workbook_hidden_sheet_count,
+       wv.used_cell_count AS workbook_used_cell_count,
+       wv.formula_count AS workbook_formula_count,
+       wv.editable_cell_count AS workbook_editable_cell_count,
+       wv.merged_range_count AS workbook_merged_range_count,
+       wv.chart_count AS workbook_chart_count,
+       wv.table_count AS workbook_table_count,
+       wv.external_link_count AS workbook_external_link_count,
+       wv.named_range_count AS workbook_named_range_count,
+       msv.binding_count AS mapping_binding_count,
+       msv.required_slot_count AS mapping_required_slot_count,
+       msv.confirmed_binding_count AS mapping_confirmed_binding_count,
+       msv.unmapped_required_count AS mapping_unmapped_required_count
      FROM file_inspection fi
      JOIN workflow_job wj ON wj.job_id = fi.job_id
+     LEFT JOIN template_ir_version tiv
+       ON tiv.resource_version_id = fi.template_resource_version_id
+     LEFT JOIN workbook_version wv
+       ON wv.resource_version_id = fi.workbook_resource_version_id
+     LEFT JOIN mapping_set_version msv
+       ON msv.resource_version_id = fi.mapping_set_resource_version_id
      WHERE fi.project_id = $1
        AND ($2::uuid IS NULL OR fi.inspection_id = $2)
      ORDER BY fi.created_at DESC
@@ -858,6 +912,109 @@ async function inspectionProjection(
   );
   const row = result.rows[0];
   if (!row) return null;
+  const mappingRows = row.mapping_set_resource_version_id
+    ? await client.query<{
+        mapping_entry_id: string;
+        slot_id: string;
+        semantic_metric: string;
+        binding_kind: "scalar" | "table" | "chart";
+        value_type: string;
+        required: boolean;
+        mapping_status: "suggested" | "confirmed" | "unmapped" | "invalid";
+        selected_candidate_id: string | null;
+        confidence: string | null;
+        source_json: unknown;
+        mapping_candidate_id: string | null;
+        source_type: "cell" | "range" | "chart" | null;
+        sheet_id: string | null;
+        sheet_name: string | null;
+        address: string | null;
+        label: string | null;
+        score: string | null;
+        reason_codes: string[] | null;
+        candidate_source_json: unknown;
+      }>(
+        `SELECT me.mapping_entry_id, me.slot_id, me.semantic_metric,
+           me.binding_kind, me.value_type, me.required, me.mapping_status,
+           me.selected_candidate_id, me.confidence, me.source_json,
+           mc.mapping_candidate_id, mc.source_type, mc.sheet_id, mc.sheet_name,
+           mc.address, mc.label, mc.score, mc.reason_codes,
+           mc.source_json AS candidate_source_json
+         FROM mapping_entry me
+         LEFT JOIN mapping_candidate mc
+           ON mc.mapping_entry_id = me.mapping_entry_id
+         WHERE me.mapping_set_version_id = $1
+         ORDER BY me.required DESC, me.semantic_metric, mc.candidate_order`,
+        [row.mapping_set_resource_version_id],
+      )
+    : null;
+  const mappingEntries = new Map<
+    string,
+    {
+      entryId: string;
+      slotId: string;
+      metric: string;
+      kind: "scalar" | "table" | "chart";
+      valueType: string;
+      required: boolean;
+      status: "suggested" | "confirmed" | "unmapped" | "invalid";
+      confidence: number | null;
+      source: unknown;
+      selectedCandidateId: string | null;
+      candidates: Array<{
+        candidateId: string;
+        sourceType: "cell" | "range" | "chart";
+        sheetId: string;
+        sheetName: string;
+        address: string;
+        label: string | null;
+        score: number;
+        reasonCodes: string[];
+        source: unknown;
+        selected: boolean;
+      }>;
+    }
+  >();
+  for (const item of mappingRows?.rows ?? []) {
+    let entry = mappingEntries.get(item.mapping_entry_id);
+    if (!entry) {
+      entry = {
+        entryId: item.mapping_entry_id,
+        slotId: item.slot_id,
+        metric: item.semantic_metric,
+        kind: item.binding_kind,
+        valueType: item.value_type,
+        required: item.required,
+        status: item.mapping_status,
+        confidence: item.confidence == null ? null : Number(item.confidence),
+        source: item.source_json,
+        selectedCandidateId: item.selected_candidate_id,
+        candidates: [],
+      };
+      mappingEntries.set(item.mapping_entry_id, entry);
+    }
+    if (
+      item.mapping_candidate_id &&
+      item.source_type &&
+      item.sheet_id &&
+      item.sheet_name &&
+      item.address &&
+      item.score != null
+    ) {
+      entry.candidates.push({
+        candidateId: item.mapping_candidate_id,
+        sourceType: item.source_type,
+        sheetId: item.sheet_id,
+        sheetName: item.sheet_name,
+        address: item.address,
+        label: item.label,
+        score: Number(item.score),
+        reasonCodes: item.reason_codes ?? [],
+        source: item.candidate_source_json,
+        selected: item.mapping_candidate_id === item.selected_candidate_id,
+      });
+    }
+  }
   return {
     inspectionId: row.inspection_id,
     jobId: row.job_id,
@@ -879,6 +1036,40 @@ async function inspectionProjection(
           versionId: row.mapping_set_resource_version_id,
           version: Number(row.mapping_set_version_no),
           status: row.mapping_status,
+          summary: {
+            bindingCount: row.mapping_binding_count ?? 0,
+            requiredSlotCount: row.mapping_required_slot_count ?? 0,
+            confirmedBindingCount: row.mapping_confirmed_binding_count ?? 0,
+            unmappedRequiredCount: row.mapping_unmapped_required_count ?? 0,
+          },
+          entries: [...mappingEntries.values()],
+        }
+      : null,
+    analysis: row.pdf_page_count
+      ? {
+          pdf: {
+            pageCount: row.pdf_page_count,
+            blockCount: row.pdf_block_count ?? 0,
+            slotCount: row.pdf_slot_count ?? 0,
+            objectCount: row.pdf_object_count ?? 0,
+            fontCount: row.pdf_font_count ?? 0,
+            imageCount: row.pdf_image_count ?? 0,
+            tableCount: row.pdf_table_count ?? 0,
+            chartCount: row.pdf_chart_count ?? 0,
+            warningCount: row.pdf_warning_count ?? 0,
+          },
+          workbook: {
+            sheetCount: row.workbook_sheet_count ?? 0,
+            hiddenSheetCount: row.workbook_hidden_sheet_count ?? 0,
+            usedCellCount: Number(row.workbook_used_cell_count ?? 0),
+            formulaCount: row.workbook_formula_count ?? 0,
+            editableCellCount: row.workbook_editable_cell_count ?? 0,
+            mergedRangeCount: row.workbook_merged_range_count ?? 0,
+            chartCount: row.workbook_chart_count ?? 0,
+            tableCount: row.workbook_table_count ?? 0,
+            externalLinkCount: row.workbook_external_link_count ?? 0,
+            namedRangeCount: row.workbook_named_range_count ?? 0,
+          },
         }
       : null,
     resultVersions:
@@ -1497,6 +1688,596 @@ export async function recordWorkerProgress(
   });
 }
 
+type MappingRevisionSelection = {
+  entryId: string;
+  candidateId: string | null;
+};
+
+type MappingRevisionEntry = {
+  entryId: string;
+  slotId: string;
+  metric: string;
+  kind: "scalar" | "table" | "chart";
+  valueType: string;
+  required: boolean;
+  selectedCandidateId: string | null;
+  candidates: Array<{
+    candidateId: string;
+    sourceType: "cell" | "range" | "chart";
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    label: string | null;
+    score: number;
+    reasonCodes: string[];
+    source: Record<string, unknown>;
+  }>;
+};
+
+function parseMappingSelections(input: unknown): MappingRevisionSelection[] {
+  if (!Array.isArray(input) || input.length > 500) {
+    throw new ApiError(
+      400,
+      "MAPPING_SELECTION_INVALID",
+      "매핑 선택 목록을 확인해 주세요.",
+    );
+  }
+  const seen = new Set<string>();
+  return input.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new ApiError(
+        400,
+        "MAPPING_SELECTION_INVALID",
+        "매핑 선택 항목을 확인해 주세요.",
+        {
+          details: [
+            {
+              path: `selections[${index}]`,
+              code: "INVALID_VALUE",
+              message: "선택 항목 형식이 올바르지 않습니다.",
+            },
+          ],
+        },
+      );
+    }
+    const value = item as { entryId?: unknown; candidateId?: unknown };
+    const entryId = validateUuid(value.entryId, `selections[${index}].entryId`);
+    if (seen.has(entryId)) {
+      throw new ApiError(
+        400,
+        "MAPPING_SELECTION_DUPLICATED",
+        "같은 슬롯을 두 번 선택할 수 없습니다.",
+      );
+    }
+    seen.add(entryId);
+    const candidateId =
+      value.candidateId === null
+        ? null
+        : validateUuid(value.candidateId, `selections[${index}].candidateId`);
+    return { entryId, candidateId };
+  });
+}
+
+function mappingRangeDimensions(address: string): {
+  firstColumn: string;
+  firstRow: number;
+  rows: number;
+  columns: number;
+} {
+  const parts = address.split(":");
+  const parse = (value: string) => {
+    const match = /^([A-Z]+)(\d+)$/i.exec(value);
+    if (!match) return { column: "A", columnNo: 1, row: 1 };
+    const columnNo = [...match[1].toUpperCase()].reduce(
+      (total, character) => total * 26 + character.charCodeAt(0) - 64,
+      0,
+    );
+    return { column: match[1].toUpperCase(), columnNo, row: Number(match[2]) };
+  };
+  const first = parse(parts[0]);
+  const last = parse(parts[1] ?? parts[0]);
+  return {
+    firstColumn: first.column,
+    firstRow: first.row,
+    rows: Math.max(1, last.row - first.row + 1),
+    columns: Math.max(1, last.columnNo - first.columnNo + 1),
+  };
+}
+
+function mappingBinding(
+  entry: MappingRevisionEntry,
+  candidate: MappingRevisionEntry["candidates"][number],
+) {
+  if (entry.kind === "table") {
+    const dimensions = mappingRangeDimensions(candidate.address);
+    return {
+      bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
+      slotId: entry.slotId,
+      kind: "table",
+      source: candidate.source,
+      rowKeyColumn: dimensions.firstColumn,
+      columnHeaderRow: dimensions.firstRow,
+      expectedRows: dimensions.rows,
+      expectedColumns: dimensions.columns,
+      subtotalRows: [],
+      unitRows: [],
+      display: {},
+      status: "confirmed",
+    };
+  }
+  return {
+    bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
+    slotId: entry.slotId,
+    kind: entry.kind,
+    valueType: entry.valueType,
+    source: candidate.source,
+    verificationSources: [],
+    display: {},
+    status: "confirmed",
+  };
+}
+
+export async function createMappingRevision(input: {
+  projectId: string;
+  mappingSetVersionId: string;
+  userId: string;
+  idempotencyKey: string | null;
+  expectedVersion: unknown;
+  selections: unknown;
+}): Promise<IdempotentResult> {
+  const key = validateIdempotencyKey(input.idempotencyKey);
+  const expectedVersion = Number(input.expectedVersion);
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    throw new ApiError(
+      400,
+      "INVALID_VERSION",
+      "매핑 버전을 확인해 주세요.",
+    );
+  }
+  const selections = parseMappingSelections(input.selections);
+  const requestHash = contentHash({
+    mappingSetVersionId: input.mappingSetVersionId,
+    expectedVersion,
+    selections,
+  });
+  const replay = await withTransaction(async (client) => {
+    await getOwnedProject(client, input.projectId, input.userId);
+    return idempotentReplay(client, {
+      userId: input.userId,
+      operation: "mapping.revision.create",
+      projectId: input.projectId,
+      key,
+      requestHash,
+    });
+  });
+  if (replay) return replay;
+  const snapshot = await withTransaction(async (client) => {
+    await getOwnedProject(client, input.projectId, input.userId);
+    const mappingResult = await client.query<{
+      resource_version_id: string;
+      version_no: string;
+      lifecycle_status: string;
+      template_ir_version_id: string;
+      workbook_version_id: string;
+      mapping_json: Record<string, unknown>;
+      inspection_id: string;
+      job_id: string;
+    }>(
+      `SELECT msv.resource_version_id, rv.version_no, rv.lifecycle_status,
+         msv.template_ir_version_id, msv.workbook_version_id, msv.mapping_json,
+         fi.inspection_id, fi.job_id
+       FROM mapping_set_version msv
+       JOIN resource_version rv
+         ON rv.resource_version_id = msv.resource_version_id
+       JOIN versioned_resource vr ON vr.resource_id = rv.resource_id
+       JOIN file_inspection fi
+         ON fi.mapping_set_resource_version_id = msv.resource_version_id
+       WHERE msv.resource_version_id = $1
+         AND vr.project_id = $2`,
+      [input.mappingSetVersionId, input.projectId],
+    );
+    const mapping = mappingResult.rows[0];
+    if (!mapping) {
+      throw new ApiError(
+        404,
+        "MAPPING_SET_NOT_FOUND",
+        "매핑 결과를 찾을 수 없습니다.",
+      );
+    }
+    if (
+      mapping.lifecycle_status !== "approved" ||
+      Number(mapping.version_no) !== expectedVersion
+    ) {
+      throw new ApiError(
+        409,
+        "STALE_MAPPING_VERSION",
+        "최신 매핑 결과를 다시 불러와 주세요.",
+        { meta: { currentVersion: Number(mapping.version_no) } },
+      );
+    }
+    const rows = await client.query<{
+      mapping_entry_id: string;
+      slot_id: string;
+      semantic_metric: string;
+      binding_kind: "scalar" | "table" | "chart";
+      value_type: string;
+      required: boolean;
+      selected_candidate_id: string | null;
+      mapping_candidate_id: string | null;
+      source_type: "cell" | "range" | "chart" | null;
+      sheet_id: string | null;
+      sheet_name: string | null;
+      address: string | null;
+      label: string | null;
+      score: string | null;
+      reason_codes: string[] | null;
+      source_json: Record<string, unknown> | null;
+    }>(
+      `SELECT me.mapping_entry_id, me.slot_id, me.semantic_metric,
+         me.binding_kind, me.value_type, me.required, me.selected_candidate_id,
+         mc.mapping_candidate_id, mc.source_type, mc.sheet_id, mc.sheet_name,
+         mc.address, mc.label, mc.score, mc.reason_codes, mc.source_json
+       FROM mapping_entry me
+       LEFT JOIN mapping_candidate mc
+         ON mc.mapping_entry_id = me.mapping_entry_id
+       WHERE me.mapping_set_version_id = $1
+       ORDER BY me.semantic_metric, mc.candidate_order`,
+      [input.mappingSetVersionId],
+    );
+    const entries = new Map<string, MappingRevisionEntry>();
+    for (const row of rows.rows) {
+      let entry = entries.get(row.mapping_entry_id);
+      if (!entry) {
+        entry = {
+          entryId: row.mapping_entry_id,
+          slotId: row.slot_id,
+          metric: row.semantic_metric,
+          kind: row.binding_kind,
+          valueType: row.value_type,
+          required: row.required,
+          selectedCandidateId: row.selected_candidate_id,
+          candidates: [],
+        };
+        entries.set(row.mapping_entry_id, entry);
+      }
+      if (
+        row.mapping_candidate_id &&
+        row.source_type &&
+        row.sheet_id &&
+        row.sheet_name &&
+        row.address &&
+        row.score != null &&
+        row.source_json
+      ) {
+        entry.candidates.push({
+          candidateId: row.mapping_candidate_id,
+          sourceType: row.source_type,
+          sheetId: row.sheet_id,
+          sheetName: row.sheet_name,
+          address: row.address,
+          label: row.label,
+          score: Number(row.score),
+          reasonCodes: row.reason_codes ?? [],
+          source: row.source_json,
+        });
+      }
+    }
+    return {
+      ...mapping,
+      versionNo: Number(mapping.version_no),
+      entries: [...entries.values()],
+    };
+  });
+  const selectionMap = new Map(
+    selections.map((selection) => [selection.entryId, selection.candidateId]),
+  );
+  for (const selection of selections) {
+    const entry = snapshot.entries.find((item) => item.entryId === selection.entryId);
+    if (!entry) {
+      throw new ApiError(
+        400,
+        "MAPPING_ENTRY_NOT_FOUND",
+        "선택한 매핑 슬롯을 찾을 수 없습니다.",
+      );
+    }
+    if (
+      selection.candidateId &&
+      !entry.candidates.some(
+        (candidate) => candidate.candidateId === selection.candidateId,
+      )
+    ) {
+      throw new ApiError(
+        400,
+        "MAPPING_CANDIDATE_NOT_FOUND",
+        "선택한 Excel 원본 후보를 찾을 수 없습니다.",
+      );
+    }
+  }
+  const revisedEntries = snapshot.entries.map((entry) => {
+    const selectedCandidateId = selectionMap.has(entry.entryId)
+      ? selectionMap.get(entry.entryId) ?? null
+      : entry.selectedCandidateId;
+    return { ...entry, selectedCandidateId };
+  });
+  const bindings = revisedEntries.flatMap((entry) => {
+    const candidate = entry.candidates.find(
+      (item) => item.candidateId === entry.selectedCandidateId,
+    );
+    return candidate ? [mappingBinding(entry, candidate)] : [];
+  });
+  const candidates = revisedEntries.flatMap((entry) =>
+    entry.candidates.map((candidate) => ({
+      candidateId: candidate.candidateId,
+      slotId: entry.slotId,
+      kind: candidate.sourceType,
+      source: candidate.source,
+      label: candidate.label ?? `${candidate.sheetName}!${candidate.address}`,
+      score: candidate.score,
+      reasonCodes: candidate.reasonCodes,
+      selected: candidate.candidateId === entry.selectedCandidateId,
+    })),
+  );
+  const unmappedRequiredSlots = revisedEntries
+    .filter((entry) => entry.required && !entry.selectedCandidateId)
+    .map((entry) => entry.slotId);
+  const mappingStatus =
+    unmappedRequiredSlots.length === 0 ? ("confirmed" as const) : ("blocked" as const);
+  const originalMapping = snapshot.mapping_json ?? {};
+  const revisedMapping = {
+    ...originalMapping,
+    schemaVersion: "1.0",
+    mappingSetVersion: snapshot.versionNo + 1,
+    status: mappingStatus === "confirmed" ? "confirmed" : "suggested",
+    bindings,
+    candidates,
+    unmappedRequiredSlots,
+    warnings:
+      unmappedRequiredSlots.length > 0
+        ? [
+            {
+              code: "REQUIRED_MAPPING_UNRESOLVED",
+              message: `필수 슬롯 ${unmappedRequiredSlots.length}개의 Excel 원본을 확인해야 합니다.`,
+            },
+          ]
+        : [],
+  };
+  const revisionId = uuidv7();
+  const objectKey = `immutable/${input.projectId}/mapping-sets/${input.mappingSetVersionId}/revisions/${revisionId}.json`;
+  const bytes = Buffer.from(JSON.stringify(revisedMapping));
+  const stored = await putImmutableObject({
+    objectKey,
+    body: bytes,
+    mediaType: "application/json",
+  });
+  try {
+    return await withTransaction(async (client) => {
+      const replay = await idempotentReplay(client, {
+        userId: input.userId,
+        operation: "mapping.revision.create",
+        projectId: input.projectId,
+        key,
+        requestHash,
+      });
+      if (replay) return replay;
+      await getOwnedProject(client, input.projectId, input.userId, true);
+      const current = await client.query<{
+        lifecycle_status: string;
+        version_no: string;
+      }>(
+      `SELECT rv.lifecycle_status, rv.version_no
+       FROM resource_version rv
+       JOIN versioned_resource vr ON vr.resource_id = rv.resource_id
+       WHERE rv.resource_version_id = $1 AND vr.project_id = $2
+       FOR UPDATE OF rv`,
+      [input.mappingSetVersionId, input.projectId],
+    );
+    if (
+      current.rows[0]?.lifecycle_status !== "approved" ||
+      Number(current.rows[0]?.version_no) !== expectedVersion
+    ) {
+      throw new ApiError(
+        409,
+        "STALE_MAPPING_VERSION",
+        "다른 화면에서 매핑이 변경되었습니다. 최신 결과를 다시 불러와 주세요.",
+      );
+    }
+    const created = await createAnalysisVersion(client, {
+      projectId: input.projectId,
+      userId: input.userId,
+      resourceKind: "mapping_set",
+      resourceKey: "main",
+      payload: revisedMapping,
+      artifact: {
+        artifactRole: "mapping_set",
+        artifactKind: "analysis",
+        objectKey,
+        objectVersion: stored.objectVersion,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        byteSize: bytes.byteLength,
+        mediaType: "application/json",
+      },
+    });
+    await client.query(
+      `INSERT INTO mapping_set_version (
+        resource_version_id, template_ir_version_id, workbook_version_id,
+        mapping_status, mapping_schema_version, validation_summary_json,
+        mapping_json, binding_count, required_slot_count,
+        confirmed_binding_count, unmapped_required_count,
+        base_mapping_set_version_id, confirmed_by_user_id, confirmed_at
+      ) VALUES (
+        $1, $2, $3, $4, '1.0.0', $5::jsonb, $6::jsonb, $7, $8, $9, $10,
+        $11, $12, CASE WHEN $4 = 'confirmed' THEN now() ELSE NULL END
+      )`,
+      [
+        created.resourceVersionId,
+        snapshot.template_ir_version_id,
+        snapshot.workbook_version_id,
+        mappingStatus,
+        JSON.stringify({
+          slotCount: revisedEntries.length,
+          userCorrected: true,
+        }),
+        JSON.stringify(revisedMapping),
+        bindings.length,
+        revisedEntries.filter((entry) => entry.required).length,
+        bindings.length,
+        unmappedRequiredSlots.length,
+        input.mappingSetVersionId,
+        mappingStatus === "confirmed" ? input.userId : null,
+      ],
+    );
+    for (const entry of revisedEntries) {
+      const entryId = uuidv7();
+      const selected = entry.candidates.find(
+        (candidate) => candidate.candidateId === entry.selectedCandidateId,
+      );
+      await client.query(
+        `INSERT INTO mapping_entry (
+          mapping_entry_id, mapping_set_version_id, slot_id, semantic_metric,
+          binding_kind, value_type, required, mapping_status, confidence,
+          source_json, display_json
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, '{}'::jsonb)`,
+        [
+          entryId,
+          created.resourceVersionId,
+          entry.slotId,
+          entry.metric,
+          entry.kind,
+          entry.valueType,
+          entry.required,
+          selected ? "confirmed" : "unmapped",
+          selected?.score ?? entry.candidates[0]?.score ?? null,
+          selected ? JSON.stringify(selected.source) : null,
+        ],
+      );
+      let selectedId: string | null = null;
+      for (const [index, candidate] of entry.candidates.entries()) {
+        const candidateId = uuidv7();
+        if (candidate.candidateId === entry.selectedCandidateId) {
+          selectedId = candidateId;
+        }
+        await client.query(
+          `INSERT INTO mapping_candidate (
+            mapping_candidate_id, mapping_entry_id, source_type, sheet_id,
+            sheet_name, address, label, score, reason_codes, source_json,
+            candidate_order
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::jsonb, $11
+          )`,
+          [
+            candidateId,
+            entryId,
+            candidate.sourceType,
+            candidate.sheetId,
+            candidate.sheetName,
+            candidate.address,
+            candidate.label,
+            candidate.score,
+            candidate.reasonCodes,
+            JSON.stringify(candidate.source),
+            index + 1,
+          ],
+        );
+      }
+      if (selectedId) {
+        await client.query(
+          `UPDATE mapping_entry
+           SET selected_candidate_id = $2
+           WHERE mapping_entry_id = $1`,
+          [entryId, selectedId],
+        );
+      }
+    }
+    const inspectionState = await client.query<{
+      issues_json: Array<{ code: string; severity: string; message: string }>;
+      pdf_status: string;
+      workbook_status: string;
+    }>(
+      `SELECT fi.issues_json,
+         tiv.validation_status AS pdf_status,
+         wv.compatibility_status AS workbook_status
+       FROM file_inspection fi
+       JOIN template_ir_version tiv
+         ON tiv.resource_version_id = fi.template_resource_version_id
+       JOIN workbook_version wv
+         ON wv.resource_version_id = fi.workbook_resource_version_id
+       WHERE fi.inspection_id = $1
+       FOR UPDATE OF fi`,
+      [snapshot.inspection_id],
+    );
+    const retainedIssues = (inspectionState.rows[0]?.issues_json ?? []).filter(
+      (issue) =>
+        !["REQUIRED_MAPPING_UNRESOLVED", "MAPPING_INPUT_UNAVAILABLE"].includes(
+          issue.code,
+        ),
+    );
+    if (mappingStatus === "blocked") {
+      retainedIssues.push({
+        code: "REQUIRED_MAPPING_UNRESOLVED",
+        severity: "blocking",
+        message: `필수 슬롯 ${unmappedRequiredSlots.length}개의 Excel 원본을 확인해야 합니다.`,
+      });
+    }
+    const passed =
+      mappingStatus === "confirmed" &&
+      inspectionState.rows[0]?.pdf_status === "passed" &&
+      inspectionState.rows[0]?.workbook_status === "passed" &&
+      !retainedIssues.some((issue) => issue.severity === "blocking");
+    await client.query(
+      `UPDATE file_inspection
+       SET mapping_set_resource_version_id = $2,
+           mapping_set_version_no = $3,
+           mapping_status = $4,
+           outcome = $5,
+           issues_json = $6::jsonb,
+           completed_at = now()
+       WHERE inspection_id = $1`,
+      [
+        snapshot.inspection_id,
+        created.resourceVersionId,
+        created.versionNo,
+        mappingStatus,
+        passed ? "passed" : "blocked",
+        JSON.stringify(retainedIssues),
+      ],
+    );
+    await client.query(
+      `UPDATE workflow_job_output
+       SET resource_version_id = $2
+       WHERE job_id = $1 AND output_role = 'mapping_set'`,
+      [snapshot.job_id, created.resourceVersionId],
+    );
+    const body = {
+      mappingSet: {
+        versionId: created.resourceVersionId,
+        version: created.versionNo,
+        status: mappingStatus,
+        summary: {
+          bindingCount: bindings.length,
+          requiredSlotCount: revisedEntries.filter((entry) => entry.required).length,
+          confirmedBindingCount: bindings.length,
+          unmappedRequiredCount: unmappedRequiredSlots.length,
+        },
+      },
+      outcome: passed ? "passed" : "blocked",
+    };
+    await storeIdempotency(client, {
+      userId: input.userId,
+      operation: "mapping.revision.create",
+      projectId: input.projectId,
+      key,
+      requestHash,
+      status: 201,
+      body,
+    });
+    return { status: 201, body };
+    });
+  } catch (error) {
+    await deleteObject(objectKey).catch(() => undefined);
+    throw error;
+  }
+}
+
 type FileScanPayload = {
   supportStatus: "accepted" | "rejected";
   detectedMediaType: string;
@@ -1634,6 +2415,33 @@ export type InspectionResultPayload = {
     issues: Array<{ code: string; severity: string; message: string }>;
     parserName: string;
     parserVersion: string;
+    templateIr: {
+      templateId: string;
+      templateVersion: number;
+      pages: Array<{
+        blocks: Array<{ blockId: string; role: string }>;
+        slots: Array<{
+          slotId: string;
+          valueType: string;
+          semanticKey: { metric: string };
+          required: boolean;
+        }>;
+        objects: Array<{ objectId: string; type: string }>;
+      }>;
+      resources: { fonts: unknown[]; images: unknown[] };
+      analysisWarnings: unknown[];
+    } | null;
+    summary: {
+      blockCount?: number;
+      slotCount?: number;
+      requiredSlotCount?: number;
+      objectCount?: number;
+      fontCount?: number;
+      imageCount?: number;
+      tableCount?: number;
+      chartCount?: number;
+      warningCount?: number;
+    };
     artifact: ArtifactDescriptor;
   };
   workbook: {
@@ -1645,11 +2453,67 @@ export type InspectionResultPayload = {
     issues: Array<{ code: string; severity: string; message: string }>;
     engineName: string;
     engineVersion: string;
+    workbookAnalysis: {
+      calculationStatus: string;
+      candidateCells: unknown[];
+      candidateRanges: unknown[];
+      sheets: unknown[];
+      editableCells: unknown[];
+      externalLinks: unknown[];
+      namedRanges?: unknown[];
+      warnings: unknown[];
+    } | null;
+    summary: {
+      sheetCount?: number;
+      hiddenSheetCount?: number;
+      usedCellCount?: number;
+      formulaCount?: number;
+      editableCellCount?: number;
+      mergedRangeCount?: number;
+      chartCount?: number;
+      tableCount?: number;
+      externalLinkCount?: number;
+      namedRangeCount?: number;
+    };
     artifact: ArtifactDescriptor;
   };
   mapping: {
     status: "confirmed" | "blocked";
     slotCount: number;
+    requiredSlotCount: number;
+    bindingCount: number;
+    confirmedBindingCount: number;
+    unmappedRequiredCount: number;
+    issues: Array<{ code: string; severity: string; message: string }>;
+    mappingSet: {
+      status: string;
+      bindings: Array<{
+        slotId: string;
+        kind: string;
+        valueType?: string;
+        source: Record<string, unknown>;
+        display?: Record<string, unknown>;
+        status: string;
+      }>;
+      candidates: Array<{
+        candidateId: string;
+        slotId: string;
+        kind: "cell" | "range" | "chart";
+        source: {
+          sheetId: string;
+          sheet: string;
+          address?: string;
+          range?: string;
+          [key: string]: unknown;
+        };
+        label?: string;
+        score: number;
+        reasonCodes: string[];
+        selected: boolean;
+      }>;
+      unmappedRequiredSlots: string[];
+      [key: string]: unknown;
+    } | null;
     artifact: ArtifactDescriptor;
   };
 };
@@ -1750,7 +2614,7 @@ export async function commitInspectionResult(
       userId: job.requested_by_user_id,
       resourceKind: "template_ir",
       resourceKey: "main",
-      payload: payload.pdf,
+      payload: payload.pdf.templateIr ?? payload.pdf.summary,
       artifact: payload.pdf.artifact,
     });
     const workbook = await createAnalysisVersion(client, {
@@ -1758,7 +2622,7 @@ export async function commitInspectionResult(
       userId: job.requested_by_user_id,
       resourceKind: "workbook_analysis",
       resourceKey: "main",
-      payload: payload.workbook,
+      payload: payload.workbook.workbookAnalysis ?? payload.workbook.summary,
       artifact: payload.workbook.artifact,
     });
     const mapping = await createAnalysisVersion(client, {
@@ -1766,14 +2630,22 @@ export async function commitInspectionResult(
       userId: job.requested_by_user_id,
       resourceKind: "mapping_set",
       resourceKey: "main",
-      payload: payload.mapping,
+      payload: payload.mapping.mappingSet ?? {
+        status: payload.mapping.status,
+        issues: payload.mapping.issues,
+      },
       artifact: payload.mapping.artifact,
     });
     await client.query(
       `INSERT INTO template_ir_version (
         resource_version_id, source_file_version_id, page_count,
-        parser_name, parser_version, validation_status
-      ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        parser_name, parser_version, validation_status, template_ir_json,
+        block_count, slot_count, object_count, font_count, image_count,
+        table_count, chart_count, warning_count
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7::jsonb,
+        $8, $9, $10, $11, $12, $13, $14, $15
+      )`,
       [
         pdf.resourceVersionId,
         job.pdf_file_version_id,
@@ -1781,38 +2653,158 @@ export async function commitInspectionResult(
         payload.pdf.parserName,
         payload.pdf.parserVersion,
         payload.pdf.compatible ? "passed" : "failed",
+        JSON.stringify(payload.pdf.templateIr ?? {}),
+        payload.pdf.summary.blockCount ?? 0,
+        payload.pdf.summary.slotCount ?? 0,
+        payload.pdf.summary.objectCount ?? 0,
+        payload.pdf.summary.fontCount ?? 0,
+        payload.pdf.summary.imageCount ?? 0,
+        payload.pdf.summary.tableCount ?? 0,
+        payload.pdf.summary.chartCount ?? 0,
+        payload.pdf.summary.warningCount ?? 0,
       ],
     );
     await client.query(
       `INSERT INTO workbook_version (
         resource_version_id, source_file_version_id, original_sha256,
         structure_hash, calculation_status, calculation_engine,
-        engine_version, compatibility_status
-      ) VALUES ($1, $2, $3, $4, 'verified', $5, $6, $7)`,
+        engine_version, compatibility_status, analysis_json, sheet_count,
+        hidden_sheet_count, used_cell_count, formula_count, editable_cell_count,
+        merged_range_count, chart_count, table_count, external_link_count,
+        named_range_count
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+        $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+      )`,
       [
         workbook.resourceVersionId,
         job.workbook_file_version_id,
         payload.workbook.originalSha256,
         payload.workbook.structureHash,
+        payload.workbook.workbookAnalysis?.calculationStatus ?? "unsupported",
         payload.workbook.engineName,
         payload.workbook.engineVersion,
         payload.workbook.compatible ? "passed" : "failed",
+        JSON.stringify(payload.workbook.workbookAnalysis ?? {}),
+        payload.workbook.summary.sheetCount ?? payload.workbook.sheetCount,
+        payload.workbook.summary.hiddenSheetCount ?? 0,
+        payload.workbook.summary.usedCellCount ?? payload.workbook.usedCellCount,
+        payload.workbook.summary.formulaCount ?? 0,
+        payload.workbook.summary.editableCellCount ?? 0,
+        payload.workbook.summary.mergedRangeCount ?? 0,
+        payload.workbook.summary.chartCount ?? 0,
+        payload.workbook.summary.tableCount ?? 0,
+        payload.workbook.summary.externalLinkCount ?? 0,
+        payload.workbook.summary.namedRangeCount ?? 0,
       ],
     );
     await client.query(
       `INSERT INTO mapping_set_version (
         resource_version_id, template_ir_version_id, workbook_version_id,
-        mapping_status, validation_summary_json
-      ) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        mapping_status, validation_summary_json, mapping_json, binding_count,
+        required_slot_count, confirmed_binding_count, unmapped_required_count
+      ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10)`,
       [
         mapping.resourceVersionId,
         pdf.resourceVersionId,
         workbook.resourceVersionId,
         payload.mapping.status,
-        JSON.stringify({ slotCount: payload.mapping.slotCount }),
+        JSON.stringify({
+          slotCount: payload.mapping.slotCount,
+          issues: payload.mapping.issues,
+        }),
+        JSON.stringify(payload.mapping.mappingSet ?? {}),
+        payload.mapping.bindingCount,
+        payload.mapping.requiredSlotCount,
+        payload.mapping.confirmedBindingCount,
+        payload.mapping.unmappedRequiredCount,
       ],
     );
-    const issues = [...payload.pdf.issues, ...payload.workbook.issues];
+    if (payload.mapping.mappingSet && payload.pdf.templateIr) {
+      const bindings = new Map(
+        payload.mapping.mappingSet.bindings.map((binding) => [
+          binding.slotId,
+          binding,
+        ]),
+      );
+      const candidatesBySlot = new Map<string, typeof payload.mapping.mappingSet.candidates>();
+      for (const candidate of payload.mapping.mappingSet.candidates) {
+        const list = candidatesBySlot.get(candidate.slotId) ?? [];
+        list.push(candidate);
+        candidatesBySlot.set(candidate.slotId, list);
+      }
+      const slots = payload.pdf.templateIr.pages.flatMap((page) => page.slots);
+      for (const slot of slots) {
+        const entryId = uuidv7();
+        const binding = bindings.get(slot.slotId);
+        await client.query(
+          `INSERT INTO mapping_entry (
+            mapping_entry_id, mapping_set_version_id, slot_id, semantic_metric,
+            binding_kind, value_type, required, mapping_status, confidence,
+            source_json, display_json
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)`,
+          [
+            entryId,
+            mapping.resourceVersionId,
+            slot.slotId,
+            slot.semanticKey.metric,
+            slot.valueType === "table"
+              ? "table"
+              : slot.valueType === "chart"
+                ? "chart"
+                : "scalar",
+            slot.valueType,
+            slot.required,
+            binding ? "confirmed" : "unmapped",
+            candidatesBySlot.get(slot.slotId)?.[0]?.score ?? null,
+            binding ? JSON.stringify(binding.source) : null,
+            JSON.stringify(binding?.display ?? {}),
+          ],
+        );
+        const candidateIds = new Map<string, string>();
+        const candidates = candidatesBySlot.get(slot.slotId) ?? [];
+        for (const [index, candidate] of candidates.entries()) {
+          const candidateId = uuidv7();
+          candidateIds.set(candidate.candidateId, candidateId);
+          await client.query(
+            `INSERT INTO mapping_candidate (
+              mapping_candidate_id, mapping_entry_id, source_type, sheet_id,
+              sheet_name, address, label, score, reason_codes, source_json,
+              candidate_order
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::jsonb, $11
+            )`,
+            [
+              candidateId,
+              entryId,
+              candidate.kind,
+              candidate.source.sheetId,
+              candidate.source.sheet,
+              candidate.source.address ?? candidate.source.range ?? "",
+              candidate.label ?? null,
+              candidate.score,
+              candidate.reasonCodes,
+              JSON.stringify(candidate.source),
+              index + 1,
+            ],
+          );
+        }
+        const selected = candidates.find((candidate) => candidate.selected);
+        if (selected) {
+          await client.query(
+            `UPDATE mapping_entry
+             SET selected_candidate_id = $2
+             WHERE mapping_entry_id = $1`,
+            [entryId, candidateIds.get(selected.candidateId)],
+          );
+        }
+      }
+    }
+    const issues = [
+      ...payload.pdf.issues,
+      ...payload.workbook.issues,
+      ...payload.mapping.issues,
+    ];
     const passed =
       payload.pdf.compatible &&
       payload.workbook.compatible &&
@@ -1828,7 +2820,7 @@ export async function commitInspectionResult(
        WHERE job_id = $1`,
       [
         jobId,
-        passed ? "passed" : "failed",
+        passed ? "passed" : "blocked",
         JSON.stringify(issues),
         pdf.versionNo,
         workbook.versionNo,
@@ -1850,7 +2842,7 @@ export async function commitInspectionResult(
            progress_percent = 100, heartbeat_at = now(), finished_at = now(),
            retryable = false, result_summary_json = $2::jsonb
        WHERE job_id = $1`,
-      [jobId, JSON.stringify({ outcome: passed ? "passed" : "failed" })],
+      [jobId, JSON.stringify({ outcome: passed ? "passed" : "blocked" })],
     );
   });
 }
