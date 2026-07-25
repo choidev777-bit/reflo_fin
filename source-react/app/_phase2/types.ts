@@ -58,7 +58,7 @@ export type InspectionProjection = {
       selectedCandidateId: string | null;
       candidates: Array<{
         candidateId: string;
-        sourceType: "cell" | "range" | "chart";
+        sourceType: "cell" | "range" | "chart" | "market_data";
         sheetId: string;
         sheetName: string;
         address: string;

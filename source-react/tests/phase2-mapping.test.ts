@@ -141,3 +141,46 @@ test("keeps a required slot blocked when candidates are ambiguous", () => {
   assert.equal(result.summary.unmappedRequiredCount, 1);
   assert.equal(result.mappingSet.bindings.length, 0);
 });
+
+test("uses the KRX cutoff close as the authoritative current price", () => {
+  const value = template();
+  value.pages[0].slots = [
+    {
+      slotId: "slot_current",
+      blockId: "block_current",
+      valueType: "money",
+      semanticKey: { metric: "current_price" },
+      required: true,
+    },
+  ];
+  const result = buildMappingSet(
+    value,
+    workbook([
+      cell("sheet_2", "09_Target_PER", "B16", "현재주가 (원)"),
+    ]),
+    {
+      schemaVersion: "1.0",
+      provider: "KRX_OPEN_API",
+      status: "available",
+      companyMasterId: "company-1",
+      ticker: "005930",
+      exchange: "KOSPI",
+      requestedDate: "2026-07-25",
+      tradingDate: "2026-07-24",
+      closePrice: 88_700,
+      currency: "KRW",
+      sourceApiId: "stk_bydd_trd",
+      retrievedAt: "2026-07-25T00:00:00.000Z",
+      sourcePayloadHash: "a".repeat(64),
+      errorCode: null,
+      errorMessage: null,
+    },
+  );
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.equal(result.mappingSet.candidates[0].kind, "market_data");
+  assert.equal(result.mappingSet.candidates[0].selected, true);
+  assert.equal(result.mappingSet.bindings[0].source.provider, "KRX_OPEN_API");
+  assert.equal(result.mappingSet.bindings[0].source.closePrice, 88_700);
+  assert.equal(result.mappingSet.bindings[0].verificationSources?.length, 1);
+});

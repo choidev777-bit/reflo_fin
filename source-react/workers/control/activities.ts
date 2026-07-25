@@ -7,6 +7,10 @@ import {
   putImmutableObject,
   readObjectBytes,
 } from "../../server/infrastructure/object-storage/s3";
+import {
+  fetchKrxClosingPrice,
+  type MarketPriceSnapshot,
+} from "../../server/infrastructure/market-data/krx";
 import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
@@ -278,7 +282,12 @@ export async function inspectAndFinalize(
     35,
     "PDF 레이아웃과 Excel 계산 모델을 분석하고 있습니다.",
   );
-  const [pdf, workbook] = await Promise.all([pdfPromise, workbookPromise]);
+  const marketPricePromise = fetchKrxClosingPrice(input.marketData);
+  const [pdf, workbook, marketPrice] = await Promise.all([
+    pdfPromise,
+    workbookPromise,
+    marketPricePromise,
+  ]);
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -287,7 +296,7 @@ export async function inspectAndFinalize(
     80,
     "PDF 슬롯과 Excel 원본 후보를 의미 단위로 매핑하고 있습니다.",
   );
-  await finalizeInspection(input, pdf, workbook);
+  await finalizeInspection(input, pdf, workbook, marketPrice);
 }
 
 function descriptor(
@@ -339,20 +348,21 @@ export async function finalizeInspection(
   input: FileInspectionWorkflowInput,
   pdf: PdfInspectionResult,
   workbook: WorkbookInspectionResult,
+  marketPrice: MarketPriceSnapshot,
 ): Promise<void> {
   const builtMapping =
     pdf.compatible &&
     workbook.compatible &&
     pdf.templateIr &&
     workbook.workbookAnalysis
-      ? buildMappingSet(pdf.templateIr, workbook.workbookAnalysis)
+      ? buildMappingSet(pdf.templateIr, workbook.workbookAnalysis, marketPrice)
       : null;
   const mapping = builtMapping
     ? {
         ...builtMapping.summary,
         mappingSet: builtMapping.mappingSet,
-        issues:
-          builtMapping.summary.unmappedRequiredCount > 0
+        issues: [
+          ...(builtMapping.summary.unmappedRequiredCount > 0
             ? [
                 {
                   code: "REQUIRED_MAPPING_UNRESOLVED",
@@ -360,7 +370,19 @@ export async function finalizeInspection(
                   message: `필수 슬롯 ${builtMapping.summary.unmappedRequiredCount}개의 Excel 원본을 확인해야 합니다.`,
                 },
               ]
-            : [],
+            : []),
+          ...(marketPrice.status === "unavailable"
+            ? [
+                {
+                  code: marketPrice.errorCode ?? "KRX_MARKET_PRICE_UNAVAILABLE",
+                  severity: "warning" as const,
+                  message:
+                    marketPrice.errorMessage ??
+                    "KRX 기준일 종가를 조회하지 못해 Excel 값을 사용했습니다.",
+                },
+              ]
+            : []),
+        ],
       }
     : {
         status: "blocked" as const,
@@ -382,10 +404,12 @@ export async function finalizeInspection(
   const pdfBytes = Buffer.from(JSON.stringify(pdf.templateIr));
   const workbookBytes = Buffer.from(JSON.stringify(workbook.workbookAnalysis));
   const mappingBytes = Buffer.from(JSON.stringify(mapping.mappingSet));
-  const [pdfObject, workbookObject, mappingObject] = await Promise.all([
+  const marketPriceBytes = Buffer.from(JSON.stringify(marketPrice));
+  const [pdfObject, workbookObject, mappingObject, marketPriceObject] = await Promise.all([
     putInspectionArtifact(`${prefix}/template-ir.json`, pdfBytes),
     putInspectionArtifact(`${prefix}/workbook-analysis.json`, workbookBytes),
     putInspectionArtifact(`${prefix}/mapping-set.json`, mappingBytes),
+    putInspectionArtifact(`${prefix}/market-price-snapshot.json`, marketPriceBytes),
   ]);
   await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
     schemaVersion: "1.0.0",
@@ -409,6 +433,15 @@ export async function finalizeInspection(
           `${prefix}/workbook-analysis.json`,
           workbookBytes,
           workbookObject.objectVersion,
+        ),
+      },
+      marketPrice: {
+        ...marketPrice,
+        artifact: descriptor(
+          "market_price_snapshot",
+          `${prefix}/market-price-snapshot.json`,
+          marketPriceBytes,
+          marketPriceObject.objectVersion,
         ),
       },
       mapping: {

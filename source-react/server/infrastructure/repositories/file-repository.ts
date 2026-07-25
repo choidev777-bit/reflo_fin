@@ -925,7 +925,7 @@ async function inspectionProjection(
         confidence: string | null;
         source_json: unknown;
         mapping_candidate_id: string | null;
-        source_type: "cell" | "range" | "chart" | null;
+        source_type: "cell" | "range" | "chart" | "market_data" | null;
         sheet_id: string | null;
         sheet_name: string | null;
         address: string | null;
@@ -963,7 +963,7 @@ async function inspectionProjection(
       selectedCandidateId: string | null;
       candidates: Array<{
         candidateId: string;
-        sourceType: "cell" | "range" | "chart";
+        sourceType: "cell" | "range" | "chart" | "market_data";
         sheetId: string;
         sheetName: string;
         address: string;
@@ -1266,6 +1266,36 @@ export async function createFileInspection(input: {
     });
     if (replay) return replay;
     await getOwnedProject(client, input.projectId, input.userId);
+    const setupResult = await client.query<{
+      company_master_id: string;
+      ticker: string;
+      exchange_code: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
+      cutoff_date: string;
+    }>(
+      `SELECT psv.company_master_id, cm.ticker, cm.exchange_code,
+         psv.cutoff_date::text
+       FROM versioned_resource vr
+       JOIN resource_version rv ON rv.resource_id = vr.resource_id
+       JOIN project_setup_version psv
+         ON psv.resource_version_id = rv.resource_version_id
+       JOIN company_master cm ON cm.company_master_id = psv.company_master_id
+       WHERE vr.project_id = $1
+         AND vr.resource_kind = 'project_setup'
+         AND psv.completion_status = 'complete'
+         AND rv.lifecycle_status = 'approved'
+         AND rv.validity_status = 'current'
+       ORDER BY rv.version_no DESC
+       LIMIT 1`,
+      [input.projectId],
+    );
+    const setup = setupResult.rows[0];
+    if (!setup) {
+      throw new ApiError(
+        409,
+        "FILES_PREREQUISITE_INCOMPLETE",
+        "기업과 보고서 기준일 설정을 먼저 완료해 주세요.",
+      );
+    }
     const pdf = await acceptedFile(
       client,
       input.projectId,
@@ -1297,6 +1327,7 @@ export async function createFileInspection(input: {
     const fingerprint = contentHash({
       pdf: pdf.sha256,
       workbook: workbook.sha256,
+      marketData: setup,
     });
     await client.query(
       `INSERT INTO workflow_job (
@@ -1331,6 +1362,12 @@ export async function createFileInspection(input: {
       inspectionId,
       pdf,
       workbook,
+      marketData: {
+        companyMasterId: setup.company_master_id,
+        ticker: setup.ticker,
+        exchange: setup.exchange_code,
+        cutoffDate: setup.cutoff_date,
+      },
     };
     await client.query(
       `INSERT INTO outbox_event (
@@ -1703,7 +1740,7 @@ type MappingRevisionEntry = {
   selectedCandidateId: string | null;
   candidates: Array<{
     candidateId: string;
-    sourceType: "cell" | "range" | "chart";
+    sourceType: "cell" | "range" | "chart" | "market_data";
     sheetId: string;
     sheetName: string;
     address: string;
@@ -1904,7 +1941,7 @@ export async function createMappingRevision(input: {
       required: boolean;
       selected_candidate_id: string | null;
       mapping_candidate_id: string | null;
-      source_type: "cell" | "range" | "chart" | null;
+      source_type: "cell" | "range" | "chart" | "market_data" | null;
       sheet_id: string | null;
       sheet_name: string | null;
       address: string | null;
@@ -2477,6 +2514,24 @@ export type InspectionResultPayload = {
     };
     artifact: ArtifactDescriptor;
   };
+  marketPrice: {
+    schemaVersion: "1.0";
+    provider: "KRX_OPEN_API";
+    status: "available" | "unavailable";
+    companyMasterId: string;
+    ticker: string;
+    exchange: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
+    requestedDate: string;
+    tradingDate: string | null;
+    closePrice: number | null;
+    currency: "KRW";
+    sourceApiId: string | null;
+    retrievedAt: string;
+    sourcePayloadHash: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+    artifact: ArtifactDescriptor;
+  };
   mapping: {
     status: "confirmed" | "blocked";
     slotCount: number;
@@ -2498,7 +2553,7 @@ export type InspectionResultPayload = {
       candidates: Array<{
         candidateId: string;
         slotId: string;
-        kind: "cell" | "range" | "chart";
+        kind: "cell" | "range" | "chart" | "market_data";
         source: {
           sheetId: string;
           sheet: string;
@@ -2625,6 +2680,14 @@ export async function commitInspectionResult(
       payload: payload.workbook.workbookAnalysis ?? payload.workbook.summary,
       artifact: payload.workbook.artifact,
     });
+    const marketPrice = await createAnalysisVersion(client, {
+      projectId: job.project_id,
+      userId: job.requested_by_user_id,
+      resourceKind: "market_price_snapshot",
+      resourceKey: "krx-close",
+      payload: payload.marketPrice,
+      artifact: payload.marketPrice.artifact,
+    });
     const mapping = await createAnalysisVersion(client, {
       projectId: job.project_id,
       userId: job.requested_by_user_id,
@@ -2696,6 +2759,34 @@ export async function commitInspectionResult(
         payload.workbook.summary.tableCount ?? 0,
         payload.workbook.summary.externalLinkCount ?? 0,
         payload.workbook.summary.namedRangeCount ?? 0,
+      ],
+    );
+    await client.query(
+      `INSERT INTO market_price_snapshot_version (
+        resource_version_id, company_master_id, ticker, exchange_code,
+        requested_date, trading_date, close_price, currency_code, provider,
+        source_api_id, lookup_status, retrieved_at, source_payload_hash,
+        error_code, evidence_json
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        $15::jsonb
+      )`,
+      [
+        marketPrice.resourceVersionId,
+        payload.marketPrice.companyMasterId,
+        payload.marketPrice.ticker,
+        payload.marketPrice.exchange,
+        payload.marketPrice.requestedDate,
+        payload.marketPrice.tradingDate,
+        payload.marketPrice.closePrice,
+        payload.marketPrice.currency,
+        payload.marketPrice.provider,
+        payload.marketPrice.sourceApiId,
+        payload.marketPrice.status,
+        payload.marketPrice.retrievedAt,
+        payload.marketPrice.sourcePayloadHash,
+        payload.marketPrice.errorCode,
+        JSON.stringify(payload.marketPrice),
       ],
     );
     await client.query(
@@ -2816,7 +2907,9 @@ export async function commitInspectionResult(
            template_version_no = $4, workbook_version_no = $5,
            mapping_set_version_no = $6, template_resource_version_id = $7,
            workbook_resource_version_id = $8, mapping_set_resource_version_id = $9,
-           mapping_status = $10, completed_at = now()
+           mapping_status = $10,
+           market_price_snapshot_resource_version_id = $11,
+           completed_at = now()
        WHERE job_id = $1`,
       [
         jobId,
@@ -2829,12 +2922,23 @@ export async function commitInspectionResult(
         workbook.resourceVersionId,
         mapping.resourceVersionId,
         payload.mapping.status,
+        marketPrice.resourceVersionId,
       ],
     );
     await client.query(
       `INSERT INTO workflow_job_output (job_id, output_role, resource_version_id)
-       VALUES ($1, 'template_ir', $2), ($1, 'workbook', $3), ($1, 'mapping_set', $4)`,
-      [jobId, pdf.resourceVersionId, workbook.resourceVersionId, mapping.resourceVersionId],
+       VALUES
+         ($1, 'template_ir', $2),
+         ($1, 'workbook', $3),
+         ($1, 'mapping_set', $4),
+         ($1, 'market_price_snapshot', $5)`,
+      [
+        jobId,
+        pdf.resourceVersionId,
+        workbook.resourceVersionId,
+        mapping.resourceVersionId,
+        marketPrice.resourceVersionId,
+      ],
     );
     await client.query(
       `UPDATE workflow_job

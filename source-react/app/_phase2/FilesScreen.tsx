@@ -255,37 +255,51 @@ function MappingEditor({
   );
   return (
     <div className="phase2-mapping-editor" data-mapping-version={versionId}>
-      {entries.map((entry) => (
-        <label
-          key={entry.entryId}
-          className={entry.required && !selections[entry.entryId] ? "needs-selection" : ""}
-        >
-          <span>
-            <b>{metricLabels[entry.metric] ?? entry.metric}</b>
-            <small>
-              {entry.required ? "필수" : "선택"} · {entry.kind}
-            </small>
-          </span>
-          <select
-            value={selections[entry.entryId] ?? ""}
-            onChange={(event) =>
-              setSelections((current) => ({
-                ...current,
-                [entry.entryId]: event.target.value,
-              }))
-            }
+      {entries.map((entry) => {
+        const krxCandidate = entry.candidates.find(
+          (candidate) => candidate.sourceType === "market_data",
+        );
+        const displayedCandidates =
+          entry.metric === "current_price" && krxCandidate
+            ? [krxCandidate]
+            : entry.candidates;
+        return (
+          <label
+            key={entry.entryId}
+            className={entry.required && !selections[entry.entryId] ? "needs-selection" : ""}
           >
-            <option value="">원본을 선택하세요</option>
-            {entry.candidates.map((candidate) => (
-              <option key={candidate.candidateId} value={candidate.candidateId}>
-                {candidate.sheetName}!{candidate.address}
-                {candidate.label ? ` · ${candidate.label}` : ""}
-                {` · ${Math.round(candidate.score * 100)}%`}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
+            <span>
+              <b>{metricLabels[entry.metric] ?? entry.metric}</b>
+              <small>
+                {entry.required ? "필수" : "선택"} ·{" "}
+                {krxCandidate ? "KRX 기준일 종가" : entry.kind}
+              </small>
+            </span>
+            <select
+              value={selections[entry.entryId] ?? ""}
+              disabled={Boolean(krxCandidate)}
+              onChange={(event) =>
+                setSelections((current) => ({
+                  ...current,
+                  [entry.entryId]: event.target.value,
+                }))
+              }
+            >
+              <option value="">원본을 선택하세요</option>
+              {displayedCandidates.map((candidate) => (
+                <option key={candidate.candidateId} value={candidate.candidateId}>
+                  {candidate.sourceType === "market_data"
+                    ? candidate.label
+                    : `${candidate.sheetName}!${candidate.address}${
+                        candidate.label ? ` · ${candidate.label}` : ""
+                      }`}
+                  {` · ${Math.round(candidate.score * 100)}%`}
+                </option>
+              ))}
+            </select>
+          </label>
+        );
+      })}
       {entries.length === 0 && (
         <p className="phase2-mapping-empty">
           PDF 또는 Excel 분석이 차단되어 매핑 후보를 만들지 못했습니다.
@@ -366,7 +380,7 @@ function ResultDialog({
           {[
             ["pdf", "PDF 템플릿"],
             ["excel", "Excel 모델"],
-            ["mapping", "PDF·Excel 연결"],
+            ["mapping", "PDF·데이터 연결"],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -483,10 +497,10 @@ function ResultDialog({
           {tab === "mapping" && (
             <section>
               <span>연결 결과</span>
-              <h3>PDF 구성과 Excel 값 연결</h3>
+              <h3>PDF 구성과 데이터 원본 연결</h3>
               <p>
-                의미 슬롯별 Excel 셀·범위 후보와 신뢰도를 확인합니다. 필수 슬롯은
-                하나의 권위 원본이 선택되어야 합니다.
+                현재주가는 KRX 기준일 종가로 고정하고, 나머지 의미 슬롯은 Excel
+                셀·범위 후보와 신뢰도를 확인합니다.
               </p>
               <dl>
                 <div>
@@ -1096,9 +1110,14 @@ export function FilesScreen({ projectId }: { projectId: string }) {
                       {cancelling ? "취소 요청 중" : "검사 취소"}
                     </button>
                   ) : inspection?.outcome ? (
-                    <button className="primary" onClick={() => setShowResult(true)}>
-                      결과 확인
-                    </button>
+                    <>
+                      <button className="secondary" onClick={() => void startInspection()}>
+                        다시 검사
+                      </button>
+                      <button className="primary" onClick={() => setShowResult(true)}>
+                        결과 확인
+                      </button>
+                    </>
                   ) : inspection?.operationStatus === "failed" && inspection.retryable ? (
                     <button className="primary" disabled={starting} onClick={() => void retryInspection()}>
                       다시 시도

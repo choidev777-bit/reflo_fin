@@ -1,6 +1,14 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
+for (const envFile of [".env.development.local", ".env.local"]) {
+  try {
+    process.loadEnvFile(envFile);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 const args = process.argv.slice(2);
 const portIndex = args.findIndex((value) => value === "--port" || value === "-p");
 const port = portIndex >= 0 ? args[portIndex + 1] : "3000";

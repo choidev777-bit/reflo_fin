@@ -6,6 +6,7 @@ import type {
   WorkbookCandidateCell,
   WorkbookCandidateRange,
 } from "./types";
+import type { MarketPriceSnapshot } from "../../server/infrastructure/market-data/krx";
 
 type MappingSource = {
   sheetId: string;
@@ -17,12 +18,21 @@ type MappingSource = {
   formulaHash?: string;
   numberFormat?: string;
   structureFingerprint: string;
+  provider?: "KRX_OPEN_API";
+  ticker?: string;
+  exchange?: string;
+  requestedDate?: string;
+  tradingDate?: string;
+  closePrice?: number;
+  currency?: "KRW";
+  sourceApiId?: string;
+  sourcePayloadHash?: string;
 };
 
 export type MappingCandidate = {
   candidateId: string;
   slotId: string;
-  kind: "cell" | "range";
+  kind: "cell" | "range" | "market_data";
   source: MappingSource;
   label: string;
   score: number;
@@ -311,6 +321,58 @@ function scalarCandidates(
   }));
 }
 
+function marketPriceCandidate(
+  slot: TemplateSlot,
+  snapshot: MarketPriceSnapshot,
+): MappingCandidate | null {
+  if (
+    slot.semanticKey.metric !== "current_price" ||
+    snapshot.status !== "available" ||
+    snapshot.closePrice == null ||
+    !snapshot.tradingDate ||
+    !snapshot.sourceApiId ||
+    !snapshot.sourcePayloadHash
+  ) {
+    return null;
+  }
+  const source: MappingSource = {
+    sheetId: "krx-open-api",
+    sheet: "KRX",
+    address: snapshot.tradingDate,
+    authority: "authoritative",
+    structureFingerprint: hash(
+      `${snapshot.ticker}:${snapshot.tradingDate}:${snapshot.closePrice}:${snapshot.sourcePayloadHash}`,
+    ),
+    provider: snapshot.provider,
+    ticker: snapshot.ticker,
+    exchange: snapshot.exchange,
+    requestedDate: snapshot.requestedDate,
+    tradingDate: snapshot.tradingDate,
+    closePrice: snapshot.closePrice,
+    currency: snapshot.currency,
+    sourceApiId: snapshot.sourceApiId,
+    sourcePayloadHash: snapshot.sourcePayloadHash,
+  };
+  return {
+    candidateId: opaque(
+      "mapcand",
+      `${slot.slotId}:KRX:${snapshot.ticker}:${snapshot.tradingDate}:${snapshot.closePrice}`,
+    ),
+    slotId: slot.slotId,
+    kind: "market_data",
+    source,
+    label: `KRX 기준일 종가 · ${snapshot.tradingDate} · ${snapshot.closePrice.toLocaleString("ko-KR")}원`,
+    score: 0.99,
+    reasonCodes: [
+      "OFFICIAL_MARKET_CLOSE",
+      snapshot.requestedDate === snapshot.tradingDate
+        ? "CUTOFF_DATE_MATCH"
+        : "PREVIOUS_TRADING_DAY",
+    ],
+    selected: true,
+  };
+}
+
 function synthesizeRange(
   workbook: WorkbookAnalysis,
   sheetName: string,
@@ -427,20 +489,46 @@ function bindingFor(
 export function buildMappingSet(
   template: TemplateIr,
   workbook: WorkbookAnalysis,
+  marketPrice?: MarketPriceSnapshot,
 ): { mappingSet: MappingSet; summary: MappingSummary } {
   const slots = template.pages.flatMap((page) => page.slots);
-  const candidates = slots.flatMap((slot) =>
-    slot.valueType === "table"
-      ? tableCandidates(slot, workbook)
-      : slot.valueType === "chart"
-        ? []
-        : scalarCandidates(slot, workbook),
-  );
+  const candidates = slots.flatMap((slot) => {
+    if (slot.valueType === "table") return tableCandidates(slot, workbook);
+    if (slot.valueType === "chart") return [];
+    const workbookCandidates = scalarCandidates(slot, workbook);
+    const krxCandidate = marketPrice
+      ? marketPriceCandidate(slot, marketPrice)
+      : null;
+    return krxCandidate
+      ? [
+          krxCandidate,
+          ...workbookCandidates.map((candidate) => ({
+            ...candidate,
+            selected: false,
+            reasonCodes: [
+              ...candidate.reasonCodes,
+              "WORKBOOK_VERIFICATION_SOURCE",
+            ],
+          })),
+        ]
+      : workbookCandidates;
+  });
   const bindings = slots.flatMap((slot) => {
     const selected = candidates.find(
       (candidate) => candidate.slotId === slot.slotId && candidate.selected,
     );
-    return selected ? [bindingFor(slot, selected)] : [];
+    if (!selected) return [];
+    const binding = bindingFor(slot, selected);
+    if (selected.kind === "market_data" && binding.kind === "scalar") {
+      binding.verificationSources = candidates
+        .filter(
+          (candidate) =>
+            candidate.slotId === slot.slotId && candidate.kind === "cell",
+        )
+        .slice(0, 1)
+        .map((candidate) => candidate.source);
+    }
+    return [binding];
   });
   const boundSlotIds = new Set(bindings.map((binding) => binding.slotId));
   const unmappedRequiredSlots = slots
@@ -451,15 +539,25 @@ export function buildMappingSet(
     "mapset",
     `${template.templateId}:${workbook.workbookVersionId}:${workbook.structureHash}`,
   );
-  const warnings =
-    unmappedRequiredSlots.length > 0
+  const warnings = [
+    ...(unmappedRequiredSlots.length > 0
       ? [
           {
             code: "REQUIRED_MAPPING_UNRESOLVED",
             message: `필수 슬롯 ${unmappedRequiredSlots.length}개의 Excel 원본을 확인해야 합니다.`,
           },
         ]
-      : [];
+      : []),
+    ...(marketPrice?.status === "unavailable"
+      ? [
+          {
+            code: "KRX_MARKET_PRICE_FALLBACK",
+            message:
+              "KRX 기준일 종가를 조회하지 못해 Excel의 현재주가 값을 대체 원본으로 사용했습니다.",
+          },
+        ]
+      : []),
+  ];
   const mappingSet: MappingSet = {
     schemaVersion: "1.0",
     mappingSetId,

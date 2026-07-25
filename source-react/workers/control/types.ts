@@ -28,6 +28,12 @@ export type FileInspectionWorkflowInput = {
   inspectionId: string;
   pdf: InspectionFileInput;
   workbook: InspectionFileInput;
+  marketData: {
+    companyMasterId: string;
+    ticker: string;
+    exchange: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
+    cutoffDate: string;
+  };
 };
 
 export type InspectionIssue = {
