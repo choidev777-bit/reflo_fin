@@ -1,11 +1,29 @@
 import type { StageState } from "../_phase4/types";
 
-export type OutlineNarrative = {
-  reportTitle: string;
-  companyReview: string;
-  companyOutlook: string;
-  targetDirection: "유지" | "상향" | "하향";
-  targetReason: string;
+export type OutlineTitle = {
+  blockId: string;
+  value: string;
+  sourceText: string;
+  maxLength: number;
+  evidenceIds: string[];
+};
+
+export type OutlineNarrativeBlock = {
+  blockId: string;
+  order: number;
+  subtitle: string;
+  summary: string;
+  sourceHeading: string;
+  sourceText: string;
+  maxLength: number;
+  evidenceIds: string[];
+};
+
+export type OutlineChange = {
+  pageId: string;
+  blockId: string;
+  field: "value" | "subtitle" | "summary";
+  value: string;
 };
 
 export type OutlinePage = {
@@ -17,7 +35,8 @@ export type OutlinePage = {
   widthPt: number;
   heightPt: number;
   rotation: number;
-  narrative: OutlineNarrative | null;
+  recommendedTitle: OutlineTitle | null;
+  narrativeBlocks: OutlineNarrativeBlock[];
   visualSlots: Array<{
     slotId: string;
     blockId: string;
@@ -25,7 +44,10 @@ export type OutlinePage = {
     label: string;
     metric: string;
     required: boolean;
-    bindingStatus: "confirmed" | "invalid";
+    bindingStatus: "confirmed" | "unmapped" | "invalid";
+    sourceLabel?: string | null;
+    sourceAddress?: string | null;
+    sourceType?: string | null;
   }>;
   evidenceIds: string[];
   reviewStatus: "reviewed" | "needs-review";
@@ -69,6 +91,7 @@ export type ReportOutlineWorkspace = {
     version: number;
     status: "editing" | "approved" | "revalidation_required";
     savedAt: string;
+    generationSource: "ai" | "fallback";
     pages: OutlinePage[];
   };
   mainHypothesis: {
@@ -102,6 +125,25 @@ export type ReportBlock = {
   revision: number;
   evidenceIds: string[];
   numericAuthority: string | null;
+  templateBlockId: string | null;
+  bbox: [number, number, number, number] | null;
+  regions?: Array<[number, number, number, number]>;
+  sourceObjectIds: string[];
+  sourceCoverage?: "complete" | "review_required";
+  uncoveredSourceObjectIds?: string[];
+  dataBinding?: {
+    metric: string;
+    kind: "scalar" | "table" | "chart";
+    status: "confirmed" | "suggested" | "unmapped" | "invalid";
+    sourceLabel: string | null;
+    sourceAddress: string | null;
+    sourceType: string | null;
+  } | null;
+  patchStrategy:
+    | "fixed"
+    | "operator_replace"
+    | "block_vector_replace"
+    | "region_background_patch";
 };
 
 export type ReportPage = {
@@ -239,6 +281,7 @@ export type ProvenanceDetail = {
     label: string;
     numericAuthority: string | null;
   };
+  binding: ReportBlock["dataBinding"];
   evidence: EvidenceSummary[];
   calculation: {
     workbookVersion: number;

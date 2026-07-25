@@ -78,6 +78,32 @@ test("Google OIDC 시작은 Google authorization endpoint로 redirect", async ({
   expect(response.headers().location).toMatch(/^https:\/\/accounts\.google\.com\//);
 });
 
+test("사용자 메뉴에서 로그아웃", async ({ page }) => {
+  const assertNoRuntimeErrors = watchRuntimeErrors(page);
+  const label = "logout-menu";
+  const displayName = `테스트 ${label}`;
+
+  await testLogin(page, label);
+
+  const userMenu = page.getByRole("button", { name: `${displayName} 사용자 메뉴` });
+  await expect(userMenu).toBeVisible();
+  await expect(userMenu).toHaveAttribute("aria-expanded", "false");
+  await userMenu.click();
+
+  await expect(userMenu).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("menu", { name: "사용자 메뉴" })).toBeVisible();
+  await expect(page.getByText(`${label}@test.reflo.local`, { exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "로그아웃" }).click();
+
+  await expect(page.getByRole("button", { name: "Google로 로그인" })).toBeVisible();
+  const sessionResponse = await page.request.get("/api/auth/session");
+  await expect(sessionResponse.json()).resolves.toMatchObject({
+    authenticated: false,
+    user: null,
+  });
+  assertNoRuntimeErrors();
+});
+
 test("로그인 → 프로젝트 생성 → setup 자동 저장 → 완료 → 재로그인", async ({
   page,
 }) => {
@@ -87,7 +113,7 @@ test("로그인 → 프로젝트 생성 → setup 자동 저장 → 완료 → �
   const projectName = `Playwright Phase 1 ${Date.now()}`;
 
   await testLogin(page, label);
-  await expect(page.getByLabel("로그아웃")).toBeVisible();
+  await expect(page.getByRole("button", { name: `테스트 ${label} 사용자 메뉴` })).toBeVisible();
   await page.getByRole("button", { name: "새 리서치 추가하기" }).click();
   await expect(page.getByRole("dialog", { name: "새 리서치 추가하기" })).toBeVisible();
   await page.getByLabel("프로젝트 이름").fill(projectName);
@@ -356,10 +382,11 @@ test("Phase 2 완료 → Phase 3 승인 → Phase 4 검증 → Phase 5 밸류에
   );
   await page.getByRole("button", { name: "저장", exact: true }).click();
   const updateResponse = await updateResponsePromise;
-  const updateBody = (await updateResponse.json()) as {
+  const updateText = await updateResponse.text();
+  expect(updateResponse.status(), updateText.slice(0, 2_000)).toBe(200);
+  const updateBody = JSON.parse(updateText) as {
     questionSet: { version: number; questions: Array<{ text: string }> };
   };
-  expect(updateResponse.status()).toBe(200);
   expect(updateBody.questionSet.questions[0]?.text).toBe(editedQuestion);
   await expect(page.locator(".rf-question-panel")).toHaveAttribute(
     "data-question-set-version",

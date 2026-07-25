@@ -22,8 +22,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiJson, ClientApiError } from "../_phase1/api";
 import { useSession } from "../_phase1/useSession";
+import { ReportPdfEditor } from "./ReportPdfEditor";
 import { PdfPreview } from "./PdfPreview";
-import { ReportTextEditor } from "./ReportTextEditor";
 import styles from "./phase6.module.css";
 import type {
   EditSession,
@@ -89,11 +89,15 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [versions, setVersions] = useState<VersionList["versions"]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<
+    Array<{ code: string; message: string }>
+  >([]);
   const [previewScale, setPreviewScale] = useState(0.9);
   const [validation, setValidation] = useState<ValidationJob | null>(null);
   const [exportJob, setExportJob] = useState<ExportJob | null>(null);
   const [provenance, setProvenance] = useState<ProvenanceDetail | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [blockDraft, setBlockDraft] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
@@ -421,7 +425,10 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     setPanel("preview");
     setPending("preview");
     try {
-      const result = await apiJson<{ contentUrl: string }>(
+      const result = await apiJson<{
+        contentUrl: string;
+        warnings?: Array<{ code: string; message: string }>;
+      }>(
         `/api/projects/${projectId}/report/previews`,
         {
           method: "POST",
@@ -432,6 +439,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         },
       );
       setPreviewUrl(result.contentUrl);
+      setPreviewWarnings(result.warnings ?? []);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -440,6 +448,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   };
 
   const openProvenance = async (blockId: string) => {
+    setActiveBlockId(blockId);
     setPanel("provenance");
     setProvenance(null);
     try {
@@ -455,6 +464,11 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
 
   const openAi = (blockId: string) => {
     setActiveBlockId(blockId);
+    setBlockDraft(
+      workspaceRef.current
+        ? findBlock(workspaceRef.current, blockId)?.text ?? ""
+        : "",
+    );
     setAiPrompt("");
     setProposal(null);
     setPanel("ai");
@@ -664,6 +678,9 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const activePage =
     workspace.pages.find((page) => page.pageId === activePageId) ??
     workspace.pages[0];
+  const selectedBlock = activeBlockId
+    ? findBlock(workspace, activeBlockId)
+    : null;
   const saveLabel =
     saveState === "saving"
       ? "저장 중…"
@@ -783,84 +800,21 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
           ))}
         </nav>
 
-        <section className={styles.reportCanvas} aria-label="보고서 본문">
-          {workspace.pages.map((page) => (
-            <article
-              id={`report-${page.pageId}`}
-              key={page.pageId}
-              className={styles.reportPage}
-            >
-              <header className={styles.pageHeader}>
-                <div>
-                  <span>REFLO INVESTMENT REPORT</span>
-                  <h2>{page.pageLabel}</h2>
-                </div>
-                <b>{workspace.project.ticker}</b>
-              </header>
-              <div className={styles.blockList}>
-                {page.blocks.map((block) => (
-                  <section
-                    key={block.blockId}
-                    className={styles.reportBlock}
-                    data-editable={editable && block.editable}
-                    data-active={activeBlockId === block.blockId}
-                    data-role={block.role}
-                    onClick={() => setActiveBlockId(block.blockId)}
-                  >
-                    <div className={styles.blockLabel}>
-                      <span>{block.label}</span>
-                      {block.numericAuthority && <span>검증 수치 · 읽기 전용</span>}
-                    </div>
-                    {editable && block.editable ? (
-                      <ReportTextEditor
-                        value={block.text}
-                        editable
-                        title={block.role === "title"}
-                        onFocus={() => setActiveBlockId(block.blockId)}
-                        onCommit={(next) => commitBlock(block, next)}
-                      />
-                    ) : (
-                      <p
-                        className={`${styles.blockText} ${
-                          block.role === "title" ? styles.blockTextTitle : ""
-                        }`}
-                      >
-                        {block.text}
-                      </p>
-                    )}
-                    <div className={styles.blockActions}>
-                      {editable && block.editable && (
-                        <button
-                          className={styles.blockAction}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openAi(block.blockId);
-                          }}
-                        >
-                          <Sparkles size={12} /> AI 다듬기
-                        </button>
-                      )}
-                      {(block.evidenceIds.length > 0 || block.numericAuthority) && (
-                        <button
-                          className={styles.blockAction}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void openProvenance(block.blockId);
-                          }}
-                        >
-                          근거
-                        </button>
-                      )}
-                    </div>
-                  </section>
-                ))}
-              </div>
-              <footer className={styles.pageFooter}>
-                <span>{workspace.project.companyName}</span>
-                <span>{page.pageNumber} / {workspace.pages.length}</span>
-              </footer>
-            </article>
-          ))}
+        <section className={styles.reportCanvas} aria-label="원본 PDF 기반 보고서 편집">
+          <div className={styles.pdfEditorGuide} data-editable={editable}>
+            <span className={styles.pdfEditorGuideDot} />
+            {editable
+              ? "표시된 텍스트 영역을 누르면 해당 블록의 AI 수정 창이 열립니다."
+              : "PDF 텍스트를 드래그해 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 영역이 표시됩니다."}
+          </div>
+          <ReportPdfEditor
+            url={workspace.sourcePdf.contentUrl}
+            pages={workspace.pages}
+            editable={editable}
+            activeBlockId={activeBlockId}
+            onSelectBlock={openAi}
+            onInspectBlock={(blockId) => void openProvenance(blockId)}
+          />
         </section>
       </div>
 
@@ -882,7 +836,8 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                   {panel === "validation" && "최종 검증"}
                   {panel === "export" && "내보내기"}
                   {panel === "ai" && "AI 문장 다듬기"}
-                  {panel === "provenance" && "근거 추적"}
+                  {panel === "provenance" &&
+                    (selectedBlock?.dataBinding ? "데이터 연결" : "근거 추적")}
                 </h2>
               </div>
               <button className={styles.iconButton} onClick={() => setPanel(null)} aria-label="패널 닫기">
@@ -939,6 +894,15 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                     <Plus size={16} />
                   </button>
                 </div>
+                {previewWarnings.map((warning) => (
+                  <div
+                    className={styles.previewWarning}
+                    key={`${warning.code}-${warning.message}`}
+                  >
+                    <strong>{warning.code}</strong>
+                    <span>{warning.message}</span>
+                  </div>
+                ))}
                 {previewUrl ? (
                   <PdfPreview url={previewUrl} scale={previewScale} />
                 ) : (
@@ -1001,7 +965,51 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
 
             {panel === "ai" && (
               <div className={styles.panelSection}>
-                <p>선택 문단의 문장만 다듬습니다. 수치·근거·판단 방향은 바꾸지 않습니다.</p>
+                <p className={styles.panelLabel}>선택 블록 본문</p>
+                <textarea
+                  className={styles.blockDraft}
+                  value={blockDraft}
+                  maxLength={2000}
+                  disabled={!editSession || Boolean(pending)}
+                  onChange={(event) => setBlockDraft(event.target.value)}
+                />
+                <div className={styles.dialogActions}>
+                  {selectedBlock &&
+                    (selectedBlock.evidenceIds.length > 0 ||
+                      selectedBlock.numericAuthority) && (
+                      <button
+                        className={styles.neutralButton}
+                        onClick={() =>
+                          void openProvenance(selectedBlock.blockId)
+                        }
+                      >
+                        연결 근거 보기
+                      </button>
+                    )}
+                  <button
+                    className={styles.neutralButton}
+                    disabled={
+                      !editSession ||
+                      !blockDraft.trim() ||
+                      blockDraft.trim() ===
+                        (activeBlockId
+                          ? findBlock(workspace, activeBlockId)?.text.trim()
+                          : "") ||
+                      Boolean(pending)
+                    }
+                    onClick={() => {
+                      const block = activeBlockId
+                        ? findBlock(workspace, activeBlockId)
+                        : null;
+                      if (block) commitBlock(block, blockDraft);
+                    }}
+                  >
+                    직접 수정 저장
+                  </button>
+                </div>
+                <div className={styles.aiPromptSection}>
+                  <p className={styles.panelLabel}>AI 수정 요청</p>
+                  <p>선택 문단만 다듬습니다. 검증된 수치·근거·판단 방향은 유지합니다.</p>
                 <textarea
                   className={styles.prompt}
                   value={aiPrompt}
@@ -1017,6 +1025,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                   >
                     <Sparkles size={14} /> 수정안 생성
                   </button>
+                </div>
                 </div>
                 {proposal && (
                   <>
@@ -1051,6 +1060,40 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                 ) : (
                   <>
                     <h3>{provenance.block.label}</h3>
+                    {provenance.binding && (
+                      <div
+                        className={styles.dataBindingCard}
+                        data-status={provenance.binding.status}
+                      >
+                        <div>
+                          <span>연결 상태</span>
+                          <strong>
+                            {provenance.binding.status === "confirmed"
+                              ? "연결 완료"
+                              : provenance.binding.status === "suggested"
+                                ? "연결 제안"
+                                : provenance.binding.status === "invalid"
+                                  ? "연결 오류"
+                                  : "연결 필요"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>데이터 항목</span>
+                          <strong>{provenance.binding.metric}</strong>
+                        </div>
+                        <div>
+                          <span>출처</span>
+                          <strong>
+                            {provenance.binding.sourceLabel ??
+                              provenance.binding.sourceAddress ??
+                              "이전 단계에서 출처를 지정해야 합니다."}
+                          </strong>
+                        </div>
+                        {provenance.binding.sourceType && (
+                          <small>{provenance.binding.sourceType}</small>
+                        )}
+                      </div>
+                    )}
                     {provenance.calculation && (
                       <div className={styles.noticeBox}>
                         <strong>검증된 계산 경로</strong>
