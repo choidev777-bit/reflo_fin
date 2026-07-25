@@ -8,14 +8,18 @@ import {
 
 export async function GET(request: NextRequest): Promise<Response> {
   try {
-    const redirectUri = new URL("/api/auth/google/callback", request.nextUrl.origin).href;
+    const callbackUrl = new URL(request.url);
+    const redirectUri = new URL(
+      "/api/auth/google/callback",
+      callbackUrl.origin,
+    ).href;
     const result = await finishGoogleLogin({
-      callbackUrl: request.nextUrl,
+      callbackUrl,
       redirectUri,
       cookieValue: request.cookies.get(OAUTH_ATTEMPT_COOKIE)?.value,
     });
     const session = await issueSession(result.profile);
-    const destination = new URL(result.returnTo, request.nextUrl.origin);
+    const destination = new URL(result.returnTo, callbackUrl.origin);
     if (result.intent === "create-project") {
       destination.searchParams.set("createProject", "1");
     }
@@ -31,7 +35,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     return response;
   } catch {
     const response = NextResponse.redirect(
-      new URL("/?authError=OAUTH_CALLBACK_FAILED", request.nextUrl.origin),
+      new URL("/?authError=OAUTH_CALLBACK_FAILED", new URL(request.url).origin),
     );
     response.cookies.delete(OAUTH_ATTEMPT_COOKIE);
     return response;
