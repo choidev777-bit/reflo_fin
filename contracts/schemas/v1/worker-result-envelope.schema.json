@@ -140,7 +140,8 @@
           "resultType": {
             "enum": [
               "source_collection",
-              "research_candidates"
+              "research_candidates",
+              "news_discovery"
             ]
           }
         },
@@ -396,6 +397,7 @@
         "mapping_set",
         "source_collection",
         "research_candidates",
+        "news_discovery",
         "evidence_validation",
         "hypothesis_questions",
         "valuation_proposal",

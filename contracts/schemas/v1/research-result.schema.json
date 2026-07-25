@@ -9,6 +9,9 @@
     },
     {
       "$ref": "#/$defs/ResearchCandidateResult"
+    },
+    {
+      "$ref": "#/$defs/NewsDiscoveryResult"
     }
   ],
   "$defs": {
@@ -46,6 +49,137 @@
             "type": "string",
             "format": "uri"
           }
+        }
+      }
+    },
+    "NewsPublicationWindow": {
+      "title": "NewsPublicationWindow",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startAt",
+        "endAt"
+      ],
+      "properties": {
+        "startAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "endAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "NewsDiscoveryItem": {
+      "title": "NewsDiscoveryItem",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "queryId",
+        "queryText",
+        "providerCode",
+        "resultRank",
+        "url",
+        "publicationWindow",
+        "policyVersion"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "queryId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "queryText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "providerCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "providerResultId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "resultRank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "titleHint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "publisherHint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "publishedAtHint": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publicationWindow": {
+          "$ref": "#/$defs/NewsPublicationWindow"
+        },
+        "policyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "NewsDiscoveryResult": {
+      "title": "NewsDiscoveryResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "resultType",
+        "planVersionId",
+        "results",
+        "searchedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "resultType": {
+          "const": "news_discovery"
+        },
+        "planVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "results": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/NewsDiscoveryItem"
+          }
+        },
+        "searchedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
         }
       }
     },

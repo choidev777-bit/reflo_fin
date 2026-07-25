@@ -190,7 +190,7 @@
           "activityType": {
             "enum": [
               "collect_source",
-              "extract_candidate"
+              "capture_news"
             ]
           }
         },
@@ -254,6 +254,8 @@
           "activityType": {
             "enum": [
               "generate_hypothesis_questions",
+              "plan_news_search",
+              "extract_candidate",
               "generate_valuation_proposal",
               "generate_report_outline",
               "generate_report_text"
@@ -326,8 +328,10 @@
         "build_template_ir",
         "build_mapping_set",
         "collect_source",
+        "capture_news",
         "extract_candidate",
         "validate_evidence",
+        "plan_news_search",
         "generate_hypothesis_questions",
         "generate_valuation_proposal",
         "generate_report_outline",

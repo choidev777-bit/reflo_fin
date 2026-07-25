@@ -2327,6 +2327,70 @@ paths:
       x-project-owner-required: true
       x-idempotency-required: true
       x-error-codes: [INVALID_PLAN_CHANGE, PLAN_VERSION_CONFLICT, PLAN_LOCKED_BY_ACTIVE_JOB]
+  /api/projects/{projectId}/research-plan/materials:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Research]
+      operationId: addResearchPlanMaterial
+      summary: Attach a company IR or user-provided source
+      description: NEWS is collected autonomously and cannot be registered through this endpoint.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchMaterialUrlRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ResearchMaterialUploadRequest"
+      responses:
+        "201":
+          description: Material attached to a new draft plan version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchMaterialWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [NEWS_MANUAL_MATERIAL_UNSUPPORTED, PLAN_VERSION_CONFLICT, PLAN_LOCKED_BY_ACTIVE_JOB, SOURCE_CUTOFF_VIOLATION]
+  /api/projects/{projectId}/research-plan/materials/{referenceId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SourceReferenceId"
+    delete:
+      tags: [Research]
+      operationId: removeResearchPlanMaterial
+      summary: Remove a user-provided source from the current draft plan
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedVersion]
+              properties:
+                expectedVersion:
+                  $ref: "#/components/schemas/VersionNumber"
+      responses:
+        "200":
+          description: Material removed from a new draft plan version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchMaterialWriteResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [SOURCE_REFERENCE_NOT_FOUND, PLAN_VERSION_CONFLICT, PLAN_LOCKED_BY_ACTIVE_JOB]
   /api/projects/{projectId}/research-plan/approve-and-start:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -2596,6 +2660,12 @@ components:
         $ref: "#/components/schemas/OpaqueId"
     JobId:
       name: jobId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/OpaqueId"
+    SourceReferenceId:
+      name: referenceId
       in: path
       required: true
       schema:
@@ -3951,6 +4021,128 @@ components:
       properties:
         plan:
           $ref: "#/components/schemas/ResearchPlan"
+    ResearchSourceReference:
+      type: object
+      additionalProperties: false
+      required:
+        - referenceId
+        - sourceType
+        - ingestionMethod
+        - title
+        - publisher
+        - publishedAt
+        - canonicalUrl
+        - artifactId
+        - originalFilename
+        - mediaType
+        - byteSize
+        - sha256
+      properties:
+        referenceId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceType:
+          type: string
+          enum: [COMPANY_IR, NEWS, USER_MATERIAL]
+          description: NEWS is legacy read-only data; new requests cannot create it.
+        ingestionMethod:
+          type: string
+          enum: [user_upload, user_url]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        publisher:
+          type: string
+          minLength: 1
+          maxLength: 300
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        canonicalUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: "null"
+        artifactId:
+          oneOf:
+            - $ref: "#/components/schemas/OpaqueId"
+            - type: "null"
+        originalFilename:
+          type: [string, "null"]
+          maxLength: 255
+        mediaType:
+          type: [string, "null"]
+          maxLength: 255
+        byteSize:
+          type: [integer, "null"]
+          minimum: 0
+        sha256:
+          type: [string, "null"]
+          pattern: "^[a-f0-9]{64}$"
+    ResearchMaterialUrlRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, sourceType, title, url]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceType:
+          type: string
+          enum: [COMPANY_IR, USER_MATERIAL]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date
+            - type: "null"
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+    ResearchMaterialUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, sourceType, title, file]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceType:
+          type: string
+          enum: [COMPANY_IR, USER_MATERIAL]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date
+            - type: "null"
+        file:
+          type: string
+          format: binary
+    ResearchMaterialWriteResponse:
+      type: object
+      additionalProperties: true
+      required: [version, sourceReferences, validationSummary, lastSavedAt]
+      properties:
+        version:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchSourceReference"
+        validationSummary:
+          type: object
+          additionalProperties: true
+        lastSavedAt:
+          type: string
+          format: date-time
     ApproveResearchPlanRequest:
       type: object
       additionalProperties: false

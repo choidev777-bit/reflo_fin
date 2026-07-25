@@ -109,7 +109,7 @@ services:
       dockerfile: workers/llm/Dockerfile
     environment:
       PORT: 8093
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${REFLO_LOCAL_OPENAI_API_KEY:?Run the local Compose launcher from source-react so it can load .env.local}
       REFLO_LLM_TEST_FIXTURE: ${REFLO_LLM_TEST_FIXTURE:-0}
     ports:
       - "127.0.0.1:8093:8093"
