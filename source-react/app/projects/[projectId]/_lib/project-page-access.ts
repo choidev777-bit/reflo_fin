@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { readSession, SESSION_COOKIE } from "@/server/application/session-service";
 import { getProjectAccess } from "@/server/infrastructure/repositories/project-repository";
+import { hasGeneratedReport } from "@/server/infrastructure/repositories/report-repository";
 import { ApiError } from "@/server/http/api-error";
 
 export async function requireProjectPageAccess(
@@ -22,6 +23,12 @@ export async function requireProjectPageAccess(
 
   try {
     const access = await getProjectAccess({ projectId, userId: session.userId });
+    if (
+      requestedRoute === `/projects/${projectId}/report` &&
+      (await hasGeneratedReport(projectId, session.userId))
+    ) {
+      return;
+    }
     if (!access.allowedRoutes.includes(requestedRoute)) {
       redirect(access.canonicalRoute);
     }

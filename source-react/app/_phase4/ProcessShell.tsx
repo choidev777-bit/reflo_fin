@@ -13,7 +13,7 @@ const stageLabels: Record<string, { no: string; title: string; short: string }> 
   research_plan: { no: "04", title: "자료 수집 및 계획", short: "자료와 출처 설정" },
   validation: { no: "05", title: "조사 결과 검증", short: "근거와 원문 확인" },
   valuation: { no: "06", title: "Excel · PER 밸류에이션", short: "입력값과 계산" },
-  report_outline: { no: "07", title: "보고서 생성 · 내보내기", short: "초안과 최종 파일" },
+  report_outline: { no: "07", title: "페이지 내용 설정", short: "구성 승인과 초안 생성" },
 };
 
 export function ProcessShell({
@@ -25,7 +25,7 @@ export function ProcessShell({
   onBeforeNavigate,
 }: {
   projectName: string;
-  activeStage: "research_plan" | "validation" | "valuation";
+  activeStage: "research_plan" | "validation" | "valuation" | "report_outline";
   stages: StageState[];
   children: ReactNode;
   footer: ReactNode;
@@ -50,7 +50,7 @@ export function ProcessShell({
       </div>
       <div className="spec-workspace phase4-workspace">
         <aside className="spec-sidebar phase4-sidebar">
-          <nav aria-label="프로세스 단계">
+          <nav aria-label="리서치 작업 단계">
             <p>RESEARCH WORKFLOW</p>
             {stages.map((stage) => {
               const label = stageLabels[stage.stageKey];
