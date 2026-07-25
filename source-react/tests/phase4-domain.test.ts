@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import {
+  attachNewsSearchPolicies,
   calculateQuestionSufficiency,
   normalizePublicResearchUrl,
   validateEvidenceCandidate,
@@ -10,7 +11,10 @@ import {
   type ResearchSourceSnapshot,
 } from "../server/domain/research-validation";
 import { ApiError } from "../server/http/api-error";
-import { collectResearchSources } from "../server/infrastructure/research-sources/adapters";
+import {
+  collectResearchSources,
+  extractArticleMetadata,
+} from "../server/infrastructure/research-sources/adapters";
 
 function plan(): ResearchPlanSnapshot {
   return {
@@ -118,6 +122,55 @@ test("기업 IR을 선택하면 사용자 제공 PDF 또는 공식 URL을 요구
   );
 });
 
+test("뉴스는 사용자 URL 대신 기준일이 고정된 자동 검색 정책을 요구한다", () => {
+  const snapshot = plan();
+  snapshot.questions[0].sourceBindingIds = ["DART", "NEWS"];
+  snapshot.questions[0].collectionMethods.NEWS = "research_agent";
+  const withPolicy = attachNewsSearchPolicies(snapshot, {
+    targetYear: 2026,
+    targetQuarter: 2,
+    cutoffAt: "2026-07-25T23:59:59+09:00",
+  });
+
+  const newsQuestion = withPolicy.questions[0];
+  assert.equal(newsQuestion.newsSearchPolicy?.mode, "agent_web_search");
+  assert.equal(
+    newsQuestion.newsSearchPolicy?.publicationWindows[0]?.startAt,
+    "2026-03-02T00:00:00+09:00",
+  );
+  assert.equal(
+    newsQuestion.newsSearchPolicy?.publicationWindows[0]?.endAt,
+    "2026-07-25T23:59:59+09:00",
+  );
+  assert.equal(
+    validateResearchPlan(
+      withPolicy,
+      "2026-07-25T23:59:59+09:00",
+    ).some((issue) => issue.code === "SOURCE_MATERIAL_REQUIRED"),
+    false,
+  );
+
+  delete newsQuestion.newsSearchPolicy;
+  assert.ok(
+    validateResearchPlan(
+      withPolicy,
+      "2026-07-25T23:59:59+09:00",
+    ).some((issue) => issue.code === "NEWS_SEARCH_POLICY_INVALID"),
+  );
+});
+
+test("뉴스는 Excel 실제값의 권위 출처가 될 수 없다", () => {
+  const snapshot = plan();
+  snapshot.excelTargets[0].sourcePolicy = [
+    { sourceType: "NEWS", role: "authority" },
+  ];
+  assert.ok(
+    validateResearchPlan(snapshot).some(
+      (issue) => issue.code === "NEWS_AUTHORITY_FORBIDDEN",
+    ),
+  );
+});
+
 test("TD-020 충분성 판정은 부족·조건부·충분·재조사를 구분한다", () => {
   const base = {
     requiredMetrics: ["매출액"],
@@ -193,6 +246,57 @@ test("Evidence는 원문 exact quote·기준일·기간·범위·숫자 정규�
     ).machineStatus,
     "failed",
   );
+  assert.equal(
+    validateEvidenceCandidate(
+      candidate,
+      { ...source, sourceType: "NEWS" },
+      "2026-07-25T00:00:00Z",
+    ).machineStatus,
+    "failed",
+  );
+});
+
+test("뉴스 원문은 실제 기사 메타데이터와 보수적 이용 가능 시점을 추출한다", () => {
+  const articleBody =
+    "ISC는 신규 수주와 생산능력 확대 계획을 발표했다. ".repeat(12);
+  const html = `<!doctype html>
+    <html><head>
+      <meta property="og:type" content="article">
+      <meta property="og:site_name" content="테스트경제">
+      <link rel="canonical" href="https://news.example.com/article/isc">
+      <script type="application/ld+json">${JSON.stringify({
+        "@type": "NewsArticle",
+        headline: "ISC 신규 수주 확대",
+        datePublished: "2026-07-20",
+        publisher: { name: "테스트경제" },
+        articleBody,
+      })}</script>
+    </head><body><article>${articleBody}</article></body></html>`;
+  const source: ResearchSourceSnapshot = {
+    sourceKey: "url:news",
+    sourceType: "NEWS",
+    title: "news.example.com",
+    publisher: "news.example.com",
+    canonicalUrl: "https://news.example.com/article/isc?tracking=1",
+    publishedAt: null,
+    collectedAt: "2026-07-25T00:00:00Z",
+    responseHash: "b".repeat(64),
+    locator: { kind: "html" },
+    content: { contentType: "text/html; charset=utf-8", body: html },
+    collectorVersion: "test-v1",
+  };
+
+  const metadata = extractArticleMetadata(source);
+  assert.equal(metadata.title, "ISC 신규 수주 확대");
+  assert.equal(metadata.publisher, "테스트경제");
+  assert.equal(metadata.datePrecision, "day");
+  assert.equal(metadata.publishedAt, "2026-07-20T00:00:00+09:00");
+  assert.equal(metadata.availableAt, "2026-07-21T00:00:00+09:00");
+  assert.equal(
+    metadata.canonicalUrl,
+    "https://news.example.com/article/isc",
+  );
+  assert.match(metadata.body, /ISC는 신규 수주/);
 });
 
 test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사용한다", async () => {

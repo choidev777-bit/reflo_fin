@@ -20,6 +20,12 @@ from app import (  # noqa: E402
     validate_proposal,
     PhaseFourAgentProfile,
     ResearchCandidate,
+    ReportDraftInput,
+    ReportOutlineInput,
+    fixture_report_draft,
+    fixture_report_outline,
+    validate_report_draft,
+    validate_report_outline,
 )
 
 
@@ -203,6 +209,52 @@ class PhaseFourAgentContractTest(unittest.TestCase):
         self.assertEqual("gpt-5.6-terra", profile.model)
         self.assertEqual("medium", profile.reasoning)
 
+    def test_news_search_fixture_returns_question_bound_results(self) -> None:
+        response = TestClient(app).post(
+            "/research/news-search",
+            json={
+                "input": {
+                    "company": "ISC",
+                    "ticker": "095340",
+                    "industry": "반도체 장비",
+                    "cutoffAt": "2026-07-25T23:59:59+09:00",
+                    "approvedPlanResourceVersionId": "plan-version-1",
+                    "questions": [
+                        {
+                            "questionId": "019f0000-0000-7000-8000-000000000001",
+                            "text": "신규 수주가 다음 분기 실적을 지지하는가?",
+                            "purpose": "투자 가설 확인",
+                            "metrics": ["신규 수주"],
+                            "period": "2026년 2분기",
+                            "comparison": "전년 동기",
+                            "publicationWindows": [
+                                {
+                                    "startAt": "2026-03-02T00:00:00+09:00",
+                                    "endAt": "2026-07-25T23:59:59+09:00",
+                                }
+                            ],
+                            "queryLimit": 4,
+                            "discoverLimit": 20,
+                            "providerCode": "openai_web_search",
+                            "policyVersion": "news-policy-v1",
+                        }
+                    ],
+                },
+                "profile": self.profile,
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        result = response.json()["results"][0]
+        self.assertEqual(
+            "019f0000-0000-7000-8000-000000000001",
+            result["questionId"],
+        )
+        self.assertEqual("openai_web_search", result["providerCode"])
+        self.assertEqual(
+            "2026-07-25T23:59:59+09:00",
+            result["publicationWindow"]["endAt"],
+        )
+
     def test_validation_fixture_receives_no_research_reasoning(self) -> None:
         response = TestClient(app).post(
             "/validation/evidence",
@@ -229,6 +281,150 @@ class PhaseFourAgentContractTest(unittest.TestCase):
             "fixture:source:1",
             response.json()["candidates"][0]["sourceKey"],
         )
+
+    def test_report_outline_keeps_dynamic_page_and_block_structure(self) -> None:
+        input_data = ReportOutlineInput(
+            company="ISC",
+            ticker="095340",
+            targetPeriod="2026년 2분기",
+            rating="BUY",
+            thesis="판매량 회복과 제품 믹스 개선으로 수익성이 개선될 것이다.",
+            valuation={
+                "targetPer": "14.2배",
+                "targetPrice": "80,000원",
+                "currentPrice": "56,000원",
+            },
+            evidence=[
+                {
+                    "evidenceId": "evidence-1",
+                    "title": "영업이익률",
+                    "oneLineValue": "검증된 영업이익률 근거",
+                    "stance": "supporting",
+                    "machineStatus": "passed",
+                }
+            ],
+            pages=[
+                {
+                    "pageId": "page-1",
+                    "pageNumber": 1,
+                    "role": "핵심 실적",
+                    "recommendedTitle": {
+                        "blockId": "title-1",
+                        "currentValue": "ISC 2026년 2분기 실적 Review",
+                        "sourceText": "1Q26 review",
+                        "maxLength": 80,
+                    },
+                    "narrativeBlocks": [
+                        {
+                            "blockId": "body-1",
+                            "order": 1,
+                            "sourceHeading": "실적 리뷰",
+                            "sourceText": "원본 PDF의 실적 리뷰 본문",
+                            "currentSubtitle": "실적 리뷰",
+                            "currentSummary": "검증된 실적과 핵심 변화를 설명합니다.",
+                            "maxLength": 220,
+                        }
+                    ],
+                    "visualSlots": [],
+                },
+                {
+                    "pageId": "page-2",
+                    "pageNumber": 2,
+                    "role": "재무 표",
+                    "recommendedTitle": {
+                        "blockId": "title-2",
+                        "currentValue": "요약 손익 계산서",
+                        "sourceText": "요약 손익 계산서",
+                        "maxLength": 80,
+                    },
+                    "narrativeBlocks": [],
+                    "visualSlots": [
+                        {
+                            "kind": "표",
+                            "label": "요약 손익 계산서",
+                            "metric": "financial_statements_table",
+                        }
+                    ],
+                },
+            ],
+        )
+        output = validate_report_outline(
+            fixture_report_outline(input_data),
+            input_data,
+        )
+        self.assertEqual(["page-1", "page-2"], [page.pageId for page in output.pages])
+        self.assertEqual(1, len(output.pages[0].narrativeBlocks))
+        self.assertEqual([], output.pages[1].narrativeBlocks)
+
+        response = TestClient(app).post(
+            "/report/outline",
+            json={
+                "input": input_data.model_dump(),
+                "profile": {
+                    **self.profile,
+                    "version": "report-outline-v1",
+                },
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("fixture", response.json()["generationSource"])
+        self.assertEqual("body-1", response.json()["pages"][0]["narrativeBlocks"][0]["blockId"])
+
+    def test_report_draft_keeps_block_budget_and_evidence_boundary(self) -> None:
+        input_data = ReportDraftInput(
+            company="ISC",
+            ticker="095340",
+            targetPeriod="2026년 2분기",
+            rating="BUY",
+            thesis="AI 가속기 수요로 수익성이 개선될 것이다.",
+            valuation={
+                "targetPer": "14.2배",
+                "targetPrice": "80,000원",
+                "currentPrice": "56,000원",
+            },
+            evidence=[
+                {
+                    "evidenceId": "evidence-1",
+                    "title": "영업이익률",
+                    "oneLineValue": "영업이익률 개선",
+                    "quoteExact": "영업이익률은 전년 동기 대비 개선됐다.",
+                    "stance": "supporting",
+                    "machineStatus": "passed",
+                }
+            ],
+            blocks=[
+                {
+                    "blockId": "body-1",
+                    "pageId": "page-1",
+                    "pageNumber": 1,
+                    "subtitle": "실적 리뷰",
+                    "summary": "검증된 실적 개선 배경을 설명합니다.",
+                    "sourceText": "영업이익률은 전년 동기 대비 개선됐다.",
+                    "minimumLength": 1,
+                    "maximumLength": 220,
+                    "evidenceIds": ["evidence-1"],
+                }
+            ],
+        )
+        output = validate_report_draft(
+            fixture_report_draft(input_data),
+            input_data,
+        )
+        self.assertEqual("body-1", output.blocks[0].blockId)
+
+        response = TestClient(app).post(
+            "/report/draft",
+            json={
+                "input": input_data.model_dump(),
+                "profile": {
+                    **self.profile,
+                    "version": "report-draft-v1",
+                },
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("fixture", response.json()["generationSource"])
+        self.assertEqual("body-1", response.json()["blocks"][0]["blockId"])
 
 
 if __name__ == "__main__":

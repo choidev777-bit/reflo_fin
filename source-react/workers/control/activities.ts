@@ -13,10 +13,14 @@ import {
 } from "../../server/infrastructure/market-data/krx";
 import {
   validateEvidenceCandidate,
+  type NewsDiscoveryResult,
   type ResearchCandidate,
   type ValidatedEvidence,
 } from "../../server/domain/research-validation";
-import { collectResearchSources } from "../../server/infrastructure/research-sources/adapters";
+import {
+  collectResearchSources,
+  type CollectionBundle,
+} from "../../server/infrastructure/research-sources/adapters";
 import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
@@ -417,6 +421,124 @@ async function callResearchAgent(
   return payload.candidates;
 }
 
+async function callNewsSearchAgent(
+  input: ResearchValidationWorkflowInput,
+): Promise<NewsDiscoveryResult[]> {
+  const questions = input.questions
+    .filter(
+      (question) =>
+        question.included && question.sourceBindingIds.includes("NEWS"),
+    )
+    .map((question) => {
+      if (!question.newsSearchPolicy) {
+        throw new Error(`NEWS_SEARCH_POLICY_INVALID:${question.questionId}`);
+      }
+      return {
+        questionId: question.questionId,
+        text: question.text,
+        purpose: question.purpose,
+        metrics: question.metrics,
+        period: question.period,
+        comparison: question.comparison,
+        publicationWindows: question.newsSearchPolicy.publicationWindows.map(
+          (window) => ({
+            startAt: window.startAt,
+            endAt: window.endAt,
+          }),
+        ),
+        queryLimit: question.newsSearchPolicy.queryLimit,
+        discoverLimit: question.newsSearchPolicy.discoverLimit,
+        providerCode: question.newsSearchPolicy.providerCode,
+        policyVersion: question.newsSearchPolicy.policyVersion,
+      };
+    });
+  if (questions.length === 0) return [];
+  const response = await fetch(
+    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/news-search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+          company: input.companyName,
+          ticker: input.ticker,
+          industry: input.industry,
+          cutoffAt: input.cutoffAt,
+          questions,
+          approvedPlanResourceVersionId:
+            input.approvedPlanResourceVersionId,
+        },
+        profile: input.researchAgentProfile,
+      }),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(120_000),
+        Context.current().cancellationSignal,
+      ]),
+    },
+  );
+  if (!response.ok) {
+    const code =
+      response.status === 429
+        ? "NEWS_SEARCH_RATE_LIMITED"
+        : "NEWS_SEARCH_PROVIDER_UNAVAILABLE";
+    throw new Error(`${code}:${(await response.text()).slice(0, 300)}`);
+  }
+  const payload = (await response.json()) as {
+    results?: NewsDiscoveryResult[];
+  };
+  if (!Array.isArray(payload.results)) {
+    throw new Error("NEWS_QUERY_PLAN_INVALID");
+  }
+  const questionById = new Map(
+    questions.map((question) => [question.questionId, question]),
+  );
+  const queryIdsByQuestion = new Map<string, Set<string>>();
+  const resultCountByQuestion = new Map<string, number>();
+  for (const result of payload.results) {
+    const question = questionById.get(result.questionId);
+    if (
+      !question ||
+      result.providerCode !== question.providerCode ||
+      result.policyVersion !== question.policyVersion ||
+      !question.publicationWindows.some(
+        (window) =>
+          window.startAt === result.publicationWindow?.startAt &&
+          window.endAt === result.publicationWindow?.endAt,
+      )
+    ) {
+      throw new Error("NEWS_QUERY_PLAN_INVALID");
+    }
+    if (
+      typeof result.queryId !== "string" ||
+      typeof result.queryText !== "string" ||
+      typeof result.url !== "string" ||
+      !Number.isInteger(result.resultRank)
+    ) {
+      throw new Error("NEWS_QUERY_PLAN_INVALID");
+    }
+    const queryIds =
+      queryIdsByQuestion.get(result.questionId) ?? new Set<string>();
+    queryIds.add(result.queryId);
+    queryIdsByQuestion.set(result.questionId, queryIds);
+    resultCountByQuestion.set(
+      result.questionId,
+      (resultCountByQuestion.get(result.questionId) ?? 0) + 1,
+    );
+  }
+  for (const question of questions) {
+    const queryCount = queryIdsByQuestion.get(question.questionId)?.size ?? 0;
+    const resultCount = resultCountByQuestion.get(question.questionId) ?? 0;
+    if (
+      (resultCount > 0 && queryCount < 2) ||
+      queryCount > question.queryLimit ||
+      resultCount > question.discoverLimit
+    ) {
+      throw new Error("NEWS_QUERY_PLAN_INVALID");
+    }
+  }
+  return payload.results;
+}
+
 async function callValidationAgent(
   input: ResearchValidationWorkflowInput,
   sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
@@ -458,10 +580,9 @@ async function callValidationAgent(
   return payload.candidates;
 }
 
-export async function runResearchValidation(
+export async function planNewsSearch(
   input: ResearchValidationWorkflowInput,
-): Promise<void> {
-  const startedAt = new Date().toISOString();
+): Promise<NewsDiscoveryResult[]> {
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -470,15 +591,55 @@ export async function runResearchValidation(
     10,
     "승인한 계획과 입력 version을 고정하고 있습니다.",
   );
+  const hasNews = input.questions.some(
+    (question) =>
+      question.included && question.sourceBindingIds.includes("NEWS"),
+  );
+  if (!hasNews) return [];
+  if (
+    process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
+    process.env.REFLO_LLM_TEST_FIXTURE === "1"
+  ) {
+    return [];
+  }
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
     2,
-    "collecting_code_sources",
-    30,
-    "공식 API와 공개 원문을 수집하고 있습니다.",
+    "planning_news_search",
+    18,
+    "Research Agent가 질문별 뉴스 검색어를 계획하고 있습니다.",
   );
-  const bundle = await collectResearchSources({
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    3,
+    "searching_news",
+    30,
+    "설정된 기간 안에서 실제 뉴스 원문을 검색하고 있습니다.",
+  );
+  return callNewsSearchAgent(input);
+}
+
+export async function collectResearchBundle(
+  input: ResearchValidationWorkflowInput,
+  newsDiscoveryResults: NewsDiscoveryResult[],
+): Promise<CollectionBundle> {
+  const hasNews = input.questions.some(
+    (question) =>
+      question.included && question.sourceBindingIds.includes("NEWS"),
+  );
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    4,
+    hasNews ? "capturing_news" : "collecting_code_sources",
+    45,
+    hasNews
+      ? "기사 원문과 발행일을 확인하고 공식 자료를 함께 수집하고 있습니다."
+      : "공식 API와 공개 원문을 수집하고 있습니다.",
+  );
+  return collectResearchSources({
     projectId: input.projectId,
     companyMasterId: input.companyMasterId,
     companyName: input.companyName,
@@ -493,11 +654,19 @@ export async function runResearchValidation(
     excelTargets: input.excelTargets,
     userUrls: input.userUrls,
     sourceReferences: input.sourceReferences ?? [],
+    newsDiscoveryResults,
+    cancellationSignal: Context.current().cancellationSignal,
   });
+}
+
+export async function extractResearchCandidates(
+  input: ResearchValidationWorkflowInput,
+  bundle: CollectionBundle,
+): Promise<ResearchCandidate[]> {
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
-    3,
+    5,
     "extracting_candidates",
     65,
     "Research Agent가 원문에서 조사 후보를 구조화하고 있습니다.",
@@ -509,10 +678,20 @@ export async function runResearchValidation(
   if (researchCandidates.length === 0) {
     throw new Error("RESEARCH_CANDIDATES_EMPTY");
   }
+  return researchCandidates;
+}
+
+export async function validateAndPublishResearch(
+  input: ResearchValidationWorkflowInput,
+  bundle: CollectionBundle,
+  researchCandidates: ResearchCandidate[],
+  newsDiscoveryResults: NewsDiscoveryResult[],
+): Promise<void> {
+  const startedAt = new Date().toISOString();
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
-    4,
+    6,
     "validating_evidence",
     85,
     "Validation Agent와 결정적 코드가 원문을 독립 검증하고 있습니다.",
@@ -536,7 +715,7 @@ export async function runResearchValidation(
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
-    5,
+    7,
     "publishing_projection",
     95,
     "검증된 근거와 원문 연결을 게시하고 있습니다.",
@@ -544,12 +723,13 @@ export async function runResearchValidation(
   await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
     schemaVersion: "1.0.0",
     attempt: input.jobAttempt,
-    sequence: 6,
+    sequence: 8,
     resultType: "research_validation",
     payload: {
       sources: bundle.sources,
       candidates: researchCandidates,
       evidence,
+      newsDiscovery: newsDiscoveryResults,
       warnings: bundle.warnings,
       metadata: {
         researchAgentProfile: input.researchAgentProfile.version,
@@ -560,6 +740,20 @@ export async function runResearchValidation(
       },
     },
   });
+}
+
+export async function runResearchValidation(
+  input: ResearchValidationWorkflowInput,
+): Promise<void> {
+  const newsDiscoveryResults = await planNewsSearch(input);
+  const bundle = await collectResearchBundle(input, newsDiscoveryResults);
+  const researchCandidates = await extractResearchCandidates(input, bundle);
+  await validateAndPublishResearch(
+    input,
+    bundle,
+    researchCandidates,
+    newsDiscoveryResults,
+  );
 }
 
 function descriptor(

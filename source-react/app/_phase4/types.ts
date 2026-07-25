@@ -15,6 +15,25 @@ export type SourceType =
   | "FNGUIDE_CONSENSUS"
   | "USER_MATERIAL";
 
+export type NewsSearchPolicy = {
+  mode: "agent_web_search";
+  publicationWindows: Array<{
+    purpose: "current_period" | "historical_comparison";
+    startAt: string;
+    endAt: string;
+  }>;
+  subjectPeriods: string[];
+  timezone: "Asia/Seoul";
+  queryLimit: number;
+  discoverLimit: number;
+  fetchLimit: number;
+  retainLimit: number;
+  perPublisherLimit: number;
+  languages: string[];
+  providerCode: string;
+  policyVersion: string;
+};
+
 export type PlanQuestion = {
   questionId: string;
   order: number;
@@ -31,6 +50,7 @@ export type PlanQuestion = {
   }>;
   sourceBindingIds: SourceType[];
   collectionMethods: Partial<Record<SourceType, string>>;
+  newsSearchPolicy?: NewsSearchPolicy;
   validationErrors: string[];
 };
 

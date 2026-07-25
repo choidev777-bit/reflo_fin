@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import yauzl from "yauzl";
 import {
   normalizePublicResearchUrl,
+  type NewsDiscoveryResult,
   type ResearchCandidate,
   type ResearchExcelTarget,
   type ResearchPlanQuestion,
@@ -40,6 +41,8 @@ export type ResearchCollectionContext = {
   excelTargets: ResearchExcelTarget[];
   userUrls: string[];
   sourceReferences: ResearchMaterialInput[];
+  newsDiscoveryResults?: NewsDiscoveryResult[];
+  cancellationSignal?: AbortSignal;
 };
 
 export type CollectionBundle = {
@@ -280,6 +283,7 @@ export async function fetchPublicSource(
     title?: string;
     publisher?: string;
     publishedAt?: string | null;
+    cancellationSignal?: AbortSignal;
   },
 ): Promise<ResearchSourceSnapshot> {
   let current = new URL(normalizePublicResearchUrl(rawUrl));
@@ -293,7 +297,12 @@ export async function fetchPublicSource(
         Accept: "text/html,application/pdf,text/plain;q=0.9,*/*;q=0.1",
         "User-Agent": "REFLO-Research-Collector/1.0",
       },
-      signal: AbortSignal.timeout(20_000),
+      signal: input.cancellationSignal
+        ? AbortSignal.any([
+            AbortSignal.timeout(20_000),
+            input.cancellationSignal,
+          ])
+        : AbortSignal.timeout(20_000),
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const location = response.headers.get("location");
@@ -305,8 +314,24 @@ export async function fetchPublicSource(
     throw new Error(`SOURCE_HTTP_${response?.status ?? "UNAVAILABLE"}`);
   }
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
+  const maxBytes =
+    input.sourceType === "NEWS" ? 5 * 1024 * 1024 : 50 * 1024 * 1024;
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(
+      input.sourceType === "NEWS"
+        ? "NEWS_ARTICLE_UNREADABLE"
+        : "SOURCE_TOO_LARGE",
+    );
+  }
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > 50 * 1024 * 1024) throw new Error("SOURCE_TOO_LARGE");
+  if (bytes.byteLength > maxBytes) {
+    throw new Error(
+      input.sourceType === "NEWS"
+        ? "NEWS_ARTICLE_UNREADABLE"
+        : "SOURCE_TOO_LARGE",
+    );
+  }
   const isPdf =
     contentType.toLowerCase().includes("application/pdf") ||
     bytes.subarray(0, 5).toString("ascii") === "%PDF-";
@@ -323,7 +348,9 @@ export async function fetchPublicSource(
     response.headers.get("last-modified") ?? response.headers.get("date");
   const publishedAt =
     input.publishedAt ??
-    (publishedHeader ? new Date(publishedHeader).toISOString() : null);
+    (input.sourceType !== "NEWS" && publishedHeader
+      ? new Date(publishedHeader).toISOString()
+      : null);
   if (
     publishedAt &&
     new Date(publishedAt).getTime() > new Date(cutoffAt).getTime()
@@ -357,6 +384,407 @@ export async function fetchPublicSource(
     collectorVersion: pdf ? "public-pdf-v1" : "public-url-v1",
   };
   return source;
+}
+
+export type ArticleMetadata = {
+  canonicalUrl: string;
+  title: string;
+  publisher: string;
+  publishedAt: string;
+  modifiedAt: string | null;
+  availableAt: string;
+  datePrecision: "second" | "minute" | "day";
+  body: string;
+  parserVersion: string;
+};
+
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    hellip: "…",
+    lt: "<",
+    nbsp: " ",
+    quot: '"',
+  };
+  return value
+    .replace(
+      /&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,
+      (entity, token: string) => {
+        if (token.startsWith("#x")) {
+          const codePoint = Number.parseInt(token.slice(2), 16);
+          return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+        }
+        if (token.startsWith("#")) {
+          const codePoint = Number.parseInt(token.slice(1), 10);
+          return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+        }
+        return named[token.toLowerCase()] ?? entity;
+      },
+    )
+    .normalize("NFC");
+}
+
+function tagAttribute(tag: string, name: string): string | null {
+  const match = new RegExp(
+    `\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i",
+  ).exec(tag);
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim() || null;
+}
+
+function metaContent(html: string, key: string): string | null {
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const property = tagAttribute(tag, "property") ?? tagAttribute(tag, "name");
+    if (property?.toLowerCase() === key.toLowerCase()) {
+      return tagAttribute(tag, "content");
+    }
+  }
+  return null;
+}
+
+function canonicalHref(html: string, baseUrl: string): string | null {
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (
+      tagAttribute(tag, "rel")
+        ?.toLowerCase()
+        .split(/\s+/)
+        .includes("canonical")
+    ) {
+      const href = tagAttribute(tag, "href");
+      if (!href) continue;
+      try {
+        return normalizePublicResearchUrl(new URL(href, baseUrl).toString());
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function jsonLdObjects(html: string): Record<string, unknown>[] {
+  const objects: Record<string, unknown>[] = [];
+  for (const match of html.matchAll(
+    /<script\b[^>]*type\s*=\s*(?:"application\/ld\+json"|'application\/ld\+json')[^>]*>([\s\S]*?)<\/script>/gi,
+  )) {
+    try {
+      const parsed = JSON.parse(decodeHtmlEntities(match[1]).trim()) as unknown;
+      const visit = (value: unknown) => {
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+        } else if (value && typeof value === "object") {
+          const object = value as Record<string, unknown>;
+          objects.push(object);
+          if (Array.isArray(object["@graph"])) visit(object["@graph"]);
+        }
+      };
+      visit(parsed);
+    } catch {
+      // Invalid JSON-LD is ignored; other page metadata can still identify the article.
+    }
+  }
+  return objects;
+}
+
+function articleJsonLd(
+  objects: Record<string, unknown>[],
+): Record<string, unknown> | null {
+  return (
+    objects.find((object) => {
+      const rawType = object["@type"];
+      const types = Array.isArray(rawType) ? rawType : [rawType];
+      return types.some(
+        (value) =>
+          typeof value === "string" &&
+          ["NewsArticle", "ReportageNewsArticle", "Article"].includes(value),
+      );
+    }) ?? null
+  );
+}
+
+function nestedString(value: unknown, key?: string): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (value && typeof value === "object" && key) {
+    const nested = (value as Record<string, unknown>)[key];
+    return typeof nested === "string" ? nested.trim() || null : null;
+  }
+  return null;
+}
+
+function stripHtml(value: string): string {
+  return decodeHtmlEntities(
+    value
+      .replace(
+        /<(script|style|noscript|svg|form|nav|header|footer)\b[^>]*>[\s\S]*?<\/\1>/gi,
+        " ",
+      )
+      .replace(/<br\b[^>]*>|<\/p>|<\/div>|<\/li>|<\/h[1-6]>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function articleBody(
+  html: string,
+  article: Record<string, unknown> | null,
+): string {
+  const structured = nestedString(article?.articleBody);
+  if (structured && structured.length >= 200) return structured.slice(0, 200_000);
+  const articleElement = /<article\b[^>]*>([\s\S]*?)<\/article>/i.exec(html)?.[1];
+  return stripHtml(articleElement ?? html).slice(0, 200_000);
+}
+
+function addOneKstDay(date: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day));
+  next.setUTCDate(next.getUTCDate() + 1);
+  return `${next.toISOString().slice(0, 10)}T00:00:00+09:00`;
+}
+
+function articleTimestamp(rawValue: string): {
+  publishedAt: string;
+  availableAt: string;
+  datePrecision: "second" | "minute" | "day";
+} {
+  const raw = rawValue.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return {
+      publishedAt: `${raw}T00:00:00+09:00`,
+      availableAt: addOneKstDay(raw),
+      datePrecision: "day",
+    };
+  }
+  const withTimezone =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(raw)
+      ? `${raw}+09:00`
+      : raw;
+  const timestamp = new Date(withTimezone);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new Error("NEWS_ARTICLE_DATE_MISSING");
+  }
+  return {
+    publishedAt: timestamp.toISOString(),
+    availableAt: timestamp.toISOString(),
+    datePrecision: /T\d{2}:\d{2}:\d{2}/.test(raw) ? "second" : "minute",
+  };
+}
+
+export function extractArticleMetadata(
+  source: ResearchSourceSnapshot,
+): ArticleMetadata {
+  const html =
+    typeof source.content.body === "string" ? source.content.body : "";
+  const contentType =
+    typeof source.content.contentType === "string"
+      ? source.content.contentType.toLowerCase()
+      : "";
+  if (!contentType.includes("text/html") || !html) {
+    throw new Error("NEWS_ARTICLE_NOT_NEWS");
+  }
+  const objects = jsonLdObjects(html);
+  const article = articleJsonLd(objects);
+  const openGraphType = metaContent(html, "og:type")?.toLowerCase();
+  const hasArticleElement = /<article\b/i.test(html);
+  if (!article && openGraphType !== "article" && !hasArticleElement) {
+    throw new Error("NEWS_ARTICLE_NOT_NEWS");
+  }
+  const title =
+    nestedString(article?.headline) ??
+    metaContent(html, "og:title") ??
+    decodeHtmlEntities(/<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const publisher =
+    nestedString(article?.publisher, "name") ??
+    metaContent(html, "og:site_name") ??
+    (source.canonicalUrl ? new URL(source.canonicalUrl).hostname : "");
+  const publishedRaw =
+    nestedString(article?.datePublished) ??
+    metaContent(html, "article:published_time") ??
+    Array.from(html.matchAll(/<time\b[^>]*>/gi))
+      .map((match) => tagAttribute(match[0], "datetime"))
+      .find(Boolean) ??
+    null;
+  if (!title || !publisher || !publishedRaw) {
+    throw new Error("NEWS_ARTICLE_DATE_MISSING");
+  }
+  const timestamp = articleTimestamp(publishedRaw);
+  const modifiedRaw =
+    nestedString(article?.dateModified) ??
+    metaContent(html, "article:modified_time");
+  const modifiedAt = modifiedRaw
+    ? articleTimestamp(modifiedRaw).publishedAt
+    : null;
+  const body = articleBody(html, article);
+  if (body.length < 200) throw new Error("NEWS_ARTICLE_UNREADABLE");
+  let canonicalUrl =
+    canonicalHref(html, source.canonicalUrl ?? "") ?? source.canonicalUrl ?? "";
+  const structuredUrl =
+    nestedString(article?.url) ??
+    nestedString(article?.mainEntityOfPage, "@id");
+  if (structuredUrl) {
+    try {
+      canonicalUrl = normalizePublicResearchUrl(
+        new URL(structuredUrl, canonicalUrl).toString(),
+      );
+    } catch {
+      // Keep the verified final or link canonical URL.
+    }
+  }
+  return {
+    canonicalUrl,
+    title,
+    publisher,
+    ...timestamp,
+    modifiedAt,
+    body,
+    parserVersion: "reflo-news-html-v1",
+  };
+}
+
+async function putResearchHtml(
+  projectId: string,
+  html: string,
+): Promise<string> {
+  const bytes = Buffer.from(html, "utf8");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const objectKey = `immutable/${projectId}/research-public/${digest}.html`;
+  try {
+    await putImmutableObject({
+      objectKey,
+      body: bytes,
+      mediaType: "text/html; charset=utf-8",
+      metadata: { sha256: digest },
+    });
+  } catch (error) {
+    const existing = await readObjectBytes(objectKey).catch(() => null);
+    if (
+      !existing ||
+      createHash("sha256").update(existing).digest("hex") !== digest
+    ) {
+      throw error;
+    }
+  }
+  return objectKey;
+}
+
+async function fetchNewsSource(
+  result: NewsDiscoveryResult,
+  context: ResearchCollectionContext,
+): Promise<ResearchSourceSnapshot> {
+  const raw = await fetchPublicSource(result.url, context.cutoffAt, {
+    projectId: context.projectId,
+    sourceType: "NEWS",
+    cancellationSignal: context.cancellationSignal,
+  });
+  const metadata = extractArticleMetadata(raw);
+  const newsHost = new URL(metadata.canonicalUrl).hostname.toLowerCase();
+  const excludedHosts = [
+    "blog.naver.com",
+    "cafe.naver.com",
+    "brunch.co.kr",
+    "medium.com",
+    "tistory.com",
+    "dcinside.com",
+    "theqoo.net",
+    "ppomppu.co.kr",
+    "dart.fss.or.kr",
+    "opendart.fss.or.kr",
+    "kind.krx.co.kr",
+  ];
+  const normalizedPublisher = metadata.publisher
+    .replace(/\s+/g, "")
+    .toLocaleLowerCase("ko-KR");
+  const normalizedCompany = context.companyName
+    .replace(/\s+/g, "")
+    .toLocaleLowerCase("ko-KR");
+  if (
+    excludedHosts.some(
+      (host) => newsHost === host || newsHost.endsWith(`.${host}`),
+    ) ||
+    normalizedPublisher === normalizedCompany ||
+    normalizedPublisher === `${normalizedCompany}뉴스룸` ||
+    /보도자료|press release/i.test(metadata.title)
+  ) {
+    throw new Error("NEWS_ARTICLE_NOT_NEWS");
+  }
+  const available = Date.parse(metadata.availableAt);
+  const start = Date.parse(result.publicationWindow.startAt);
+  const end = Date.parse(result.publicationWindow.endAt);
+  const cutoff = Date.parse(context.cutoffAt);
+  if (
+    !Number.isFinite(available) ||
+    available < start ||
+    available > end
+  ) {
+    throw new Error("NEWS_ARTICLE_OUTSIDE_WINDOW");
+  }
+  if (available > cutoff) throw new Error("NEWS_CUTOFF_VIOLATION");
+  if (
+    metadata.modifiedAt &&
+    Date.parse(metadata.modifiedAt) > cutoff
+  ) {
+    throw new Error("NEWS_ARTICLE_MODIFIED_AFTER_CUTOFF");
+  }
+  const identityText =
+    `${metadata.title}\n${metadata.body}`.toLocaleLowerCase("ko-KR");
+  const companyTokens = [
+    context.companyName.toLocaleLowerCase("ko-KR"),
+    context.ticker,
+  ].filter((token) => token.length >= 3);
+  if (!companyTokens.some((token) => identityText.includes(token))) {
+    throw new Error("SOURCE_COMPANY_MISMATCH");
+  }
+  const html = String(raw.content.body);
+  const artifactObjectKey = await putResearchHtml(context.projectId, html);
+  const content = {
+    body: metadata.body,
+    title: metadata.title,
+    publisher: metadata.publisher,
+    publishedAt: metadata.publishedAt,
+    modifiedAt: metadata.modifiedAt,
+  };
+  return {
+    sourceKey: `news:${hash(metadata.canonicalUrl).slice(0, 32)}`,
+    sourceType: "NEWS",
+    title: metadata.title,
+    publisher: metadata.publisher,
+    canonicalUrl: metadata.canonicalUrl,
+    publishedAt: metadata.publishedAt,
+    modifiedAt: metadata.modifiedAt,
+    availableAt: metadata.availableAt,
+    datePrecision: metadata.datePrecision,
+    collectedAt: nowIso(),
+    responseHash: hash({
+      canonicalUrl: metadata.canonicalUrl,
+      content,
+      artifactObjectKey,
+    }),
+    locator: {
+      kind: "html",
+      canonicalUrl: metadata.canonicalUrl,
+      questionIds: [result.questionId],
+      queryId: result.queryId,
+      queryText: result.queryText,
+      providerCode: result.providerCode,
+      providerResultId: result.providerResultId,
+      resultRank: result.resultRank,
+      artifactObjectKey,
+    },
+    content,
+    artifactObjectKey,
+    parserVersion: metadata.parserVersion,
+    eligibilityPolicyVersion: result.policyVersion,
+    collectorVersion: "news-auto-discovery-v1",
+  };
 }
 
 async function collectUploadedMaterial(
@@ -466,7 +894,14 @@ async function collectDart(
     fs_div: "CFS",
   });
   const endpoint = `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?${query}`;
-  const response = await fetch(endpoint, { signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(endpoint, {
+    signal: context.cancellationSignal
+      ? AbortSignal.any([
+          AbortSignal.timeout(20_000),
+          context.cancellationSignal,
+        ])
+      : AbortSignal.timeout(20_000),
+  });
   if (!response.ok) throw new Error(`DART_HTTP_${response.status}`);
   const payload = (await response.json()) as {
     status?: string;
@@ -554,7 +989,14 @@ async function collectEcos(
   const url =
     `https://ecos.bok.or.kr/api/StatisticSearch/${encodeURIComponent(apiKey)}` +
     `/json/kr/1/100/731Y001/D/${start}/${end}/0000001`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(url, {
+    signal: context.cancellationSignal
+      ? AbortSignal.any([
+          AbortSignal.timeout(20_000),
+          context.cancellationSignal,
+        ])
+      : AbortSignal.timeout(20_000),
+  });
   if (!response.ok) throw new Error(`ECOS_HTTP_${response.status}`);
   const payload = (await response.json()) as Record<string, unknown>;
   const rows =
@@ -618,6 +1060,7 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
         kind: "html",
         canonicalUrl: "https://example.com/reflo-fixture-source",
         textFragment: quote,
+        questionIds: [question.questionId],
       },
       content: { body: quote },
       collectorVersion: "research-fixture-v1",
@@ -701,6 +1144,112 @@ function selectedSourceTypes(context: ResearchCollectionContext): Set<ResearchSo
   ]);
 }
 
+function approvedNewsDiscoveryResults(
+  context: ResearchCollectionContext,
+): NewsDiscoveryResult[] {
+  const questions = new Map(
+    context.questions
+      .filter(
+        (question) =>
+          question.included && question.sourceBindingIds.includes("NEWS"),
+      )
+      .map((question) => [question.questionId, question]),
+  );
+  const counts = new Map<string, number>();
+  const seen = new Set<string>();
+  const approved: NewsDiscoveryResult[] = [];
+  for (const result of context.newsDiscoveryResults ?? []) {
+    const question = questions.get(result.questionId);
+    const policy = question?.newsSearchPolicy;
+    if (!question || !policy) throw new Error("NEWS_QUERY_PLAN_INVALID");
+    if (
+      result.providerCode !== policy.providerCode ||
+      result.policyVersion !== policy.policyVersion ||
+      !policy.publicationWindows.some(
+        (window) =>
+          window.startAt === result.publicationWindow.startAt &&
+          window.endAt === result.publicationWindow.endAt,
+      )
+    ) {
+      throw new Error("NEWS_QUERY_PLAN_INVALID");
+    }
+    const normalizedUrl = normalizePublicResearchUrl(result.url);
+    const key = `${result.questionId}:${normalizedUrl}`;
+    const count = counts.get(result.questionId) ?? 0;
+    if (seen.has(key) || count >= policy.fetchLimit) continue;
+    seen.add(key);
+    counts.set(result.questionId, count + 1);
+    approved.push({ ...result, url: normalizedUrl });
+  }
+  return approved;
+}
+
+function retainDiverseNewsSources(
+  sources: ResearchSourceSnapshot[],
+  context: ResearchCollectionContext,
+): ResearchSourceSnapshot[] {
+  const merged = new Map<string, ResearchSourceSnapshot>();
+  for (const source of sources) {
+    const existing = merged.get(source.sourceKey);
+    if (!existing) {
+      merged.set(source.sourceKey, source);
+      continue;
+    }
+    const questionIds = Array.from(
+      new Set([
+        ...((existing.locator.questionIds as string[] | undefined) ?? []),
+        ...((source.locator.questionIds as string[] | undefined) ?? []),
+      ]),
+    );
+    existing.locator = { ...existing.locator, questionIds };
+  }
+  const policies = new Map(
+    context.questions
+      .filter((question) => question.newsSearchPolicy)
+      .map((question) => [question.questionId, question.newsSearchPolicy!]),
+  );
+  const retainedByQuestion = new Map<string, number>();
+  const publisherByQuestion = new Map<string, Map<string, number>>();
+  const retained: ResearchSourceSnapshot[] = [];
+  const ordered = Array.from(merged.values()).sort(
+    (left, right) =>
+      Number(left.locator.resultRank ?? Number.MAX_SAFE_INTEGER) -
+      Number(right.locator.resultRank ?? Number.MAX_SAFE_INTEGER),
+  );
+  for (const source of ordered) {
+    const eligibleQuestions: string[] = [];
+    for (const questionId of
+      (source.locator.questionIds as string[] | undefined) ?? []) {
+      const policy = policies.get(questionId);
+      if (!policy) continue;
+      const retainedCount = retainedByQuestion.get(questionId) ?? 0;
+      const publisherCounts =
+        publisherByQuestion.get(questionId) ?? new Map<string, number>();
+      const publisherKey = source.publisher.toLocaleLowerCase("ko-KR");
+      if (
+        retainedCount >= policy.retainLimit ||
+        (publisherCounts.get(publisherKey) ?? 0) >= policy.perPublisherLimit
+      ) {
+        continue;
+      }
+      eligibleQuestions.push(questionId);
+      retainedByQuestion.set(questionId, retainedCount + 1);
+      publisherCounts.set(
+        publisherKey,
+        (publisherCounts.get(publisherKey) ?? 0) + 1,
+      );
+      publisherByQuestion.set(questionId, publisherCounts);
+    }
+    if (eligibleQuestions.length > 0) {
+      retained.push({
+        ...source,
+        locator: { ...source.locator, questionIds: eligibleQuestions },
+      });
+    }
+  }
+  return retained;
+}
+
 export async function collectResearchSources(
   context: ResearchCollectionContext,
 ): Promise<CollectionBundle> {
@@ -717,8 +1266,14 @@ export async function collectResearchSources(
   if (selected.has("DART")) tasks.push(collectDart(context));
   if (selected.has("KRX")) tasks.push(collectKrx(context));
   if (selected.has("ECOS")) tasks.push(collectEcos(context));
+  if (selected.has("NEWS")) {
+    for (const result of approvedNewsDiscoveryResults(context)) {
+      tasks.push(fetchNewsSource(result, context));
+    }
+  }
   for (const reference of context.sourceReferences) {
     if (!selected.has(reference.sourceType)) continue;
+    if (reference.sourceType === "NEWS") continue;
     tasks.push(
       reference.ingestionMethod === "user_upload"
         ? collectUploadedMaterial(reference, context)
@@ -726,9 +1281,10 @@ export async function collectResearchSources(
             projectId: context.projectId,
             sourceType: reference.sourceType,
             title: reference.title,
-            publisher: reference.publisher,
-            publishedAt: reference.publishedAt,
-          }).then((source) => {
+             publisher: reference.publisher,
+             publishedAt: reference.publishedAt,
+             cancellationSignal: context.cancellationSignal,
+           }).then((source) => {
             assertMaterialIdentity(source, context);
             return source;
           }),
@@ -737,9 +1293,10 @@ export async function collectResearchSources(
   for (const url of context.userUrls) {
     tasks.push(
       fetchPublicSource(url, context.cutoffAt, {
-        projectId: context.projectId,
-        sourceType: "USER_MATERIAL",
-      }),
+         projectId: context.projectId,
+         sourceType: "USER_MATERIAL",
+         cancellationSignal: context.cancellationSignal,
+       }),
     );
   }
   const settled = await Promise.allSettled(tasks);
@@ -760,6 +1317,12 @@ export async function collectResearchSources(
       });
     }
   }
+  const nonNewsSources = sources.filter((source) => source.sourceType !== "NEWS");
+  const newsSources = retainDiverseNewsSources(
+    sources.filter((source) => source.sourceType === "NEWS"),
+    context,
+  );
+  sources.splice(0, sources.length, ...nonNewsSources, ...newsSources);
   if (sources.length === 0) {
     throw new Error(
       `RESEARCH_NO_SOURCES${
@@ -776,10 +1339,26 @@ export async function collectResearchSources(
     "USER_MATERIAL",
   ] as const) {
     if (selected.has(sourceType) && !collectedTypes.has(sourceType)) {
-      throw new Error(`REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`);
+      throw new Error(
+        sourceType === "NEWS"
+          ? "NEWS_NO_ELIGIBLE_ARTICLES"
+          : `REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`,
+      );
     }
   }
   for (const question of context.questions.filter((item) => item.included)) {
+    if (
+      question.sourceBindingIds.includes("NEWS") &&
+      !sources.some(
+        (source) =>
+          source.sourceType === "NEWS" &&
+          (
+            (source.locator.questionIds as string[] | undefined) ?? []
+          ).includes(question.questionId),
+      )
+    ) {
+      throw new Error(`NEWS_NO_ELIGIBLE_ARTICLES:${question.questionId}`);
+    }
     if (
       !question.sourceBindingIds.some((sourceType) =>
         collectedTypes.has(sourceType),

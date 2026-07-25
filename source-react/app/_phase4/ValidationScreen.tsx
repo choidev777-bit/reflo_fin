@@ -19,6 +19,24 @@ import type {
   ValidationWorkspace,
 } from "./types";
 
+function evidenceSourceUrl(
+  evidence: ResultDetail["evidence"][number],
+): string | null {
+  if (!evidence.canonicalUrl) return null;
+  if (evidence.sourceType !== "NEWS") return evidence.canonicalUrl;
+  const fragment =
+    typeof evidence.locator.textFragment === "string"
+      ? evidence.locator.textFragment
+      : evidence.quoteExact;
+  try {
+    const url = new URL(evidence.canonicalUrl);
+    url.hash = `:~:text=${encodeURIComponent(fragment.slice(0, 300))}`;
+    return url.toString();
+  } catch {
+    return evidence.canonicalUrl;
+  }
+}
+
 type Category = "hypothesis" | "excel";
 type Filter = "all" | "conflict" | "complete" | "rejected";
 type DecisionAction = "REJECT" | "RESTORE" | "REINVESTIGATE";
@@ -688,9 +706,9 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                       </div>
                     ))}
                   </dl>
-                  {detail.evidence[0].canonicalUrl && (
+                  {evidenceSourceUrl(detail.evidence[0]) && (
                     <a
-                      href={detail.evidence[0].canonicalUrl}
+                      href={evidenceSourceUrl(detail.evidence[0])!}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

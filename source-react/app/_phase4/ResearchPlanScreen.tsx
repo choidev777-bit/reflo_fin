@@ -21,6 +21,10 @@ import type {
 
 type Purpose = "hypothesis" | "excel";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
+type ManualMaterialType = Exclude<
+  ResearchSourceReference["sourceType"],
+  "NEWS"
+>;
 
 function message(error: unknown): string {
   return error instanceof Error
@@ -34,11 +38,11 @@ function methodLabel(
 ): string {
   if (
     sourceType === "COMPANY_IR" ||
-    sourceType === "NEWS" ||
     sourceType === "USER_MATERIAL"
   ) {
     return "사용자 제공 원문 + AI 해석";
   }
+  if (sourceType === "NEWS") return "AI 뉴스 검색 + 원문 확인";
   if (value === "code") return "코드 수집";
   if (value === "code_then_agent") return "코드 수집 후 AI 해석";
   return "AI 해석";
@@ -47,6 +51,9 @@ function methodLabel(
 function jobPhaseLabel(phase: string | null): string {
   const labels: Record<string, string> = {
     preparing: "승인 계획과 입력 version 고정",
+    planning_news_search: "뉴스 검색 계획 수립",
+    searching_news: "뉴스 원문 검색",
+    capturing_news: "기사 원문 확인",
     collecting_code_sources: "공식 API와 공개 원문 수집",
     collecting_documents: "문서 자료 확보",
     extracting_candidates: "조사 후보 구조화",
@@ -69,9 +76,8 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     "bulk" | { questionId: string } | null
   >(null);
   const [sourceDraft, setSourceDraft] = useState<SourceType[]>([]);
-  const [materialType, setMaterialType] = useState<
-    ResearchSourceReference["sourceType"]
-  >("COMPANY_IR");
+  const [materialType, setMaterialType] =
+    useState<ManualMaterialType>("COMPANY_IR");
   const [materialMethod, setMaterialMethod] = useState<"user_upload" | "user_url">(
     "user_upload",
   );
@@ -247,10 +253,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
       setPageError("자료명을 입력해주세요.");
       return;
     }
-    if (
-      (materialType === "COMPANY_IR" || materialType === "NEWS") &&
-      !materialPublishedAt
-    ) {
+    if (materialType === "COMPANY_IR" && !materialPublishedAt) {
       setPageError("자료 발행일을 입력해주세요.");
       return;
     }
@@ -587,6 +590,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                 화면을 떠나도 작업은 계속됩니다. 최근 갱신{" "}
                 {new Date(job.updatedAt).toLocaleTimeString("ko-KR")}
               </small>
+              {job.error && <small role="alert">{job.error.message}</small>}
             </div>
             <div
               className="phase4-progress"
@@ -740,6 +744,23 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                             )}
                           </span>
                         ))}
+                        {question.sourceBindingIds.includes("NEWS") &&
+                          question.newsSearchPolicy?.publicationWindows.map(
+                            (window) => (
+                              <span key={`${window.startAt}-${window.endAt}`}>
+                                뉴스 검색 기간 ·{" "}
+                                {new Date(window.startAt).toLocaleDateString(
+                                  "ko-KR",
+                                  { timeZone: "Asia/Seoul" },
+                                )}{" "}
+                                ~{" "}
+                                {new Date(window.endAt).toLocaleDateString(
+                                  "ko-KR",
+                                  { timeZone: "Asia/Seoul" },
+                                )}
+                              </span>
+                            ),
+                          )}
                       </dd>
                     </div>
                   </dl>
@@ -770,9 +791,8 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                 <div>
                   <h2>사용자 제공 원문</h2>
                   <p>
-                    기업 IR은 공식 PDF를 올리거나 공식 IR URL을 연결해야
-                    합니다. 등록한 유형과 출처 권위는 Evidence에 그대로
-                    기록됩니다.
+                    기업 IR과 별도 참고 자료를 연결합니다. 뉴스는 질문에
+                    표시된 기간 안에서 Research Agent가 자동으로 검색합니다.
                   </p>
                 </div>
                 <span>
@@ -798,15 +818,11 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                     value={materialType}
                     disabled={activeJob || materialSaving}
                     onChange={(event) => {
-                      const next = event.target
-                        .value as ResearchSourceReference["sourceType"];
-                      setMaterialType(next);
-                      if (next === "NEWS") setMaterialMethod("user_url");
+                      setMaterialType(event.target.value as ManualMaterialType);
                       setSaveState("idle");
                     }}
                   >
                     <option value="COMPANY_IR">기업 IR</option>
-                    <option value="NEWS">뉴스 원문</option>
                     <option value="USER_MATERIAL">사용자 자료</option>
                   </select>
                 </label>
@@ -846,7 +862,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                       value="user_upload"
                       checked={materialMethod === "user_upload"}
                       disabled={
-                        activeJob || materialSaving || materialType === "NEWS"
+                        activeJob || materialSaving
                       }
                       onChange={() => {
                         setMaterialMethod("user_upload");

@@ -38,7 +38,25 @@ async function run(): Promise<void> {
     taskQueue: "llm",
     activities: {
       generateHypothesisQuestions: activities.generateHypothesisQuestions,
+      planNewsSearch: activities.planNewsSearch,
+      extractResearchCandidates: activities.extractResearchCandidates,
       runResearchValidation: activities.runResearchValidation,
+    },
+  });
+  const researchNetworkWorker = await Worker.create({
+    connection,
+    namespace,
+    taskQueue: "research-network",
+    activities: {
+      collectResearchBundle: activities.collectResearchBundle,
+    },
+  });
+  const evidenceValidationWorker = await Worker.create({
+    connection,
+    namespace,
+    taskQueue: "evidence-validation",
+    activities: {
+      validateAndPublishResearch: activities.validateAndPublishResearch,
     },
   });
 
@@ -62,6 +80,8 @@ async function run(): Promise<void> {
     pdfWorker.shutdown();
     excelWorker.shutdown();
     llmWorker.shutdown();
+    researchNetworkWorker.shutdown();
+    evidenceValidationWorker.shutdown();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -72,6 +92,8 @@ async function run(): Promise<void> {
       pdfWorker.run(),
       excelWorker.run(),
       llmWorker.run(),
+      researchNetworkWorker.run(),
+      evidenceValidationWorker.run(),
     ]);
   } finally {
     clearInterval(reconciliationTimer);

@@ -4,6 +4,7 @@ import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import {
   RESEARCH_SOURCE_TYPES,
+  attachNewsSearchPolicies,
   calculateQuestionSufficiency,
   defaultCollectionMethod,
   normalizePublicResearchUrls,
@@ -17,6 +18,7 @@ import {
   type ResearchSourceReference,
   type ResearchSourceSnapshot,
   type ResearchSourceType,
+  type NewsDiscoveryResult,
   type ValidatedEvidence,
 } from "../../domain/research-validation";
 import { ApiError } from "../../http/api-error";
@@ -91,6 +93,7 @@ export type PhaseFourWorkerPayload = {
   sources: ResearchSourceSnapshot[];
   candidates: ResearchCandidate[];
   evidence: ValidatedEvidence[];
+  newsDiscovery?: NewsDiscoveryResult[];
   warnings: Array<{ code: string; message: string }>;
   metadata: {
     researchAgentProfile: string;
@@ -467,7 +470,14 @@ async function buildDefaultSnapshot(
         excludedReason: null,
       };
     });
-  return { questions, excelTargets, userUrls: [], sourceReferences: [] };
+  return attachNewsSearchPolicies(
+    { questions, excelTargets, userUrls: [], sourceReferences: [] },
+    {
+      targetYear: context.targetYear,
+      targetQuarter: context.targetQuarter,
+      cutoffAt: context.cutoffAt,
+    },
+  );
 }
 
 async function insertPlanSnapshot(
@@ -484,7 +494,7 @@ async function insertPlanSnapshot(
   },
 ): Promise<PlanRow> {
   const resourceVersionId = uuidv7();
-  const issues = validateResearchPlan(input.snapshot);
+  const issues = validateResearchPlan(input.snapshot, input.context.cutoffAt);
   const status = input.status ?? "draft";
   await client.query(
     `INSERT INTO resource_version (
@@ -637,12 +647,19 @@ async function loadPlan(
   );
   const row = result.rows[0];
   if (!row) return null;
-  const snapshot: ResearchPlanSnapshot = {
-    ...row.plan_snapshot_json,
-    userUrls: row.plan_snapshot_json.userUrls ?? [],
-    sourceReferences: row.plan_snapshot_json.sourceReferences ?? [],
-  };
-  const issues = validateResearchPlan(snapshot);
+  const snapshot = attachNewsSearchPolicies(
+    {
+      ...row.plan_snapshot_json,
+      userUrls: row.plan_snapshot_json.userUrls ?? [],
+      sourceReferences: row.plan_snapshot_json.sourceReferences ?? [],
+    },
+    {
+      targetYear: context.targetYear,
+      targetQuarter: context.targetQuarter,
+      cutoffAt: context.cutoffAt,
+    },
+  );
+  const issues = validateResearchPlan(snapshot, context.cutoffAt);
   return {
     planId: row.plan_id,
     resourceId: row.resource_id,
@@ -798,7 +815,10 @@ function sourceOptions() {
       label: "기업 IR",
       description: "사용자가 제공한 공식 PDF 또는 IR URL",
     },
-    NEWS: { label: "뉴스", description: "사용자가 연결한 실제 기사 원문 URL" },
+    NEWS: {
+      label: "뉴스",
+      description: "AI가 설정된 기간 안에서 실제 뉴스 원문을 검색",
+    },
     KRX: { label: "KRX", description: "주가·거래 데이터" },
     ECOS: { label: "한국은행 ECOS", description: "금리·환율 등 거시지표" },
     FNGUIDE_CONSENSUS: {
@@ -911,6 +931,7 @@ type PlanChange =
 function applyPlanChanges(
   snapshot: ResearchPlanSnapshot,
   changes: unknown,
+  context: Pick<ProjectContext, "targetYear" | "targetQuarter" | "cutoffAt">,
 ): ResearchPlanSnapshot {
   if (!Array.isArray(changes) || changes.length < 1 || changes.length > 30) {
     throw new ApiError(
@@ -974,13 +995,14 @@ function applyPlanChanges(
       throw new ApiError(400, "INVALID_PLAN_CHANGE", "지원하지 않는 계획 변경입니다.");
     }
   }
-  const issues = validateResearchPlan(next);
-  for (const question of next.questions) {
+  const hydrated = attachNewsSearchPolicies(next, context);
+  const issues = validateResearchPlan(hydrated, context.cutoffAt);
+  for (const question of hydrated.questions) {
     question.validationErrors = issues
       .filter((issue) => issue.targetId === question.questionId)
       .map((issue) => issue.message);
   }
-  return next;
+  return hydrated;
 }
 
 export async function saveResearchPlan(input: {
@@ -1017,7 +1039,7 @@ export async function saveResearchPlan(input: {
         { meta: { currentVersion: plan.version } },
       );
     }
-    const snapshot = applyPlanChanges(plan.snapshot, input.changes);
+    const snapshot = applyPlanChanges(plan.snapshot, input.changes, context);
     const created = await replacePlanSnapshot(client, {
       context,
       plan,
@@ -1036,14 +1058,23 @@ export async function saveResearchPlan(input: {
   });
 }
 
-type ManualResearchSourceType = ResearchSourceReference["sourceType"];
+type ManualResearchSourceType = Exclude<
+  ResearchSourceReference["sourceType"],
+  "NEWS"
+>;
 
 function requireManualSourceType(value: unknown): ManualResearchSourceType {
   if (
     value !== "COMPANY_IR" &&
-    value !== "NEWS" &&
     value !== "USER_MATERIAL"
   ) {
+    if (value === "NEWS") {
+      throw new ApiError(
+        422,
+        "NEWS_MANUAL_MATERIAL_UNSUPPORTED",
+        "뉴스는 Research Agent가 설정된 기간 안에서 자동으로 검색합니다.",
+      );
+    }
     throw new ApiError(
       422,
       "SOURCE_TYPE_INVALID",
@@ -1202,13 +1233,6 @@ export async function addResearchMaterial(input: {
 }): Promise<unknown> {
   const expectedVersion = requireVersion(input.expectedVersion, "조사 계획");
   const sourceType = requireManualSourceType(input.sourceType);
-  if (sourceType === "NEWS" && input.file) {
-    throw new ApiError(
-      422,
-      "SOURCE_INGESTION_METHOD_INVALID",
-      "뉴스는 실제 기사 원문 URL로만 등록할 수 있습니다.",
-    );
-  }
   if (!!input.file === (input.url !== undefined && input.url !== null && input.url !== "")) {
     throw new ApiError(
       422,
@@ -1641,7 +1665,7 @@ export async function approveResearchPlanAndStart(input: {
         { meta: { jobId: active.jobId } },
       );
     }
-    const issues = validateResearchPlan(plan.snapshot);
+    const issues = validateResearchPlan(plan.snapshot, context.cutoffAt);
     if (issues.length > 0) {
       throw new ApiError(
         422,
@@ -1657,9 +1681,21 @@ export async function approveResearchPlanAndStart(input: {
       );
     }
     await client.query(
-      `UPDATE resource_version SET lifecycle_status = 'approved'
+      `UPDATE research_plan_version
+       SET plan_snapshot_json = $2::jsonb,
+           validation_summary_json = $3::jsonb
        WHERE resource_version_id = $1`,
-      [plan.resourceVersionId],
+      [
+        plan.resourceVersionId,
+        JSON.stringify(plan.snapshot),
+        JSON.stringify({ valid: true, issues: [] }),
+      ],
+    );
+    await client.query(
+      `UPDATE resource_version
+       SET lifecycle_status = 'approved', content_hash = $2
+       WHERE resource_version_id = $1`,
+      [plan.resourceVersionId, contentHash(plan.snapshot)],
     );
     await client.query(
       `UPDATE research_plan_version
@@ -2009,10 +2045,12 @@ async function insertSourceVersion(
     `INSERT INTO research_source_version (
        resource_version_id, source_id, research_run_id, source_type, title,
        publisher, canonical_url, published_at, collected_at, response_hash,
-       locator_json, snapshot_json, collector_version
+       locator_json, snapshot_json, collector_version, modified_at,
+       available_at, date_precision, artifact_object_key, parser_version,
+       eligibility_policy_version
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-       $11::jsonb, $12::jsonb, $13
+       $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18, $19
      )`,
     [
       resourceVersionId,
@@ -2028,6 +2066,12 @@ async function insertSourceVersion(
       JSON.stringify(input.source.locator),
       JSON.stringify(input.source.content),
       input.source.collectorVersion,
+      input.source.modifiedAt ?? null,
+      input.source.availableAt ?? null,
+      input.source.datePrecision ?? null,
+      input.source.artifactObjectKey ?? null,
+      input.source.parserVersion ?? null,
+      input.source.eligibilityPolicyVersion ?? null,
     ],
   );
   return resourceVersionId;
@@ -2039,6 +2083,8 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
     !Array.isArray(payload.sources) ||
     !Array.isArray(payload.candidates) ||
     !Array.isArray(payload.evidence) ||
+    (payload.newsDiscovery !== undefined &&
+      !Array.isArray(payload.newsDiscovery)) ||
     payload.metadata?.validationRuleVersion !== VALIDATION_RULE_VERSION
   ) {
     throw new ApiError(
@@ -2320,6 +2366,75 @@ export async function commitResearchValidationResult(
         source,
       });
       sourceVersionByKey.set(source.sourceKey, sourceVersionId);
+    }
+    const sourceVersionByProviderResultId = new Map<string, string>();
+    const sourceVersionByCanonicalUrl = new Map<string, string>();
+    for (const source of payload.sources) {
+      const sourceVersionId = sourceVersionByKey.get(source.sourceKey);
+      const providerResultId =
+        typeof source.locator.providerResultId === "string"
+          ? source.locator.providerResultId
+          : null;
+      if (sourceVersionId && providerResultId) {
+        sourceVersionByProviderResultId.set(providerResultId, sourceVersionId);
+      }
+      if (sourceVersionId && source.canonicalUrl) {
+        sourceVersionByCanonicalUrl.set(source.canonicalUrl, sourceVersionId);
+      }
+    }
+    const searchIdByKey = new Map<string, string>();
+    for (const discovery of payload.newsDiscovery ?? []) {
+      const searchKey = `${discovery.questionId}:${discovery.queryId}`;
+      let searchId = searchIdByKey.get(searchKey);
+      if (!searchId) {
+        searchId = uuidv7();
+        searchIdByKey.set(searchKey, searchId);
+        await client.query(
+          `INSERT INTO research_news_search (
+             search_id, research_run_id, question_id, query_id, query_text,
+             publication_window_json, provider_code, provider_policy_version,
+             status
+           ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'completed')`,
+          [
+            searchId,
+            run.research_run_id,
+            discovery.questionId,
+            discovery.queryId,
+            discovery.queryText,
+            JSON.stringify(discovery.publicationWindow),
+            discovery.providerCode,
+            discovery.policyVersion,
+          ],
+        );
+      }
+      const sourceVersionId =
+        (discovery.providerResultId
+          ? sourceVersionByProviderResultId.get(discovery.providerResultId)
+          : undefined) ??
+        sourceVersionByCanonicalUrl.get(discovery.url) ??
+        null;
+      await client.query(
+        `INSERT INTO research_news_search_result (
+           search_result_id, search_id, provider_result_id, result_rank,
+           discovered_url, title_hint, publisher_hint, published_at_hint,
+           selection_status, source_version_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          uuidv7(),
+          searchId,
+          discovery.providerResultId,
+          discovery.resultRank,
+          discovery.url,
+          discovery.titleHint,
+          discovery.publisherHint,
+          discovery.publishedAtHint &&
+          Number.isFinite(Date.parse(discovery.publishedAtHint))
+            ? discovery.publishedAtHint
+            : null,
+          sourceVersionId ? "captured" : "discovered",
+          sourceVersionId,
+        ],
+      );
     }
     const validationRunId = uuidv7();
     await client.query(

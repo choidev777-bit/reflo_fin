@@ -20,6 +20,27 @@ export type ExpectedResultType =
   | "event"
   | "comparison";
 
+export const NEWS_SEARCH_POLICY_VERSION = "news-policy-v1";
+
+export type NewsSearchPolicy = {
+  mode: "agent_web_search";
+  publicationWindows: Array<{
+    purpose: "current_period" | "historical_comparison";
+    startAt: string;
+    endAt: string;
+  }>;
+  subjectPeriods: string[];
+  timezone: "Asia/Seoul";
+  queryLimit: number;
+  discoverLimit: number;
+  fetchLimit: number;
+  retainLimit: number;
+  perPublisherLimit: number;
+  languages: string[];
+  providerCode: string;
+  policyVersion: string;
+};
+
 export type ResearchPlanQuestion = {
   questionId: string;
   order: number;
@@ -36,6 +57,7 @@ export type ResearchPlanQuestion = {
   }>;
   sourceBindingIds: ResearchSourceType[];
   collectionMethods: Partial<Record<ResearchSourceType, CollectionMethod>>;
+  newsSearchPolicy?: NewsSearchPolicy;
   validationErrors: string[];
 };
 
@@ -98,11 +120,35 @@ export type ResearchSourceSnapshot = {
   publisher: string;
   canonicalUrl: string | null;
   publishedAt: string | null;
+  modifiedAt?: string | null;
+  availableAt?: string | null;
+  datePrecision?: "second" | "minute" | "day" | null;
   collectedAt: string;
   responseHash: string;
   locator: Record<string, unknown>;
   content: Record<string, unknown>;
+  artifactObjectKey?: string | null;
+  parserVersion?: string | null;
+  eligibilityPolicyVersion?: string | null;
   collectorVersion: string;
+};
+
+export type NewsDiscoveryResult = {
+  questionId: string;
+  queryId: string;
+  queryText: string;
+  providerCode: string;
+  providerResultId: string | null;
+  resultRank: number;
+  url: string;
+  titleHint: string | null;
+  publisherHint: string | null;
+  publishedAtHint: string | null;
+  publicationWindow: {
+    startAt: string;
+    endAt: string;
+  };
+  policyVersion: string;
 };
 
 export type ResearchCandidate = {
@@ -175,6 +221,113 @@ export function defaultCollectionMethod(
   if (["KRX", "ECOS", "FNGUIDE_CONSENSUS"].includes(sourceType)) return "code";
   if (sourceType === "DART") return "code_then_agent";
   return "research_agent";
+}
+
+export function deriveNewsSearchPolicy(input: {
+  targetYear: number;
+  targetQuarter: number;
+  cutoffAt: string;
+  subjectPeriods: string[];
+  providerCode?: string;
+}): NewsSearchPolicy {
+  const quarter = Math.min(4, Math.max(1, Math.trunc(input.targetQuarter)));
+  const quarterStart = new Date(
+    Date.UTC(input.targetYear, (quarter - 1) * 3, 1),
+  );
+  quarterStart.setUTCDate(quarterStart.getUTCDate() - 30);
+  return {
+    mode: "agent_web_search",
+    publicationWindows: [
+      {
+        purpose: "current_period",
+        startAt: `${quarterStart.toISOString().slice(0, 10)}T00:00:00+09:00`,
+        endAt: input.cutoffAt,
+      },
+    ],
+    subjectPeriods: Array.from(
+      new Set(input.subjectPeriods.map((period) => period.trim()).filter(Boolean)),
+    ),
+    timezone: "Asia/Seoul",
+    queryLimit: 4,
+    discoverLimit: 20,
+    fetchLimit: 10,
+    retainLimit: 8,
+    perPublisherLimit: 2,
+    languages: ["ko", "en"],
+    providerCode: input.providerCode ?? "openai_web_search",
+    policyVersion: NEWS_SEARCH_POLICY_VERSION,
+  };
+}
+
+export function attachNewsSearchPolicies(
+  snapshot: ResearchPlanSnapshot,
+  input: {
+    targetYear: number;
+    targetQuarter: number;
+    cutoffAt: string;
+    providerCode?: string;
+  },
+): ResearchPlanSnapshot {
+  return {
+    ...snapshot,
+    questions: snapshot.questions.map((question) => {
+      if (!question.sourceBindingIds.includes("NEWS")) {
+        return { ...question, newsSearchPolicy: undefined };
+      }
+      return {
+        ...question,
+        newsSearchPolicy:
+          question.newsSearchPolicy ??
+          deriveNewsSearchPolicy({
+            ...input,
+            subjectPeriods: [question.period],
+          }),
+      };
+    }),
+  };
+}
+
+function newsSearchPolicyIssue(
+  policy: NewsSearchPolicy | undefined,
+  cutoffAt: string | undefined,
+): string | null {
+  if (!policy) return "뉴스 자동 검색 기간을 다시 확인해주세요.";
+  if (
+    policy.mode !== "agent_web_search" ||
+    policy.timezone !== "Asia/Seoul" ||
+    policy.policyVersion !== NEWS_SEARCH_POLICY_VERSION ||
+    policy.providerCode !== "openai_web_search" ||
+    policy.publicationWindows.length < 1 ||
+    policy.publicationWindows.length > 2 ||
+    policy.subjectPeriods.length < 1 ||
+    policy.queryLimit < 2 ||
+    policy.queryLimit > 4 ||
+    policy.discoverLimit < 1 ||
+    policy.discoverLimit > 20 ||
+    policy.fetchLimit < 1 ||
+    policy.fetchLimit > 10 ||
+    policy.retainLimit < 1 ||
+    policy.retainLimit > 8 ||
+    policy.perPublisherLimit < 1 ||
+    policy.perPublisherLimit > 2
+  ) {
+    return "뉴스 자동 검색 정책이 허용 범위를 벗어났습니다.";
+  }
+  const cutoff = cutoffAt ? Date.parse(cutoffAt) : Number.POSITIVE_INFINITY;
+  for (const window of policy.publicationWindows) {
+    const start = Date.parse(window.startAt);
+    const end = Date.parse(window.endAt);
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      start > end ||
+      end > cutoff ||
+      end - start > 240 * 24 * 60 * 60 * 1_000
+    ) {
+      return "뉴스 검색 기간은 기준일 이전 240일 안으로 설정해야 합니다.";
+    }
+  }
+  return null;
 }
 
 function isPrivateIpv4(value: string): boolean {
@@ -270,6 +423,7 @@ export function normalizePublicResearchUrls(values: unknown): string[] {
 
 export function validateResearchPlan(
   snapshot: ResearchPlanSnapshot,
+  cutoffAt?: string,
 ): PlanValidationIssue[] {
   const issues: PlanValidationIssue[] = [];
   const references = snapshot.sourceReferences ?? [];
@@ -331,6 +485,20 @@ export function validateResearchPlan(
             "FnGuide 자동 수집은 현재 지원하지 않습니다. 다른 공식 출처를 선택해주세요.",
         });
       }
+      if (sourceType === "NEWS") {
+        const policyIssue = newsSearchPolicyIssue(
+          question.newsSearchPolicy,
+          cutoffAt,
+        );
+        if (policyIssue) {
+          issues.push({
+            code: "NEWS_SEARCH_POLICY_INVALID",
+            targetId: question.questionId,
+            category: "material",
+            message: policyIssue,
+          });
+        }
+      }
     }
   }
   for (const target of snapshot.excelTargets) {
@@ -367,6 +535,19 @@ export function validateResearchPlan(
         message: "FnGuide 컨센서스는 실제값 권위 출처로 사용할 수 없습니다.",
       });
     }
+    if (
+      target.sourcePolicy.some(
+        (policy) =>
+          policy.sourceType === "NEWS" && policy.role === "authority",
+      )
+    ) {
+      issues.push({
+        code: "NEWS_AUTHORITY_FORBIDDEN",
+        targetId: target.targetId,
+        category: "excel",
+        message: "뉴스는 Excel 실제값의 권위 출처로 사용할 수 없습니다.",
+      });
+    }
   }
   if (snapshot.userUrls.length > 20) {
     issues.push({
@@ -381,7 +562,6 @@ export function validateResearchPlan(
     for (const sourceType of question.sourceBindingIds) {
       if (
         sourceType === "COMPANY_IR" ||
-        sourceType === "NEWS" ||
         sourceType === "USER_MATERIAL"
       ) {
         selectedManualTypes.add(sourceType);
@@ -392,7 +572,6 @@ export function validateResearchPlan(
     for (const policy of target.sourcePolicy) {
       if (
         policy.sourceType === "COMPANY_IR" ||
-        policy.sourceType === "NEWS" ||
         policy.sourceType === "USER_MATERIAL"
       ) {
         selectedManualTypes.add(policy.sourceType);
@@ -408,9 +587,7 @@ export function validateResearchPlan(
         message:
           sourceType === "COMPANY_IR"
             ? "기업 IR 출처를 사용하려면 공식 PDF를 올리거나 공식 IR URL을 입력해주세요."
-            : sourceType === "NEWS"
-              ? "뉴스 출처를 사용하려면 실제 기사 원문 URL을 입력해주세요."
-              : "사용자 자료 출처를 사용하려면 PDF를 올리거나 공개 원문 URL을 입력해주세요.",
+            : "사용자 자료 출처를 사용하려면 PDF를 올리거나 공개 원문 URL을 입력해주세요.",
       });
     }
   }
@@ -455,8 +632,9 @@ export function validateEvidenceCandidate(
     {
       code: "cutoff",
       status:
-        !source.publishedAt ||
-        new Date(source.publishedAt).getTime() <= new Date(cutoffAt).getTime()
+        !(source.availableAt ?? source.publishedAt) ||
+        new Date(source.availableAt ?? source.publishedAt!).getTime() <=
+          new Date(cutoffAt).getTime()
           ? "passed"
           : "failed",
       message: "자료 발행일이 프로젝트 기준일을 넘지 않습니다.",
@@ -484,12 +662,22 @@ export function validateEvidenceCandidate(
       message: "핵심 숫자의 원본 값과 Decimal 정규화 값이 있습니다.",
     });
   }
+  if (source.sourceType === "NEWS" && candidate.category === "excel") {
+    checks.push({
+      code: "source_authority",
+      status: "failed",
+      message: "뉴스는 Excel 실제값의 권위 출처로 사용할 수 없습니다.",
+    });
+  }
   return {
     ...candidate,
     machineStatus: checks.every((check) => check.status === "passed")
       ? "passed"
       : "failed",
     checks,
-    locator: source.locator,
+    locator:
+      source.sourceType === "NEWS"
+        ? { ...source.locator, textFragment: candidate.quoteExact }
+        : source.locator,
   };
 }
