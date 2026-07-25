@@ -7,6 +7,7 @@ import type * as activities from "./activities";
 import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
+  HypothesisGenerationWorkflowInput,
 } from "./types";
 
 const scanActivities = proxyActivities<typeof activities>({
@@ -30,6 +31,18 @@ const inspectionActivities = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumInterval: "1 minute",
     maximumAttempts: 3,
+  },
+});
+
+const llmActivities = proxyActivities<typeof activities>({
+  taskQueue: "llm",
+  startToCloseTimeout: "3 minutes",
+  heartbeatTimeout: "30 seconds",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "30 seconds",
+    maximumAttempts: 2,
   },
 });
 
@@ -71,6 +84,29 @@ export async function fileInspectionWorkflow(
           input.jobAttempt,
           "FILE_INSPECTION_FAILED",
           "파일 분석 작업을 완료하지 못했습니다.",
+          true,
+        );
+      }
+    });
+    throw error;
+  }
+}
+
+export async function hypothesisGenerationWorkflow(
+  input: HypothesisGenerationWorkflowInput,
+): Promise<void> {
+  try {
+    await llmActivities.generateHypothesisQuestions(input);
+  } catch (error) {
+    await CancellationScope.nonCancellable(async () => {
+      if (isCancellation(error)) {
+        await scanActivities.reportCancellation(input.jobId, input.jobAttempt);
+      } else {
+        await scanActivities.reportFailure(
+          input.jobId,
+          input.jobAttempt,
+          "AGENT_UNAVAILABLE",
+          "조사 질문을 만들지 못했습니다. 잠시 후 다시 시도해주세요.",
           true,
         );
       }

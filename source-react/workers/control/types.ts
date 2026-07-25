@@ -36,6 +36,42 @@ export type FileInspectionWorkflowInput = {
   };
 };
 
+export type HypothesisGenerationWorkflowInput = {
+  workflowType: "hypothesisGenerationWorkflow";
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  generationId: string;
+  inputResourceVersionId: string;
+  inputDraftVersion: number;
+  inputContentHash: string;
+  inputRevision: string;
+  company: string;
+  ticker: string;
+  sector: string;
+  targetPeriod: string;
+  asOfDate: string;
+  reportType: string;
+  rating: "BUY" | "HOLD" | "SELL";
+  hypothesis: string;
+  knownFacts: string[];
+  availableSourceTypes: Array<
+    "filing" | "company" | "news" | "industry" | "market_data"
+  >;
+  optionalContext: string | null;
+  agentProfile: {
+    version: string;
+    promptVersion: string;
+    outputSchemaVersion: string;
+    model: string;
+    reasoning: "medium";
+    inputTokenLimit: number;
+    outputTokenLimit: number;
+    timeoutSeconds: number;
+    costLimitUsd: number;
+  };
+};
+
 export type InspectionIssue = {
   code: string;
   severity: "info" | "warning" | "blocking";

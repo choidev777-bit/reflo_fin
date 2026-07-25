@@ -8,6 +8,10 @@ import {
   type InspectionResultPayload,
 } from "@/server/infrastructure/repositories/file-repository";
 import { ApiError } from "@/server/http/api-error";
+import {
+  commitHypothesisGenerationResult,
+  type HypothesisWorkerResult,
+} from "@/server/infrastructure/repositories/hypothesis-repository";
 
 type Context = { params: Promise<{ jobId: string }> };
 
@@ -27,6 +31,11 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
       );
     } else if (body.resultType === "file_inspection") {
       await commitInspectionResult(jobId, body.payload as InspectionResultPayload);
+    } else if (body.resultType === "hypothesis_questions") {
+      await commitHypothesisGenerationResult(
+        jobId,
+        body.payload as HypothesisWorkerResult,
+      );
     } else {
       throw new ApiError(
         400,

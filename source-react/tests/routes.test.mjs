@@ -78,3 +78,32 @@ test("uses the real Phase 2 file workspace instead of the timer prototype", asyn
   assert.match(repository, /INSERT INTO outbox_event/);
   assert.match(repository, /temporal_workflow_id/);
 });
+
+test("uses the versioned Phase 3 hypothesis workspace and Agent job", async () => {
+  const [page, screen, repository, workflow] = await Promise.all([
+    readFile(
+      new URL(
+        "../app/projects/[projectId]/process/hypothesis/page.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(new URL("../app/_phase3/HypothesisScreen.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL(
+        "../server/infrastructure/repositories/hypothesis-repository.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(new URL("../workers/control/workflows.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /HypothesisScreen/);
+  assert.doesNotMatch(page, /LegacyClient/);
+  assert.match(screen, /question-sets/);
+  assert.match(screen, /질문 전체 승인/);
+  assert.match(repository, /hypothesis_approval/);
+  assert.match(repository, /INPUT_REVISION_CHANGED/);
+  assert.match(workflow, /hypothesisGenerationWorkflow/);
+});

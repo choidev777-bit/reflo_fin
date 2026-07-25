@@ -103,6 +103,28 @@ services:
     ports:
       - "127.0.0.1:8092:8092"
 
+  llm-worker:
+    build:
+      context: ../..
+      dockerfile: workers/llm/Dockerfile
+    environment:
+      PORT: 8093
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REFLO_LLM_TEST_FIXTURE: ${REFLO_LLM_TEST_FIXTURE:-0}
+    ports:
+      - "127.0.0.1:8093:8093"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/health')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   reflo-postgres:
   reflo-minio:

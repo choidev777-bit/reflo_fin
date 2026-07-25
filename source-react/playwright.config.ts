@@ -40,6 +40,7 @@ export default defineConfig({
       ...process.env,
       REFLO_TEST_AUTH_ENABLED: "1",
       REFLO_KRX_TEST_FIXTURE: "1",
+      REFLO_LLM_TEST_FIXTURE: "1",
     },
   },
 });

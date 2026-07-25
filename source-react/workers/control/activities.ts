@@ -14,6 +14,7 @@ import {
 import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
+  HypothesisGenerationWorkflowInput,
   PdfInspectionResult,
   WorkbookInspectionResult,
 } from "./types";
@@ -297,6 +298,73 @@ export async function inspectAndFinalize(
     "PDF 슬롯과 Excel 원본 후보를 의미 단위로 매핑하고 있습니다.",
   );
   await finalizeInspection(input, pdf, workbook, marketPrice);
+}
+
+export async function generateHypothesisQuestions(
+  input: HypothesisGenerationWorkflowInput,
+): Promise<void> {
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    "agent_started",
+    15,
+    "투자 가설을 조사 가능한 질문으로 나누고 있습니다.",
+  );
+  const timeout = AbortSignal.timeout(input.agentProfile.timeoutSeconds * 1_000);
+  const signal = AbortSignal.any([
+    timeout,
+    Context.current().cancellationSignal,
+  ]);
+  const response = await fetch(
+    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/hypothesis/questions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+          company: input.company,
+          ticker: input.ticker,
+          sector: input.sector,
+          targetPeriod: input.targetPeriod,
+          asOfDate: input.asOfDate,
+          reportType: input.reportType,
+          rating: input.rating,
+          hypothesis: input.hypothesis,
+          knownFacts: input.knownFacts,
+          availableSourceTypes: input.availableSourceTypes,
+          optionalContext: input.optionalContext,
+          inputRevision: input.inputRevision,
+          inputResourceVersionId: input.inputResourceVersionId,
+          inputDraftVersion: input.inputDraftVersion,
+          inputContentHash: input.inputContentHash,
+        },
+        profile: input.agentProfile,
+      }),
+      signal,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `LLM worker ${response.status}: ${(await response.text()).slice(0, 300)}`,
+    );
+  }
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    2,
+    "output_validation",
+    80,
+    "질문 형식과 조사 가능성을 검증하고 있습니다.",
+  );
+  const payload = await response.json();
+  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
+    schemaVersion: "1.0.0",
+    attempt: input.jobAttempt,
+    sequence: 3,
+    resultType: "hypothesis_questions",
+    payload,
+  });
 }
 
 function descriptor(

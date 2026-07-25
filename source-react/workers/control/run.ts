@@ -32,6 +32,14 @@ async function run(): Promise<void> {
     taskQueue: "excel-calc",
     activities: { analyzeExcel: activities.analyzeExcel },
   });
+  const llmWorker = await Worker.create({
+    connection,
+    namespace,
+    taskQueue: "llm",
+    activities: {
+      generateHypothesisQuestions: activities.generateHypothesisQuestions,
+    },
+  });
 
   let reconciliationRunning = false;
   const reconciliationTimer = setInterval(() => {
@@ -52,6 +60,7 @@ async function run(): Promise<void> {
     fileScanWorker.shutdown();
     pdfWorker.shutdown();
     excelWorker.shutdown();
+    llmWorker.shutdown();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -61,6 +70,7 @@ async function run(): Promise<void> {
       fileScanWorker.run(),
       pdfWorker.run(),
       excelWorker.run(),
+      llmWorker.run(),
     ]);
   } finally {
     clearInterval(reconciliationTimer);

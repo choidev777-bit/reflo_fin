@@ -1,4 +1,4 @@
-import LegacyClient from "../../../../legacy-client";
+import { HypothesisScreen } from "../../../../_phase3/HypothesisScreen";
 import { requireProjectPageAccess } from "../../_lib/project-page-access";
 
 export default async function HypothesisPage({
@@ -9,5 +9,5 @@ export default async function HypothesisPage({
   const { projectId } = await params;
   const route = `/projects/${projectId}/process/hypothesis`;
   await requireProjectPageAccess(projectId, route);
-  return <LegacyClient />;
+  return <HypothesisScreen projectId={projectId} />;
 }

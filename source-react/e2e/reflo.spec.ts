@@ -234,10 +234,10 @@ test("외부 returnTo는 거부", async ({ request }) => {
   });
 });
 
-test("Phase 2 fixture 업로드 → 격리 검사 → PDF·Excel 분석 → 결과 확정", async ({
+test("Phase 2 완료 → Phase 3 질문 생성·수정·정렬·승인", async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const assertNoRuntimeErrors = watchRuntimeErrors(page);
   await testLogin(page, userLabel(test.info().title));
   const currentSession = await session(page.request);
@@ -321,5 +321,67 @@ test("Phase 2 fixture 업로드 → 격리 검사 → PDF·Excel 분석 → 결�
   await expect(page.getByText("v2", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /결과 확정 · 다음/ }).click();
   await expect(page).toHaveURL(/\/process\/hypothesis$/);
+  await expect(
+    page.getByRole("heading", { name: "투자의견 · 조사 질문" }),
+  ).toBeVisible();
+
+  await page.getByRole("radio", { name: /BUY/ }).click();
+  const thesis =
+    "[fixture:fail-twice] 판매량 회복과 제품 믹스 개선으로 2026년 2분기 수익성이 개선될 것이다.";
+  await page.getByLabel("투자 의견에 대한 설명").fill(thesis);
+  await page.getByLabel("투자 의견에 대한 설명").blur();
+  await expect(page.getByText("자동 저장됨", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "AI 질문 만들기" }).click();
+  await expect(
+    page.getByText(
+      "조사 질문을 만들지 못했습니다. 잠시 후 다시 시도해주세요.",
+      { exact: true },
+    ),
+  ).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "다시 만들기" }).click();
+  await expect(
+    page.getByRole("heading", { name: "현재 의견을 반영한 가설 질문" }),
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".phase3-question-row")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "수정" }).first().click();
+  const editor = page.getByLabel("01번 질문 수정");
+  const editedQuestion =
+    "2026년 2분기 ISC 매출은 전년 동기 대비 얼마나 증가했는지 확인할 수 있는가?";
+  await editor.fill(editedQuestion);
+  const updateResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/hypothesis/question-sets/"),
+  );
+  await page.getByRole("button", { name: "저장", exact: true }).click();
+  const updateResponse = await updateResponsePromise;
+  const updateBody = (await updateResponse.json()) as {
+    questionSet: { version: number; questions: Array<{ text: string }> };
+  };
+  expect(updateResponse.status()).toBe(200);
+  expect(updateBody.questionSet.questions[0]?.text).toBe(editedQuestion);
+  await expect(page.locator(".rf-question-panel")).toHaveAttribute(
+    "data-question-set-version",
+    String(updateBody.questionSet.version),
+  );
+  await expect(page.locator(".phase3-question-row").first()).toContainText(
+    editedQuestion,
+  );
+
+  await page.getByRole("button", { name: "01번 질문 아래로 이동" }).click();
+  await expect(page.locator(".phase3-question-row").nth(1)).toContainText(
+    editedQuestion,
+  );
+  await page.reload();
+  await expect(page.locator(".phase3-question-row").nth(1)).toContainText(
+    editedQuestion,
+  );
+
+  await page.getByRole("button", { name: "질문 전체 승인" }).click();
+  await expect(page.locator(".rf-question-panel .rf-badge")).toHaveText("승인 완료");
+  await expect(page.getByRole("button", { name: /다음/ })).toBeEnabled();
+  await page.getByRole("button", { name: /다음/ }).click();
+  await expect(page).toHaveURL(/\/process\/research-plan$/);
   assertNoRuntimeErrors();
 });
