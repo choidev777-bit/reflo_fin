@@ -72,6 +72,39 @@ export type HypothesisGenerationWorkflowInput = {
   };
 };
 
+export type ResearchValidationWorkflowInput = {
+  workflowType: "researchValidationWorkflow";
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  researchRunId: string;
+  approvedPlanResourceVersionId: string;
+  companyMasterId: string;
+  companyName: string;
+  corpCode: string | null;
+  ticker: string;
+  exchange: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
+  industry: string;
+  targetYear: number;
+  targetQuarter: number;
+  cutoffDate: string;
+  cutoffAt: string;
+  questions: import("../../server/domain/research-validation").ResearchPlanQuestion[];
+  excelTargets: import("../../server/domain/research-validation").ResearchExcelTarget[];
+  userUrls: string[];
+  researchAgentProfile: {
+    version: string;
+    model: string;
+    reasoning: "medium";
+  };
+  validationAgentProfile: {
+    version: string;
+    model: string;
+    reasoning: "medium";
+  };
+  validationRuleVersion: string;
+};
+
 export type InspectionIssue = {
   code: string;
   severity: "info" | "warning" | "blocking";

@@ -1,4 +1,4 @@
-import LegacyClient from "../../../../legacy-client";
+import { ResearchPlanScreen } from "../../../../_phase4/ResearchPlanScreen";
 import { requireProjectPageAccess } from "../../_lib/project-page-access";
 
 export default async function ResearchPlanPage({
@@ -9,5 +9,5 @@ export default async function ResearchPlanPage({
   const { projectId } = await params;
   const route = `/projects/${projectId}/process/research-plan`;
   await requireProjectPageAccess(projectId, route);
-  return <LegacyClient />;
+  return <ResearchPlanScreen projectId={projectId} />;
 }

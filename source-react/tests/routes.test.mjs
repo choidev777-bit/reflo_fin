@@ -107,3 +107,45 @@ test("uses the versioned Phase 3 hypothesis workspace and Agent job", async () =
   assert.match(repository, /INPUT_REVISION_CHANGED/);
   assert.match(workflow, /hypothesisGenerationWorkflow/);
 });
+
+test("uses the persisted Phase 4 research and validation workspaces", async () => {
+  const [researchPage, validationPage, researchScreen, repository, workflow] =
+    await Promise.all([
+      readFile(
+        new URL(
+          "../app/projects/[projectId]/process/research-plan/page.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/projects/[projectId]/process/validation/page.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL("../app/_phase4/ResearchPlanScreen.tsx", import.meta.url),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../server/infrastructure/repositories/phase4-repository.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(new URL("../workers/control/workflows.ts", import.meta.url), "utf8"),
+    ]);
+
+  assert.match(researchPage, /ResearchPlanScreen/);
+  assert.match(validationPage, /ValidationScreen/);
+  assert.doesNotMatch(researchPage, /LegacyClient/);
+  assert.doesNotMatch(validationPage, /LegacyClient/);
+  assert.match(researchScreen, /approve-and-start/);
+  assert.match(repository, /INSERT INTO research_source_version/);
+  assert.match(repository, /INSERT INTO validation_decision/);
+  assert.match(repository, /ACCEPT_QUALIFIED/);
+  assert.match(workflow, /researchValidationWorkflow/);
+});

@@ -10054,6 +10054,1717 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   }
 }
 
+/* Phase 4: versioned research planning and evidence validation */
+.phase4-page {
+  --p4-ink: #111410;
+  --p4-muted: #697066;
+  --p4-faint: #8b9387;
+  --p4-line: #e4e8e1;
+  --p4-soft: #f5f7f3;
+  --p4-lime: #c8ff3d;
+  --p4-lime-deep: #75a900;
+  --p4-lime-tint: #efffc5;
+  min-height: 100vh;
+  background: var(--p4-soft);
+  color: var(--p4-ink);
+}
+
+.phase4-project-strip {
+  min-height: 48px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--p4-line);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.phase4-project-strip button {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--p4-muted);
+  cursor: pointer;
+}
+
+.phase4-project-strip strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase4-workspace {
+  min-height: calc(100vh - 120px);
+}
+
+.phase4-sidebar {
+  border-right-color: var(--p4-line);
+  background: #fff;
+}
+
+.phase4-sidebar nav {
+  padding: 28px 16px;
+}
+
+.phase4-sidebar nav > p {
+  margin: 0 12px 14px;
+  color: var(--p4-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.phase4-sidebar nav > button {
+  width: 100%;
+  min-height: 62px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase4-sidebar nav > button:hover:not(:disabled),
+.phase4-sidebar nav > button:focus-visible {
+  background: var(--p4-soft);
+}
+
+.phase4-sidebar nav > button.active {
+  background: var(--p4-lime-tint);
+}
+
+.phase4-sidebar nav > button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.phase4-sidebar nav > button > i {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid var(--p4-line);
+  border-radius: 50%;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.phase4-sidebar nav > button.active > i {
+  border-color: var(--p4-lime);
+  background: var(--p4-lime);
+}
+
+.phase4-sidebar nav > button > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-sidebar nav > button b {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase4-sidebar nav > button small {
+  color: var(--p4-muted);
+  font-size: 10px;
+}
+
+.phase4-main {
+  padding-bottom: 96px;
+}
+
+.phase4-screen {
+  width: min(1180px, calc(100% - 64px));
+  padding-top: 48px;
+}
+
+.phase4-screen > .spec-screen-head {
+  margin-bottom: 24px;
+}
+
+.phase4-screen > .spec-screen-head h1 {
+  font-weight: 500;
+}
+
+.phase4-alert {
+  min-height: 50px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #d7e6a9;
+  border-radius: 10px;
+  background: var(--p4-lime-tint);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.phase4-alert.error {
+  border-color: #f0c8c4;
+  background: #ffebe9;
+  color: #8e2b26;
+}
+
+.phase4-alert button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+}
+
+.phase4-purpose-tabs,
+.phase4-validation-tabs {
+  border: 1px solid var(--p4-line);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: var(--p4-soft);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+}
+
+.phase4-purpose-tabs > button,
+.phase4-validation-tabs > button {
+  min-height: 72px;
+  padding: 10px 18px;
+  border: 0;
+  border-right: 1px solid var(--p4-line);
+  border-bottom: 1px solid var(--p4-line);
+  background: var(--p4-soft);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--p4-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase4-purpose-tabs > button:last-child,
+.phase4-validation-tabs > button:last-child {
+  border-right: 0;
+}
+
+.phase4-purpose-tabs > button.active {
+  border-bottom-color: #fff;
+  background: #fff;
+  color: var(--p4-ink);
+  box-shadow: inset 0 3px 0 var(--p4-lime-deep);
+}
+
+.phase4-validation-tabs > button.active {
+  border-bottom-color: var(--p4-ink);
+  background: var(--p4-ink);
+  color: #fff;
+}
+
+.phase4-purpose-tabs i,
+.phase4-validation-tabs i {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--p4-line);
+  border-radius: 50%;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  color: var(--p4-ink);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.phase4-purpose-tabs .active i,
+.phase4-validation-tabs .active i {
+  border-color: var(--p4-lime);
+  background: var(--p4-lime);
+}
+
+.phase4-purpose-tabs span,
+.phase4-validation-tabs span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-purpose-tabs small,
+.phase4-validation-tabs small {
+  color: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+
+.phase4-purpose-tabs strong,
+.phase4-validation-tabs strong {
+  font-size: 14px;
+}
+
+.phase4-plan-panel {
+  padding: 20px;
+  border: 1px solid var(--p4-line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: #fff;
+}
+
+.phase4-plan-guide {
+  margin: -20px -20px 18px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--p4-line);
+  background: var(--p4-soft);
+}
+
+.phase4-plan-guide p {
+  margin: 0;
+  color: var(--p4-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.phase4-source-summary {
+  min-height: 68px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--p4-line);
+  border-radius: 10px;
+  background: var(--p4-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phase4-source-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-source-summary span {
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.phase4-source-summary strong {
+  font-size: 16px;
+}
+
+.phase4-source-summary button,
+.phase4-materials > button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--p4-lime);
+  color: var(--p4-ink);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.phase4-source-summary button:disabled,
+.phase4-materials > button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.phase4-question-list {
+  display: grid;
+  gap: 12px;
+}
+
+.phase4-question-card {
+  padding: 16px 18px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.phase4-question-card:hover {
+  box-shadow: inset 0 0 0 1px var(--p4-lime-deep);
+}
+
+.phase4-question-card.excluded {
+  background: var(--p4-soft);
+  opacity: .68;
+}
+
+.phase4-question-card > header label {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  align-items: start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.phase4-question-card > header input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.phase4-question-card > header label > i {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border: 1px solid #aeb6aa;
+  border-radius: 6px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.phase4-question-card > header input:checked + i {
+  border-color: var(--p4-lime-deep);
+  background: var(--p4-lime-deep);
+}
+
+.phase4-question-card > header input:focus-visible + i {
+  outline: 3px solid rgba(117, 169, 0, .22);
+  outline-offset: 2px;
+}
+
+.phase4-question-card > header label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.phase4-question-card > header strong {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.phase4-question-card > header small {
+  color: var(--p4-lime-deep);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.phase4-question-card dl {
+  margin: 12px 0 0 36px;
+  display: grid;
+  gap: 9px;
+}
+
+.phase4-question-card dl > div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px;
+}
+
+.phase4-question-card dt,
+.phase4-excel-list dt {
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.phase4-question-card dd,
+.phase4-excel-list dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: var(--p4-ink);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phase4-question-card dd > span {
+  padding: 3px 7px;
+  border: 1px solid var(--p4-line);
+  border-radius: 999px;
+  background: var(--p4-soft);
+}
+
+.phase4-question-card > footer {
+  margin: 12px 0 0 36px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.phase4-question-card > footer button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--p4-ink);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.phase4-question-card > footer button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.phase4-card-error {
+  margin: 10px 0 0 36px;
+  color: #b53731;
+  font-size: 11px;
+}
+
+.phase4-materials {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: var(--p4-soft);
+}
+
+.phase4-materials > header {
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.phase4-materials h2 {
+  margin: 0 0 5px;
+  font-size: 15px;
+}
+
+.phase4-materials p {
+  margin: 0;
+  color: var(--p4-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.phase4-materials > header > span {
+  color: var(--p4-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.phase4-materials textarea {
+  width: 100%;
+  min-height: 112px;
+  padding: 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--p4-ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.phase4-materials textarea:focus {
+  border-color: var(--p4-lime-deep);
+  outline: 3px solid rgba(117, 169, 0, .14);
+}
+
+.phase4-materials > button {
+  margin-top: 10px;
+}
+
+.phase4-excel-list {
+  display: grid;
+  gap: 12px;
+}
+
+.phase4-excel-list > article {
+  padding: 16px 18px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+}
+
+.phase4-excel-list > article > header {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase4-excel-list > article > header span {
+  color: var(--p4-lime-deep);
+  font: 700 11px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.phase4-excel-list > article > header strong {
+  font-size: 14px;
+}
+
+.phase4-excel-list > article > header em {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--p4-soft);
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.phase4-excel-list dl {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--p4-line);
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 14px;
+}
+
+.phase4-excel-list dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.phase4-excel-list > article > label {
+  min-height: 44px;
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.phase4-blockers {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid #f0c8c4;
+  border-radius: 10px;
+  background: #ffebe9;
+  color: #8e2b26;
+}
+
+.phase4-blockers strong {
+  font-size: 12px;
+}
+
+.phase4-blockers ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.phase4-job {
+  min-height: 82px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(160px, 280px) 48px auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.phase4-job.succeeded {
+  border-color: #cfe692;
+  background: var(--p4-lime-tint);
+}
+
+.phase4-job.failed {
+  border-color: #f0c8c4;
+  background: #ffebe9;
+}
+
+.phase4-job > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-job > div:first-child span,
+.phase4-job > div:first-child small {
+  color: var(--p4-muted);
+  font-size: 10px;
+}
+
+.phase4-job > div:first-child strong {
+  font-size: 13px;
+}
+
+.phase4-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--p4-line);
+  overflow: hidden;
+}
+
+.phase4-progress i {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--p4-lime-deep);
+  display: block;
+  transition: width 200ms cubic-bezier(.25,.1,.25,1);
+}
+
+.phase4-job > b {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase4-job > button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--p4-ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.phase4-dialog-backdrop {
+  position: fixed;
+  z-index: 5000;
+  inset: 0;
+  padding: 24px;
+  background: rgba(17, 20, 16, .44);
+  display: grid;
+  place-items: center;
+}
+
+.phase4-dialog {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  padding: 20px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(17, 20, 16, .22);
+  overflow: auto;
+}
+
+.phase4-dialog > header {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.phase4-dialog > header small {
+  color: var(--p4-lime-deep);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+
+.phase4-dialog h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.phase4-dialog > header > button {
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px 0 0;
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.phase4-dialog > p {
+  color: var(--p4-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.phase4-dialog > textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.phase4-dialog > textarea:focus {
+  border-color: var(--p4-lime-deep);
+  outline: 3px solid rgba(117, 169, 0, .14);
+}
+
+.phase4-dialog > small {
+  margin-top: 5px;
+  display: block;
+  color: var(--p4-muted);
+  font-size: 10px;
+  text-align: right;
+}
+
+.phase4-source-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.phase4-source-options label {
+  min-height: 78px;
+  padding: 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.phase4-source-options label:has(input:checked) {
+  border-color: var(--p4-lime-deep);
+  background: var(--p4-lime-tint);
+}
+
+.phase4-source-options input {
+  position: absolute;
+  opacity: 0;
+}
+
+.phase4-source-options label > i {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #aeb6aa;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.phase4-source-options input:checked + i {
+  border-color: var(--p4-lime-deep);
+  background: var(--p4-lime-deep);
+  color: #fff;
+}
+
+.phase4-source-options label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.phase4-source-options strong {
+  font-size: 13px;
+}
+
+.phase4-source-options small {
+  color: var(--p4-muted);
+  font-size: 11px;
+}
+
+.phase4-dialog > footer {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.phase4-dialog > footer button {
+  min-width: 100px;
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--p4-ink);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.phase4-dialog > footer button.primary {
+  border-color: var(--p4-lime);
+  background: var(--p4-lime);
+}
+
+.phase4-dialog > footer button:disabled {
+  cursor: not-allowed;
+  opacity: .46;
+}
+
+.phase4-approval-dialog {
+  width: min(520px, 100%);
+}
+
+.phase4-approval-dialog > dl {
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--p4-line);
+  border-radius: 10px;
+}
+
+.phase4-approval-dialog > dl > div {
+  padding: 13px;
+  border-right: 1px solid var(--p4-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.phase4-approval-dialog > dl > div:last-child {
+  border-right: 0;
+}
+
+.phase4-approval-dialog dt {
+  color: var(--p4-muted);
+  font-size: 10px;
+}
+
+.phase4-approval-dialog dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.phase4-footer {
+  position: fixed;
+  z-index: 200;
+  right: 0;
+  bottom: 0;
+  left: 272px;
+  min-height: 72px;
+  padding: 10px 32px;
+  border-top: 1px solid var(--p4-line);
+  background: rgba(255, 255, 255, .96);
+  backdrop-filter: blur(14px);
+  display: grid;
+  grid-template-columns: 120px 1fr 160px;
+  align-items: center;
+  gap: 14px;
+}
+
+.phase4-footer > button {
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid var(--p4-line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--p4-ink);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.phase4-footer > button.primary {
+  border-color: var(--p4-lime);
+  background: var(--p4-lime);
+}
+
+.phase4-footer > button.primary span {
+  margin-left: 7px;
+  color: #fff;
+  font-size: 20px;
+  line-height: 0;
+}
+
+.phase4-footer > button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.phase4-footer > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.phase4-footer > div span {
+  color: var(--p4-muted);
+  font-size: 11px;
+}
+
+.phase4-footer > div button {
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--p4-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.phase4-validation-progress {
+  min-height: 64px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--p4-line);
+  border-radius: 10px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.phase4-validation-progress > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-validation-progress strong {
+  font-size: 13px;
+}
+
+.phase4-validation-progress small {
+  color: var(--p4-muted);
+  font-size: 11px;
+}
+
+.phase4-validation-workbench {
+  min-height: 620px;
+  border-right: 1px solid var(--p4-line);
+  border-bottom: 1px solid var(--p4-line);
+  border-left: 1px solid var(--p4-line);
+  border-radius: 0 0 12px 12px;
+  background: #f4f5f2;
+  display: grid;
+  overflow: hidden;
+}
+
+.phase4-validation-list,
+.phase4-evidence-viewer,
+.phase4-excel-source {
+  min-width: 0;
+  max-height: 720px;
+  overflow: auto;
+}
+
+.phase4-filter-bar {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  min-height: 64px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--p4-line);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phase4-filter-bar > strong {
+  font-size: 13px;
+}
+
+.phase4-filter-bar > div {
+  display: flex;
+  gap: 5px;
+}
+
+.phase4-filter-bar button {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.phase4-filter-bar button.active.all {
+  border-color: #bdd8ff;
+  background: #e5f1ff;
+  color: #0f348a;
+}
+
+.phase4-filter-bar button.active.conflict {
+  border-color: #f0c8c4;
+  background: #ffebe9;
+  color: #b53731;
+}
+
+.phase4-filter-bar button.active.complete,
+.phase4-filter-bar button.active.rejected {
+  background: var(--p4-soft);
+  color: var(--p4-ink);
+}
+
+.phase4-question-groups {
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.phase4-question-group {
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.phase4-question-head {
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 0;
+  border-left: 4px solid transparent;
+  background: var(--p4-ink);
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase4-question-group.active > .phase4-question-head {
+  border-left-color: #92ac48;
+  background: #edf8d1;
+  color: #375000;
+}
+
+.phase4-question-head > i {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--p4-lime);
+  display: grid;
+  place-items: center;
+  color: var(--p4-ink);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.phase4-question-head > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.phase4-question-head strong {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.phase4-question-head small {
+  overflow: hidden;
+  color: inherit;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: .78;
+}
+
+.phase4-question-head > em {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--p4-soft);
+  color: var(--p4-muted);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.phase4-question-head > em.insufficient {
+  background: #ffebe9;
+  color: #b53731;
+}
+
+.phase4-question-head > em.qualified {
+  background: #fff6d7;
+  color: #8a6400;
+}
+
+.phase4-evidence-list {
+  padding: 10px;
+  border-top: 1px solid var(--p4-line);
+  background: #f4f5f2;
+  display: grid;
+  gap: 7px;
+}
+
+.phase4-evidence-list > button:not(.phase4-qualified-button) {
+  width: 100%;
+  min-height: 68px;
+  padding: 10px 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase4-evidence-list > button.selected {
+  box-shadow: inset 0 -2px 0 var(--p4-lime-deep);
+}
+
+.phase4-evidence-list > button > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.phase4-evidence-list small {
+  color: var(--p4-muted);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.phase4-evidence-list strong {
+  font-size: 12px;
+}
+
+.phase4-evidence-list > button > b {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase4-evidence-list > p {
+  margin: 14px;
+  color: var(--p4-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.phase4-qualified-button {
+  min-height: 44px;
+  border: 1px solid #ead99d;
+  border-radius: 8px;
+  background: #fff6d7;
+  color: #765500;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.phase4-splitter {
+  min-height: 100%;
+  border-right: 1px solid var(--p4-line);
+  border-left: 1px solid var(--p4-line);
+  background: #eef0ec;
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.phase4-splitter > i {
+  width: 24px;
+  height: 48px;
+  border: 1px solid var(--p4-line);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: inset 10px 0 0 transparent;
+}
+
+.phase4-splitter:focus-visible {
+  outline: 3px solid rgba(117, 169, 0, .25);
+  outline-offset: -3px;
+}
+
+.phase4-evidence-viewer,
+.phase4-excel-source {
+  background: #f4f5f2;
+}
+
+.phase4-evidence-viewer > header,
+.phase4-excel-source > header {
+  min-height: 72px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--p4-line);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phase4-evidence-viewer > header small,
+.phase4-excel-source > header small {
+  color: var(--p4-lime-deep);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+
+.phase4-evidence-viewer > header h2,
+.phase4-excel-source > header h2 {
+  margin: 3px 0 0;
+  font-size: 15px;
+}
+
+.phase4-evidence-viewer > header button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.phase4-evidence-viewer > article,
+.phase4-excel-source > article {
+  margin: 16px;
+  padding: 18px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.phase4-provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.phase4-provenance > span {
+  color: var(--p4-lime-deep);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.phase4-provenance strong {
+  font-size: 14px;
+}
+
+.phase4-provenance small {
+  color: var(--p4-muted);
+  font-size: 10px;
+}
+
+.phase4-evidence-viewer blockquote,
+.phase4-excel-source blockquote {
+  margin: 18px 0;
+  padding: 16px;
+  border-left: 3px solid var(--p4-lime-deep);
+  background: var(--p4-soft);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.phase4-evidence-viewer mark {
+  background: var(--p4-lime-tint);
+  color: inherit;
+}
+
+.phase4-evidence-viewer dl,
+.phase4-excel-source dl {
+  display: grid;
+  gap: 8px;
+}
+
+.phase4-evidence-viewer dl > div,
+.phase4-excel-source dl > div {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--p4-line);
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px;
+}
+
+.phase4-evidence-viewer dt,
+.phase4-excel-source dt {
+  color: var(--p4-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.phase4-evidence-viewer dd,
+.phase4-excel-source dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phase4-evidence-viewer article > a {
+  min-height: 44px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--p4-ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.phase4-decision-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--p4-line);
+  display: flex;
+  gap: 8px;
+}
+
+.phase4-decision-actions button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--p4-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--p4-ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.phase4-validation-screen.viewer-expanded .phase4-evidence-viewer {
+  max-height: none;
+}
+
+.phase4-excel-workbench {
+  grid-template-columns: minmax(0, 1.3fr) 28px minmax(280px, .7fr);
+}
+
+.phase4-workbook {
+  margin: 14px;
+  border: 1px solid var(--p4-line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.phase4-workbook > header {
+  min-height: 64px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--p4-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.phase4-workbook > header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-workbook > header small {
+  color: var(--p4-lime-deep);
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.phase4-workbook > header strong {
+  font-size: 13px;
+}
+
+.phase4-workbook > header > span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--p4-soft);
+  color: var(--p4-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.phase4-formula-bar {
+  min-height: 38px;
+  border-bottom: 1px solid var(--p4-line);
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+}
+
+.phase4-formula-bar b,
+.phase4-formula-bar span {
+  height: 100%;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+}
+
+.phase4-formula-bar b {
+  border-right: 1px solid var(--p4-line);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.phase4-grid {
+  min-height: 300px;
+  overflow: auto;
+}
+
+.phase4-grid > .head,
+.phase4-grid > button {
+  min-width: 580px;
+  display: grid;
+  grid-template-columns: 90px 1.1fr 1fr 1.5fr;
+  align-items: center;
+}
+
+.phase4-grid > .head {
+  min-height: 36px;
+  border-bottom: 1px solid var(--p4-line);
+  background: var(--p4-soft);
+  color: var(--p4-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.phase4-grid > button {
+  width: 100%;
+  min-height: 54px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--p4-line);
+  background: #fff;
+  color: var(--p4-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase4-grid > button.selected {
+  background: var(--p4-lime-tint);
+  box-shadow: inset 3px 0 0 var(--p4-lime-deep);
+}
+
+.phase4-grid > .head > *,
+.phase4-grid > button > * {
+  padding: 0 10px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.phase4-grid-empty,
+.phase4-empty {
+  min-height: 160px;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--p4-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.phase4-workbook > nav {
+  min-height: 42px;
+  border-top: 1px solid var(--p4-line);
+  border-bottom: 1px solid var(--p4-line);
+  background: var(--p4-soft);
+  display: flex;
+  overflow-x: auto;
+}
+
+.phase4-workbook > nav button {
+  min-width: 100px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid var(--p4-line);
+  background: transparent;
+  color: var(--p4-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.phase4-workbook > nav button.active {
+  background: #fff;
+  color: var(--p4-ink);
+  box-shadow: inset 0 -2px 0 var(--p4-lime-deep);
+}
+
+.phase4-workbook > p {
+  margin: 0;
+  padding: 10px 14px;
+  color: var(--p4-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.phase4-excel-source > header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.phase4-excel-source > header > span {
+  color: var(--p4-muted);
+  font: 600 10px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.phase4-loading {
+  min-height: 100vh;
+  padding: 72px;
+  background: var(--p4-soft, #f5f7f3);
+}
+
+.phase4-skeleton {
+  width: min(960px, 100%);
+  height: 600px;
+  margin: auto;
+  border: 1px solid #e4e8e1;
+  border-radius: 12px;
+  background: linear-gradient(100deg, #fff 10%, #f4f5f2 30%, #fff 50%);
+  background-size: 200% 100%;
+  animation: phase4-shimmer 1.4s linear infinite;
+}
+
+.phase4-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes phase4-shimmer {
+  to { background-position-x: -200%; }
+}
+
+@media (max-width: 1100px) {
+  .phase4-footer { left: 232px; }
+  .phase4-screen { width: calc(100% - 36px); }
+  .phase4-job {
+    grid-template-columns: 1fr 180px 48px;
+  }
+  .phase4-job > button { grid-column: 1 / -1; }
+}
+
+@media (max-width: 900px) {
+  .phase4-validation-workbench,
+  .phase4-excel-workbench {
+    display: block;
+  }
+  .phase4-validation-list,
+  .phase4-evidence-viewer,
+  .phase4-excel-source {
+    max-height: none;
+  }
+  .phase4-splitter { display: none; }
+  .phase4-evidence-viewer,
+  .phase4-excel-source {
+    border-top: 1px solid var(--p4-line);
+  }
+  .phase4-excel-list dl { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .phase4-project-strip { padding: 0 12px; }
+  .phase4-sidebar { display: none; }
+  .phase4-main { overflow: visible; }
+  .phase4-screen {
+    width: calc(100% - 24px);
+    padding-top: 28px;
+  }
+  .phase4-purpose-tabs,
+  .phase4-validation-tabs {
+    grid-template-columns: 1fr;
+  }
+  .phase4-purpose-tabs > button,
+  .phase4-validation-tabs > button {
+    border-right: 0;
+  }
+  .phase4-plan-panel { padding: 12px; }
+  .phase4-plan-guide { margin: -12px -12px 12px; padding: 12px; }
+  .phase4-question-card { padding: 12px; }
+  .phase4-question-card dl {
+    margin-left: 0;
+  }
+  .phase4-question-card dl > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .phase4-question-card > footer { margin-left: 0; }
+  .phase4-excel-list > article > header {
+    grid-template-columns: 1fr auto;
+  }
+  .phase4-excel-list > article > header span {
+    grid-column: 1 / -1;
+  }
+  .phase4-job {
+    grid-template-columns: 1fr auto;
+  }
+  .phase4-job .phase4-progress {
+    grid-column: 1 / -1;
+  }
+  .phase4-job > button { grid-column: 1 / -1; }
+  .phase4-source-options { grid-template-columns: 1fr; }
+  .phase4-dialog-backdrop {
+    padding: 0;
+    align-items: end;
+  }
+  .phase4-dialog {
+    max-height: 92vh;
+    border-radius: 18px 18px 0 0;
+  }
+  .phase4-approval-dialog > dl { grid-template-columns: 1fr; }
+  .phase4-approval-dialog > dl > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--p4-line);
+  }
+  .phase4-approval-dialog > dl > div:last-child { border-bottom: 0; }
+  .phase4-footer {
+    left: 0;
+    min-height: 68px;
+    padding: 8px 12px;
+    grid-template-columns: 92px 1fr 128px;
+  }
+  .phase4-footer > div span { display: none; }
+  .phase4-filter-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .phase4-filter-bar > div {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .phase4-question-head {
+    grid-template-columns: 28px 1fr;
+  }
+  .phase4-question-head > em {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .phase4-evidence-list > button:not(.phase4-qualified-button) {
+    grid-template-columns: 1fr;
+  }
+  .phase4-decision-actions { flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase4-progress i,
+  .phase4-skeleton {
+    transition: none;
+    animation: none;
+  }
+}
+
 /* Phase 2 · real file pipeline */
 .phase2-files-page {
   background: #fff;

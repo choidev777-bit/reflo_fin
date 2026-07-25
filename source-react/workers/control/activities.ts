@@ -11,10 +11,17 @@ import {
   fetchKrxClosingPrice,
   type MarketPriceSnapshot,
 } from "../../server/infrastructure/market-data/krx";
+import {
+  validateEvidenceCandidate,
+  type ResearchCandidate,
+  type ValidatedEvidence,
+} from "../../server/domain/research-validation";
+import { collectResearchSources } from "../../server/infrastructure/research-sources/adapters";
 import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ResearchValidationWorkflowInput,
   PdfInspectionResult,
   WorkbookInspectionResult,
 } from "./types";
@@ -364,6 +371,187 @@ export async function generateHypothesisQuestions(
     sequence: 3,
     resultType: "hypothesis_questions",
     payload,
+  });
+}
+
+async function callResearchAgent(
+  input: ResearchValidationWorkflowInput,
+  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+): Promise<ResearchCandidate[]> {
+  const response = await fetch(
+    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/candidates`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+          company: input.companyName,
+          ticker: input.ticker,
+          targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
+          cutoffAt: input.cutoffAt,
+          questions: input.questions,
+          excelTargets: input.excelTargets,
+          sources,
+          approvedPlanResourceVersionId:
+            input.approvedPlanResourceVersionId,
+        },
+        profile: input.researchAgentProfile,
+      }),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(120_000),
+        Context.current().cancellationSignal,
+      ]),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Research Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+    );
+  }
+  const payload = (await response.json()) as {
+    candidates?: ResearchCandidate[];
+  };
+  if (!Array.isArray(payload.candidates)) {
+    throw new Error("RESEARCH_AGENT_OUTPUT_INVALID");
+  }
+  return payload.candidates;
+}
+
+async function callValidationAgent(
+  input: ResearchValidationWorkflowInput,
+  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+  candidates: ResearchCandidate[],
+): Promise<ResearchCandidate[]> {
+  const response = await fetch(
+    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/validation/evidence`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: {
+          company: input.companyName,
+          ticker: input.ticker,
+          targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
+          cutoffAt: input.cutoffAt,
+          sources,
+          candidates,
+        },
+        profile: input.validationAgentProfile,
+      }),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(120_000),
+        Context.current().cancellationSignal,
+      ]),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Validation Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+    );
+  }
+  const payload = (await response.json()) as {
+    candidates?: ResearchCandidate[];
+  };
+  if (!Array.isArray(payload.candidates)) {
+    throw new Error("VALIDATION_AGENT_OUTPUT_INVALID");
+  }
+  return payload.candidates;
+}
+
+export async function runResearchValidation(
+  input: ResearchValidationWorkflowInput,
+): Promise<void> {
+  const startedAt = new Date().toISOString();
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    "preparing",
+    10,
+    "승인한 계획과 입력 version을 고정하고 있습니다.",
+  );
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    2,
+    "collecting_code_sources",
+    30,
+    "공식 API와 공개 원문을 수집하고 있습니다.",
+  );
+  const bundle = await collectResearchSources({
+    projectId: input.projectId,
+    companyMasterId: input.companyMasterId,
+    companyName: input.companyName,
+    corpCode: input.corpCode,
+    ticker: input.ticker,
+    exchange: input.exchange,
+    targetYear: input.targetYear,
+    targetQuarter: input.targetQuarter,
+    cutoffDate: input.cutoffDate,
+    cutoffAt: input.cutoffAt,
+    questions: input.questions,
+    excelTargets: input.excelTargets,
+    userUrls: input.userUrls,
+  });
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    3,
+    "extracting_candidates",
+    65,
+    "Research Agent가 원문에서 조사 후보를 구조화하고 있습니다.",
+  );
+  const researchCandidates =
+    bundle.candidates.length > 0
+      ? bundle.candidates
+      : await callResearchAgent(input, bundle.sources);
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    4,
+    "validating_evidence",
+    85,
+    "Validation Agent와 결정적 코드가 원문을 독립 검증하고 있습니다.",
+  );
+  const agentValidated =
+    process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
+    process.env.REFLO_LLM_TEST_FIXTURE === "1"
+      ? researchCandidates
+      : await callValidationAgent(input, bundle.sources, researchCandidates);
+  const sourceByKey = new Map(
+    bundle.sources.map((source) => [source.sourceKey, source]),
+  );
+  const evidence: ValidatedEvidence[] = agentValidated.map((candidate) => {
+    const source = sourceByKey.get(candidate.sourceKey);
+    if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
+    return validateEvidenceCandidate(candidate, source, input.cutoffAt);
+  });
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    5,
+    "publishing_projection",
+    95,
+    "검증된 근거와 원문 연결을 게시하고 있습니다.",
+  );
+  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
+    schemaVersion: "1.0.0",
+    attempt: input.jobAttempt,
+    sequence: 6,
+    resultType: "research_validation",
+    payload: {
+      sources: bundle.sources,
+      candidates: researchCandidates,
+      evidence,
+      warnings: bundle.warnings,
+      metadata: {
+        researchAgentProfile: input.researchAgentProfile.version,
+        validationAgentProfile: input.validationAgentProfile.version,
+        validationRuleVersion: input.validationRuleVersion,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      },
+    },
   });
 }
 

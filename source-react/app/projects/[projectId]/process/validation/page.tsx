@@ -1,4 +1,4 @@
-import LegacyClient from "../../../../legacy-client";
+import { ValidationScreen } from "../../../../_phase4/ValidationScreen";
 import { requireProjectPageAccess } from "../../_lib/project-page-access";
 
 export default async function ValidationPage({
@@ -9,5 +9,5 @@ export default async function ValidationPage({
   const { projectId } = await params;
   const route = `/projects/${projectId}/process/validation`;
   await requireProjectPageAccess(projectId, route);
-  return <LegacyClient />;
+  return <ValidationScreen projectId={projectId} />;
 }

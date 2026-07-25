@@ -38,6 +38,7 @@ async function run(): Promise<void> {
     taskQueue: "llm",
     activities: {
       generateHypothesisQuestions: activities.generateHypothesisQuestions,
+      runResearchValidation: activities.runResearchValidation,
     },
   });
 

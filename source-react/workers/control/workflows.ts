@@ -8,6 +8,7 @@ import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ResearchValidationWorkflowInput,
 } from "./types";
 
 const scanActivities = proxyActivities<typeof activities>({
@@ -107,6 +108,29 @@ export async function hypothesisGenerationWorkflow(
           input.jobAttempt,
           "AGENT_UNAVAILABLE",
           "조사 질문을 만들지 못했습니다. 잠시 후 다시 시도해주세요.",
+          true,
+        );
+      }
+    });
+    throw error;
+  }
+}
+
+export async function researchValidationWorkflow(
+  input: ResearchValidationWorkflowInput,
+): Promise<void> {
+  try {
+    await llmActivities.runResearchValidation(input);
+  } catch (error) {
+    await CancellationScope.nonCancellable(async () => {
+      if (isCancellation(error)) {
+        await scanActivities.reportCancellation(input.jobId, input.jobAttempt);
+      } else {
+        await scanActivities.reportFailure(
+          input.jobId,
+          input.jobAttempt,
+          "RESEARCH_VALIDATION_FAILED",
+          "자료 수집과 독립 검증을 완료하지 못했습니다.",
           true,
         );
       }

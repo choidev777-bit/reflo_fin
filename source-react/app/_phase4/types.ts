@@ -1,0 +1,281 @@
+export type StageState = {
+  stageKey: string;
+  stageOrder: number;
+  status: string;
+  blockerCodes: string[];
+  route: string;
+};
+
+export type SourceType =
+  | "DART"
+  | "COMPANY_IR"
+  | "NEWS"
+  | "KRX"
+  | "ECOS"
+  | "FNGUIDE_CONSENSUS"
+  | "USER_MATERIAL";
+
+export type PlanQuestion = {
+  questionId: string;
+  order: number;
+  text: string;
+  purpose: string;
+  metrics: string[];
+  period: string;
+  comparison: string;
+  suggestedSourceTypes: SourceType[];
+  included: boolean;
+  collectionTargets: Array<{
+    label: string;
+    resultTypes: string[];
+  }>;
+  sourceBindingIds: SourceType[];
+  collectionMethods: Partial<Record<SourceType, string>>;
+  validationErrors: string[];
+};
+
+export type ExcelTarget = {
+  targetId: string;
+  sheetId: string;
+  sheetName: string;
+  address: string;
+  metric: string;
+  period: string;
+  unit: string;
+  scope: string;
+  valueKind: "actual" | "preliminary_actual";
+  required: boolean;
+  included: boolean;
+  sourcePolicy: Array<{
+    sourceType: SourceType;
+    role: "authority" | "verification" | "comparison";
+  }>;
+  mappingSlotIds: string[];
+  excludedReason: string | null;
+};
+
+export type PlanValidationIssue = {
+  code: string;
+  targetId: string | null;
+  category: "hypothesis" | "excel" | "material";
+  message: string;
+};
+
+export type ResearchJob = {
+  jobId: string;
+  researchRunId: string;
+  operationStatus:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancel_requested"
+    | "cancelled";
+  phase: string | null;
+  progressPercent: number;
+  retryable: boolean;
+  error: { code: string; message: string } | null;
+  requestedAt: string;
+  updatedAt: string;
+  validationRoute: string;
+};
+
+export type ResearchPlanWorkspace = {
+  project: {
+    projectId: string;
+    name: string;
+    companyName: string;
+    ticker: string;
+    industry: string;
+    targetPeriod: { year: number; quarter: number };
+    cutoffDate: string;
+    cutoffAt: string;
+    currentStage: string;
+  };
+  prerequisites: {
+    questionSetVersion: number;
+    questionSetVersionId: string;
+    questionSetApproved: boolean;
+    workbookVersionId: string;
+    workbookStructureHash: string;
+    mappingSetVersionId: string;
+  };
+  plan: {
+    planId: string;
+    version: number;
+    status: "draft" | "approved" | "revalidation_required";
+    questions: PlanQuestion[];
+    excelTargets: ExcelTarget[];
+    userUrls: string[];
+    validationSummary: {
+      valid: boolean;
+      issues: PlanValidationIssue[];
+    };
+    lastSavedAt: string;
+  };
+  sourceOptions: Array<{
+    sourceType: SourceType;
+    label: string;
+    description: string;
+    collectionMethod: string;
+  }>;
+  policy: {
+    fileLimit: number;
+    urlLimit: number;
+    allowedFileTypes: Array<{ extension: string; maxBytes: number }>;
+  };
+  activeJob: ResearchJob | null;
+  workflow: {
+    stageStates: StageState[];
+    allowedRoutes: string[];
+  };
+  navigation: {
+    previousRoute: string;
+    validationRoute: string;
+  };
+};
+
+export type ValidationResult = {
+  resultId: string;
+  resultVersion: number;
+  category: "hypothesis" | "excel";
+  questionId: string | null;
+  targetId: string | null;
+  title: string;
+  oneLineValue: string;
+  stance: "supporting" | "contradicting" | "neutral";
+  machineStatus: "passed" | "failed" | "needs_review" | "stale";
+  exceptionStatus: string;
+  valueOriginal: string | null;
+  valueNormalized: string | null;
+  unit: string | null;
+  currency: string | null;
+  period: string | null;
+  scope: string | null;
+  valueKind: string | null;
+  evidenceIds: string[];
+  required: boolean;
+  criticalNumeric: boolean;
+  validatedAt: string;
+};
+
+export type QuestionAnswer = {
+  questionId: string;
+  answer: string;
+  sufficiency: "sufficient" | "qualified" | "insufficient" | "reinvestigating";
+  supportingCount: number;
+  contradictingCount: number;
+  neutralCount: number;
+  qualifiedAccepted: boolean;
+  required: boolean;
+  blockers: string[];
+};
+
+export type ValidationWorkspace = {
+  project: {
+    projectId: string;
+    name: string;
+    companyName: string;
+    ticker: string;
+    targetPeriod: { year: number; quarter: number };
+  };
+  workspace: {
+    projectId: string;
+    projectVersion: number;
+    researchPlanVersion: number | null;
+    collectionRunId: string;
+    validationRunId: string | null;
+    validationVersion: number;
+    status: string;
+    cutoffAt: string | null;
+    jobs: ResearchJob[];
+    stageGate: {
+      canProceed: boolean;
+      blockers: Array<{
+        code: string;
+        targetId: string | null;
+        message: string;
+      }>;
+    };
+    updatedAt?: string;
+  };
+  questions: PlanQuestion[];
+  questionAnswers: QuestionAnswer[];
+  results: ValidationResult[];
+  conflicts: Array<{
+    conflictId: string;
+    resultId: string;
+    candidateEvidenceIds: string[];
+    status: string;
+    selectedEvidenceId: string | null;
+  }>;
+  workflow: { stageStates: StageState[] };
+  navigation: { previousRoute: string; nextRoute: string };
+};
+
+export type ResultDetail = {
+  result: {
+    resultId: string;
+    title: string;
+    oneLineValue: string;
+    machineStatus: string;
+    exceptionStatus: string;
+  };
+  evidence: Array<{
+    evidenceId: string;
+    evidenceVersion: number;
+    sourceVersionId: string;
+    sourceType: string;
+    title: string;
+    publisher: string;
+    canonicalUrl: string | null;
+    publishedAt: string | null;
+    quoteExact: string;
+    quoteNormalized: string;
+    locator: Record<string, unknown>;
+    valueOriginal: string | null;
+    valueNormalized: string | null;
+    unit: string | null;
+    currency: string | null;
+    period: string | null;
+    scope: string | null;
+    valueKind: string | null;
+    stance: string;
+    machineStatus: string;
+    checks: Array<{ code: string; status: string; message: string }>;
+    provenance: Record<string, unknown>;
+  }>;
+};
+
+export type ValidationWorkbookManifest = {
+  originalWorkbookHash: string;
+  workbookVersion: string;
+  structureHash: string;
+  readOnly: true;
+  readOnlyReason: string;
+  visibleSheets: Array<{
+    sheetId?: string;
+    name?: string;
+    index?: number;
+    usedRange?: string;
+  }>;
+  cells: Array<{
+    candidateId?: string;
+    sheetId?: string;
+    sheetName?: string;
+    address?: string;
+    displayValue?: string;
+    rawValue?: unknown;
+    label?: string;
+    formula?: string | null;
+    numberFormat?: string;
+  }>;
+  validationTargets: ExcelTarget[];
+  evidenceBindings: Array<{
+    targetId: string;
+    evidenceIds: string[];
+    value: string | null;
+    formattedText: string;
+    writeStatus: string;
+  }>;
+};

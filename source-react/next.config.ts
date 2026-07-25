@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Keep page-data collection within the memory budget of local and CI runners.
+  experimental: {
+    cpus: 2,
+  },
 };
 
 export default nextConfig;

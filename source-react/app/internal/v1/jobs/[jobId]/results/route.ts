@@ -12,6 +12,10 @@ import {
   commitHypothesisGenerationResult,
   type HypothesisWorkerResult,
 } from "@/server/infrastructure/repositories/hypothesis-repository";
+import {
+  commitResearchValidationResult,
+  type PhaseFourWorkerPayload,
+} from "@/server/infrastructure/repositories/phase4-repository";
 
 type Context = { params: Promise<{ jobId: string }> };
 
@@ -35,6 +39,11 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
       await commitHypothesisGenerationResult(
         jobId,
         body.payload as HypothesisWorkerResult,
+      );
+    } else if (body.resultType === "research_validation") {
+      await commitResearchValidationResult(
+        jobId,
+        body.payload as PhaseFourWorkerPayload,
       );
     } else {
       throw new ApiError(

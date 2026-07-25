@@ -18,6 +18,8 @@ from app import (  # noqa: E402
     fixture_failure_attempts,
     fixture_proposal,
     validate_proposal,
+    PhaseFourAgentProfile,
+    ResearchCandidate,
 )
 
 
@@ -153,6 +155,80 @@ class HypothesisAgentExecutionTest(unittest.IsolatedAsyncioTestCase):
                 deps=AgentDependencies(base.input),
             )
         self.assertEqual(expected, result.output)
+
+
+class PhaseFourAgentContractTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.profile = {
+            "version": "research-openai-v1",
+            "model": "gpt-5.6-terra",
+            "reasoning": "medium",
+        }
+        self.source = {
+            "sourceKey": "fixture:source:1",
+            "sourceType": "DART",
+            "title": "ISC 공시",
+            "publisher": "금융감독원",
+            "canonicalUrl": "https://dart.fss.or.kr/",
+            "publishedAt": "2026-07-17T00:00:00+09:00",
+            "collectedAt": "2026-07-17T00:00:01Z",
+            "responseHash": "a" * 64,
+            "locator": {"kind": "structured_api"},
+            "content": {"body": "ISC 매출은 1000억원입니다."},
+            "collectorVersion": "fixture-v1",
+        }
+        self.candidate = ResearchCandidate(
+            candidateKey="candidate:1",
+            category="hypothesis",
+            questionId="019f0000-0000-7000-8000-000000000001",
+            targetId=None,
+            sourceKey="fixture:source:1",
+            title="매출",
+            quoteExact="ISC 매출은 1000억원입니다.",
+            oneLineValue="매출 1000억원",
+            valueOriginal="1000",
+            valueNormalized="1000",
+            unit="억원",
+            currency="KRW",
+            period="2026년 2분기",
+            scope="연결",
+            valueKind="actual",
+            stance="supporting",
+            required=True,
+            criticalNumeric=True,
+        )
+
+    def test_phase_four_profile_is_pinned(self) -> None:
+        profile = PhaseFourAgentProfile(**self.profile)
+        self.assertEqual("gpt-5.6-terra", profile.model)
+        self.assertEqual("medium", profile.reasoning)
+
+    def test_validation_fixture_receives_no_research_reasoning(self) -> None:
+        response = TestClient(app).post(
+            "/validation/evidence",
+            json={
+                "input": {
+                    "company": "ISC",
+                    "ticker": "095340",
+                    "targetPeriod": "2026년 2분기",
+                    "cutoffAt": "2026-07-17T23:59:59+09:00",
+                    "sources": [self.source],
+                    "candidates": [self.candidate.model_dump()],
+                },
+                "profile": {
+                    **self.profile,
+                    "version": "validation-openai-v1",
+                },
+            },
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertNotIn(
+            "researchReasoning", response.request.content.decode("utf-8")
+        )
+        self.assertEqual(
+            "fixture:source:1",
+            response.json()["candidates"][0]["sourceKey"],
+        )
 
 
 if __name__ == "__main__":

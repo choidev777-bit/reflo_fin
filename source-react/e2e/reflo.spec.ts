@@ -234,10 +234,10 @@ test("외부 returnTo는 거부", async ({ request }) => {
   });
 });
 
-test("Phase 2 완료 → Phase 3 질문 생성·수정·정렬·승인", async ({
+test("Phase 2 완료 → Phase 3 승인 → Phase 4 수집·검증 완료", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const assertNoRuntimeErrors = watchRuntimeErrors(page);
   await testLogin(page, userLabel(test.info().title));
   const currentSession = await session(page.request);
@@ -383,5 +383,91 @@ test("Phase 2 완료 → Phase 3 질문 생성·수정·정렬·승인", async (
   await expect(page.getByRole("button", { name: /다음/ })).toBeEnabled();
   await page.getByRole("button", { name: /다음/ }).click();
   await expect(page).toHaveURL(/\/process\/research-plan$/);
+  await expect(
+    page.getByRole("heading", { name: "자료 수집 및 계획" }),
+  ).toBeVisible();
+  await expect(page.locator(".phase4-question-card")).toHaveCount(3);
+  await page.getByRole("tab", { name: /EXCEL/ }).click();
+  await expect(page.getByText("입력값 삽입을 위한 자료 수집")).toBeVisible();
+  await expect(page.locator(".phase4-excel-list article").first()).toBeVisible();
+  await page.getByRole("tab", { name: /HYPOTHESIS/ }).click();
+
+  await page.getByRole("button", { name: "다음", exact: false }).click();
+  await expect(
+    page.getByRole("heading", { name: "자료 조사 준비 완료" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "자료 수집 시작" }).click();
+  await expect(
+    page.getByRole("button", { name: "조사 결과 검증", exact: true }),
+  ).toBeEnabled({ timeout: 60_000 });
+  await page
+    .getByRole("button", { name: "조사 결과 검증", exact: true })
+    .click();
+
+  await expect(page).toHaveURL(/\/process\/validation$/);
+  await expect(
+    page.getByRole("heading", { name: "조사 결과 검증" }),
+  ).toBeVisible();
+  await expect(page.locator(".phase4-question-group")).toHaveCount(3, {
+    timeout: 60_000,
+  });
+  await expect(page.getByText("ORIGINAL SOURCE")).toBeVisible();
+
+  const questionGroups = page.locator(".phase4-question-group");
+  await page.getByRole("button", { name: "이 결과 반려" }).click();
+  await page.getByLabel("결정 이유").fill("원문과 적용 범위를 다시 확인하기 위해 반려합니다.");
+  await page.getByRole("button", { name: "결정 저장" }).click();
+  await expect(page.getByRole("button", { name: "반려 철회" })).toBeVisible();
+  await page.getByRole("button", { name: "반려 철회" }).click();
+  await page.getByLabel("결정 이유").fill("원문과 적용 범위를 재확인해 반려를 철회합니다.");
+  await page.getByRole("button", { name: "결정 저장" }).click();
+  await expect(page.getByRole("button", { name: "이 결과 반려" })).toBeVisible();
+
+  await page.getByRole("button", { name: "재조사 요청" }).click();
+  await page.getByLabel("결정 이유").fill("독립된 새 수집 run에서 근거를 다시 확인합니다.");
+  const reinvestigationResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/validation/results/") &&
+      response.url().endsWith("/decisions"),
+  );
+  await page.getByRole("button", { name: "재조사 시작" }).click();
+  expect((await reinvestigationResponsePromise).status()).toBe(202);
+  await expect(
+    questionGroups
+      .first()
+      .getByRole("button", { name: "조건부 근거 확인" }),
+  ).toHaveCount(0);
+  await expect(
+    questionGroups
+      .first()
+      .getByRole("button", { name: "조건부 근거 확인" }),
+  ).toBeVisible({ timeout: 60_000 });
+
+  for (let index = 0; index < 3; index += 1) {
+    await questionGroups.nth(index).locator(".phase4-question-head").click();
+    await questionGroups
+      .nth(index)
+      .getByRole("button", { name: "조건부 근거 확인" })
+      .click();
+    await page
+      .getByLabel("조건부 진행 이유")
+      .fill("단일 권위 원천의 한계를 확인하고 다음 단계에서 보수적으로 사용합니다.");
+    await page.getByRole("button", { name: "조건부로 진행" }).click();
+    await expect(
+      questionGroups
+        .nth(index)
+        .getByRole("button", { name: "조건부 근거 확인" }),
+    ).toHaveCount(0);
+  }
+
+  await page.getByRole("tab", { name: /EXCEL/ }).click();
+  await expect(
+    page.getByRole("grid", { name: "검증용 Excel workbook" }),
+  ).toHaveAttribute("aria-readonly", "true");
+  await expect(page.getByText("읽기 전용", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^다음/ })).toBeEnabled();
+  await page.getByRole("button", { name: /^다음/ }).click();
+  await expect(page).toHaveURL(/\/process\/valuation$/);
   assertNoRuntimeErrors();
 });
