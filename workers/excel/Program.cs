@@ -576,6 +576,36 @@ static ValuationReadModel BuildValuationReadModel(
         var sheetId = $"sheet_{worksheet.Position}";
         var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
         var cells = new List<ValuationCell>();
+        var firstRow = used?.RangeAddress.FirstAddress.RowNumber ?? 1;
+        var lastRow = used?.RangeAddress.LastAddress.RowNumber ?? 1;
+        var firstColumn = used?.RangeAddress.FirstAddress.ColumnNumber ?? 1;
+        var lastColumn = used?.RangeAddress.LastAddress.ColumnNumber ?? 1;
+        var columns = Enumerable.Range(
+                firstColumn,
+                lastColumn - firstColumn + 1)
+            .Select(column => new ValuationColumn(
+                column,
+                ColumnWidthPixels(worksheet.Column(column).Width),
+                worksheet.Column(column).IsHidden))
+            .ToList();
+        var rows = Enumerable.Range(firstRow, lastRow - firstRow + 1)
+            .Select(row => new ValuationRow(
+                row,
+                RowHeightPixels(worksheet.Row(row).Height),
+                worksheet.Row(row).IsHidden))
+            .ToList();
+        var mergedRanges = worksheet.MergedRanges
+            .Where(range =>
+                range.RangeAddress.LastAddress.RowNumber >= firstRow &&
+                range.RangeAddress.FirstAddress.RowNumber <= lastRow &&
+                range.RangeAddress.LastAddress.ColumnNumber >= firstColumn &&
+                range.RangeAddress.FirstAddress.ColumnNumber <= lastColumn)
+            .Select(range => new ValuationMergedRange(
+                range.RangeAddress.FirstAddress.RowNumber,
+                range.RangeAddress.FirstAddress.ColumnNumber,
+                range.RangeAddress.LastAddress.RowNumber,
+                range.RangeAddress.LastAddress.ColumnNumber))
+            .ToList();
         if (used is not null)
         {
             foreach (var cell in used.CellsUsed(XLCellsUsedOptions.All))
@@ -600,7 +630,24 @@ static ValuationReadModel BuildValuationReadModel(
                     canEdit ? null : cell.HasFormula ? "수식 결과" : "읽기 전용",
                     fill,
                     font,
-                    cell.Style.Font.Bold));
+                    cell.Style.Font.Bold,
+                    cell.Style.Font.Italic,
+                    cell.Style.Font.FontSize,
+                    cell.Style.Alignment.Horizontal.ToString(),
+                    cell.Style.Alignment.Vertical.ToString(),
+                    cell.Style.Alignment.WrapText,
+                    BorderCss(
+                        cell.Style.Border.TopBorder,
+                        cell.Style.Border.TopBorderColor),
+                    BorderCss(
+                        cell.Style.Border.RightBorder,
+                        cell.Style.Border.RightBorderColor),
+                    BorderCss(
+                        cell.Style.Border.BottomBorder,
+                        cell.Style.Border.BottomBorderColor),
+                    BorderCss(
+                        cell.Style.Border.LeftBorder,
+                        cell.Style.Border.LeftBorderColor)));
                 if (canEdit)
                 {
                     editable.Add(new ValuationEditableCell(
@@ -621,12 +668,15 @@ static ValuationReadModel BuildValuationReadModel(
             used is null ? "A1:A1" : RelativeAddress(used),
             (int)worksheet.SheetView.SplitRow,
             (int)worksheet.SheetView.SplitColumn,
+            columns,
+            rows,
+            mergedRanges,
             cells));
     }
 
     var outputs = BuildValuationOutputs(workbook, outputBindings);
     return new ValuationReadModel(
-        "1.0",
+        "1.1",
         workbookHash,
         sheets,
         editable,
@@ -717,6 +767,46 @@ static bool IsWorkflowEditableCell(IXLCell cell)
     }
     return ColorHex(cell.Style.Fill.BackgroundColor) == "FFF2CC" &&
            ColorHex(cell.Style.Font.FontColor) == "0000FF";
+}
+
+static double ColumnWidthPixels(double excelWidth)
+{
+    if (!double.IsFinite(excelWidth) || excelWidth <= 0) return 24;
+    return Math.Round(Math.Max(24, excelWidth * 7 + 5), 2);
+}
+
+static double RowHeightPixels(double pointHeight)
+{
+    if (!double.IsFinite(pointHeight) || pointHeight <= 0) return 20;
+    return Math.Round(Math.Max(20, pointHeight * 96 / 72), 2);
+}
+
+static string BorderCss(XLBorderStyleValues style, XLColor color)
+{
+    if (style == XLBorderStyleValues.None) return "none";
+    var width = style switch
+    {
+        XLBorderStyleValues.Medium or
+        XLBorderStyleValues.MediumDashDot or
+        XLBorderStyleValues.MediumDashDotDot or
+        XLBorderStyleValues.MediumDashed => 2,
+        XLBorderStyleValues.Thick or XLBorderStyleValues.Double => 3,
+        _ => 1,
+    };
+    var lineStyle = style switch
+    {
+        XLBorderStyleValues.Dotted or XLBorderStyleValues.Hair => "dotted",
+        XLBorderStyleValues.Dashed or
+        XLBorderStyleValues.DashDot or
+        XLBorderStyleValues.DashDotDot or
+        XLBorderStyleValues.MediumDashed or
+        XLBorderStyleValues.MediumDashDot or
+        XLBorderStyleValues.MediumDashDotDot or
+        XLBorderStyleValues.SlantDashDot => "dashed",
+        XLBorderStyleValues.Double => "double",
+        _ => "solid",
+    };
+    return $"{width}px {lineStyle} #{ColorHex(color)}";
 }
 
 static string EditableValueType(IXLCell cell)
@@ -1075,7 +1165,16 @@ public sealed record ValuationCell(
     string? ReadOnlyReason,
     string Fill,
     string FontColor,
-    bool Bold);
+    bool Bold,
+    bool Italic,
+    double FontSize,
+    string HorizontalAlignment,
+    string VerticalAlignment,
+    bool WrapText,
+    string BorderTop,
+    string BorderRight,
+    string BorderBottom,
+    string BorderLeft);
 public sealed record ValuationEditableCell(
     string SheetId,
     string SheetName,
@@ -1091,7 +1190,23 @@ public sealed record ValuationSheet(
     string UsedRange,
     int FreezeRows,
     int FreezeColumns,
+    IReadOnlyList<ValuationColumn> ColumnWidths,
+    IReadOnlyList<ValuationRow> RowHeights,
+    IReadOnlyList<ValuationMergedRange> MergedRanges,
     IReadOnlyList<ValuationCell> Cells);
+public sealed record ValuationColumn(
+    int Column,
+    double WidthPixels,
+    bool Hidden);
+public sealed record ValuationRow(
+    int Row,
+    double HeightPixels,
+    bool Hidden);
+public sealed record ValuationMergedRange(
+    int FirstRow,
+    int FirstColumn,
+    int LastRow,
+    int LastColumn);
 public sealed record ValuationOutput(
     string SheetId,
     string SheetName,

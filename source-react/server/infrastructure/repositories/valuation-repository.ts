@@ -651,15 +651,22 @@ async function readWorkbookState(
     : null;
 }
 
-function workbookMatchesContext(state: WorkbookState, context: Context) {
+function workbookInputsMatch(state: WorkbookState, context: Context) {
   return (
     state.sourceWorkbookResourceVersionId ===
       context.sourceWorkbookResourceVersionId &&
     state.mappingSetResourceVersionId ===
       context.mappingSetResourceVersionId &&
     state.structureHash === context.structureHash &&
-    state.inputFingerprint === context.inputFingerprint &&
-    state.calculationStatus === "success"
+    state.inputFingerprint === context.inputFingerprint
+  );
+}
+
+function workbookMatchesContext(state: WorkbookState, context: Context) {
+  return (
+    workbookInputsMatch(state, context) &&
+    state.calculationStatus === "success" &&
+    state.readModel.schemaVersion === "1.1"
   );
 }
 
@@ -675,8 +682,14 @@ async function ensureWorkbook(
     return { context: found.context, state: found.state };
   }
 
+  const refreshCurrentReadModel =
+    found.state &&
+    workbookInputsMatch(found.state, found.context) &&
+    found.state.calculationStatus === "success";
   const downloadUrl = await createWorkerDownloadUrl(
-    found.context.sourceObjectKey,
+    refreshCurrentReadModel && found.state
+      ? found.state.currentObjectKey
+      : found.context.sourceObjectKey,
     10 * 60,
   );
   const readModel = await callExcel<ReadModel>("/valuation/read-model", {
@@ -703,17 +716,70 @@ async function ensureWorkbook(
         { meta: { resumeRoute: processRoute(projectId, "validation") } },
       );
     }
-    const workbookVersion = current ? current.workbookVersion + 1 : 1;
-    const editableCellSetVersion = current
-      ? current.editableCellSetVersion + 1
-      : 1;
+    const metadataRefresh =
+      current &&
+      workbookInputsMatch(current, context) &&
+      current.calculationStatus === "success";
+    const workbookVersion = metadataRefresh
+      ? current.workbookVersion
+      : current
+        ? current.workbookVersion + 1
+        : 1;
+    const editableCellSetVersion = metadataRefresh
+      ? current.editableCellSetVersion
+      : current
+        ? current.editableCellSetVersion + 1
+        : 1;
+    const currentArtifactId = metadataRefresh
+      ? current.currentArtifactId
+      : context.sourceArtifactId;
+    let persistedReadModel = readModel;
+    if (metadataRefresh) {
+      const calculation = await client.query<{
+        outputs_json: ReadModel["outputs"];
+      }>(
+        `SELECT outputs_json
+         FROM valuation_calculation_run
+         WHERE project_id = $1
+           AND output_workbook_version = $2
+           AND output_artifact_id = $3
+           AND status = 'success'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [projectId, current.workbookVersion, current.currentArtifactId],
+      );
+      const editableKeys = new Set(
+        current.readModel.editableCells.map(
+          (cell) => `${cell.sheetId}:${cell.address}`,
+        ),
+      );
+      persistedReadModel = {
+        ...readModel,
+        editableCells: current.readModel.editableCells,
+        outputs:
+          calculation.rows[0]?.outputs_json ?? current.readModel.outputs,
+        sheets: readModel.sheets.map((sheet) => ({
+          ...sheet,
+          cells: sheet.cells.map((cell) => {
+            const editable = editableKeys.has(
+              `${sheet.sheetId}:${cell.address}`,
+            );
+            return {
+              ...cell,
+              editable,
+              readOnlyReason: editable ? null : "NOT_ALLOWLISTED",
+            };
+          }),
+        })),
+      };
+    }
     await client.query(
       `INSERT INTO valuation_workbook (
          project_id, source_workbook_resource_version_id, source_artifact_id,
          current_artifact_id, workbook_version, editable_cell_set_version,
          structure_hash, read_model_json, calculation_status,
          mapping_set_resource_version_id, input_fingerprint
-       ) VALUES ($1, $2, $3, $3, $4, $5, $6, $7::jsonb, 'success', $8, $9)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'success', $9, $10)
        ON CONFLICT (project_id) DO UPDATE SET
          source_workbook_resource_version_id =
            EXCLUDED.source_workbook_resource_version_id,
@@ -732,33 +798,36 @@ async function ensureWorkbook(
         projectId,
         context.sourceWorkbookResourceVersionId,
         context.sourceArtifactId,
+        currentArtifactId,
         workbookVersion,
         editableCellSetVersion,
         context.structureHash,
-        JSON.stringify(readModel),
+        JSON.stringify(persistedReadModel),
         context.mappingSetResourceVersionId,
         context.inputFingerprint,
       ],
     );
     const state = await readWorkbookState(client, projectId);
     if (!state) throw new Error("VALUATION_WORKBOOK_INITIALIZATION_FAILED");
-    await client.query(
-      `INSERT INTO valuation_calculation_run (
-         calculation_run_id, project_id, input_workbook_version,
-         output_workbook_version, status, engine_name, engine_version,
-         outputs_json, result_hash, duration_ms, output_artifact_id
-       ) VALUES ($1, $2, $3, $3, 'success', 'ClosedXML', '0.105.0',
-         $4::jsonb, $5, 0, $6)`,
-      [
-        uuidv7(),
-        projectId,
-        workbookVersion,
-        JSON.stringify(readModel.outputs),
-        readModel.workbookHash || context.sourceSha256,
-        context.sourceArtifactId,
-      ],
-    );
-    if (current) {
+    if (!metadataRefresh) {
+      await client.query(
+        `INSERT INTO valuation_calculation_run (
+           calculation_run_id, project_id, input_workbook_version,
+           output_workbook_version, status, engine_name, engine_version,
+           outputs_json, result_hash, duration_ms, output_artifact_id
+         ) VALUES ($1, $2, $3, $3, 'success', 'ClosedXML', '0.105.0',
+           $4::jsonb, $5, 0, $6)`,
+        [
+          uuidv7(),
+          projectId,
+          workbookVersion,
+          JSON.stringify(readModel.outputs),
+          readModel.workbookHash || context.sourceSha256,
+          context.sourceArtifactId,
+        ],
+      );
+    }
+    if (current && !metadataRefresh) {
       await invalidateValuationAndDownstream(client, context, [
         "UPSTREAM_INPUT_CHANGED",
       ]);

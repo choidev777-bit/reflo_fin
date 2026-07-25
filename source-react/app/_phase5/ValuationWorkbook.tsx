@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState, type KeyboardEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
 import type { WorkbookCell, WorkbookReadModel } from "./types";
 
 type Change = {
@@ -12,6 +18,8 @@ type Change = {
 
 const PAGE_ROWS = 60;
 const PAGE_COLUMNS = 16;
+const DEFAULT_COLUMN_WIDTH = 108;
+const DEFAULT_ROW_HEIGHT = 34;
 
 function columnName(column: number): string {
   let value = column;
@@ -63,6 +71,56 @@ function cellChange(
 
 function editableColor(value: string, fallback: string) {
   return /^[0-9A-F]{6}$/i.test(value) ? `#${value}` : fallback;
+}
+
+function horizontalAlignment(
+  value: string | undefined,
+  valueType: string,
+): CSSProperties["textAlign"] {
+  switch (value?.toLowerCase()) {
+    case "left":
+      return "left";
+    case "center":
+    case "centercontinuous":
+      return "center";
+    case "justify":
+    case "distributed":
+      return "justify";
+    default:
+      return valueType === "string" ? "left" : "right";
+  }
+}
+
+function horizontalJustification(
+  value: string | undefined,
+  valueType: string,
+): CSSProperties["justifyContent"] {
+  switch (value?.toLowerCase()) {
+    case "left":
+      return "flex-start";
+    case "center":
+    case "centercontinuous":
+      return "center";
+    default:
+      return valueType === "string" ? "flex-start" : "flex-end";
+  }
+}
+
+function verticalAlignment(
+  value: string | undefined,
+): CSSProperties["alignItems"] {
+  switch (value?.toLowerCase()) {
+    case "top":
+      return "flex-start";
+    case "center":
+      return "center";
+    default:
+      return "flex-end";
+  }
+}
+
+function visibleBorder(value: string | undefined) {
+  return value && value !== "none" ? value : undefined;
 }
 
 function EditableCell({
@@ -166,12 +224,27 @@ export default function ValuationWorkbook({
   );
   const [rowStart, setRowStart] = useState(1);
   const [columnStart, setColumnStart] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
   const sheet =
     model.sheets.find((item) => item.sheetId === activeSheetId) ??
     model.sheets[0];
+  const editableCountBySheet = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const cell of model.editableCells) {
+      counts.set(cell.sheetId, (counts.get(cell.sheetId) ?? 0) + 1);
+    }
+    return counts;
+  }, [model.editableCells]);
 
   const bounds = useMemo(() => {
     const cells = sheet?.cells ?? [];
+    const columnDimensions = new Map(
+      (sheet?.columnWidths ?? []).map((item) => [item.column, item]),
+    );
+    const rowDimensions = new Map(
+      (sheet?.rowHeights ?? []).map((item) => [item.row, item]),
+    );
     return {
       minRow: Math.max(1, Math.min(...cells.map((cell) => cell.row), 1)),
       maxRow: Math.max(...cells.map((cell) => cell.row), 1),
@@ -183,6 +256,8 @@ export default function ValuationWorkbook({
       byPosition: new Map(
         cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
       ),
+      columnDimensions,
+      rowDimensions,
     };
   }, [sheet]);
 
@@ -210,15 +285,71 @@ export default function ValuationWorkbook({
   const columns = Array.from(
     { length: columnEnd - safeColumnStart + 1 },
     (_, index) => safeColumnStart + index,
-  );
+  ).filter((column) => !bounds.columnDimensions.get(column)?.hidden);
   const rows = Array.from(
     { length: rowEnd - safeRowStart + 1 },
     (_, index) => safeRowStart + index,
+  ).filter((row) => !bounds.rowDimensions.get(row)?.hidden);
+  const columnIndex = new Map(
+    columns.map((column, index) => [column, index]),
   );
+  const rowIndex = new Map(rows.map((row, index) => [row, index]));
+  const columnWidths = columns.map(
+    (column) =>
+      bounds.columnDimensions.get(column)?.widthPixels ??
+      DEFAULT_COLUMN_WIDTH,
+  );
+  const naturalGridWidth =
+    44 + columnWidths.reduce((sum, width) => sum + width, 0);
+  const mergedByPosition = new Map<
+    string,
+    {
+      anchor: string;
+      source: WorkbookCell | undefined;
+      rowSpan: number;
+      columnSpan: number;
+    }
+  >();
+  for (const range of sheet.mergedRanges ?? []) {
+    const visibleRows = rows.filter(
+      (row) => row >= range.firstRow && row <= range.lastRow,
+    );
+    const visibleColumns = columns.filter(
+      (column) =>
+        column >= range.firstColumn && column <= range.lastColumn,
+    );
+    if (visibleRows.length === 0 || visibleColumns.length === 0) continue;
+    const anchor = `${visibleRows[0]}:${visibleColumns[0]}`;
+    const source = bounds.byPosition.get(
+      `${range.firstRow}:${range.firstColumn}`,
+    );
+    for (const row of visibleRows) {
+      for (const column of visibleColumns) {
+        mergedByPosition.set(`${row}:${column}`, {
+          anchor,
+          source,
+          rowSpan: visibleRows.length,
+          columnSpan: visibleColumns.length,
+        });
+      }
+    }
+  }
   const selectedCell =
     selected?.sheetId === sheet.sheetId
       ? sheet.cells.find((cell) => cell.address === selected.address) ?? null
       : null;
+  const activeEditableCount = editableCountBySheet.get(sheet.sheetId) ?? 0;
+
+  const fitToWidth = () => {
+    const viewportWidth = gridScrollRef.current?.clientWidth;
+    if (!viewportWidth || naturalGridWidth <= 0) return;
+    setZoom(
+      Math.max(
+        0.55,
+        Math.min(1.25, Number(((viewportWidth - 8) / naturalGridWidth).toFixed(2))),
+      ),
+    );
+  };
 
   const pasteChanges = async (
     startCell: WorkbookCell,
@@ -257,48 +388,88 @@ export default function ValuationWorkbook({
         <span>
           {sheet.name} · {sheet.usedRange}
         </span>
+        <em className={activeEditableCount > 0 ? "is-editable" : ""}>
+          {activeEditableCount > 0
+            ? `사용자 입력 ${activeEditableCount}개`
+            : "읽기 전용 시트"}
+        </em>
       </div>
       <div className="phase5-grid-pager" aria-label="Workbook 표시 범위">
         <span>
           {safeRowStart}:{rowEnd}행 · {columnName(safeColumnStart)}:
           {columnName(columnEnd)}열
         </span>
-        <div>
-          <button
-            type="button"
-            disabled={safeRowStart <= bounds.minRow}
-            onClick={() => setRowStart((value) => value - PAGE_ROWS)}
-          >
-            이전 행
-          </button>
-          <button
-            type="button"
-            disabled={rowEnd >= bounds.maxRow}
-            onClick={() => setRowStart((value) => value + PAGE_ROWS)}
-          >
-            다음 행
-          </button>
-          <button
-            type="button"
-            disabled={safeColumnStart <= bounds.minColumn}
-            onClick={() =>
-              setColumnStart((value) => value - PAGE_COLUMNS)
-            }
-          >
-            이전 열
-          </button>
-          <button
-            type="button"
-            disabled={columnEnd >= bounds.maxColumn}
-            onClick={() =>
-              setColumnStart((value) => value + PAGE_COLUMNS)
-            }
-          >
-            다음 열
-          </button>
+        <div className="phase5-grid-tools">
+          <div className="phase5-grid-zoom" aria-label="Workbook 배율">
+            <button
+              type="button"
+              aria-label="Workbook 축소"
+              disabled={zoom <= 0.55}
+              onClick={() =>
+                setZoom((value) =>
+                  Math.max(0.55, Number((value - 0.1).toFixed(2))),
+                )
+              }
+            >
+              −
+            </button>
+            <button type="button" onClick={() => setZoom(1)}>
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              aria-label="Workbook 확대"
+              disabled={zoom >= 1.5}
+              onClick={() =>
+                setZoom((value) =>
+                  Math.min(1.5, Number((value + 0.1).toFixed(2))),
+                )
+              }
+            >
+              +
+            </button>
+            <button type="button" onClick={fitToWidth}>
+              화면 맞춤
+            </button>
+          </div>
+          <div className="phase5-grid-pages">
+            <button
+              type="button"
+              disabled={safeRowStart <= bounds.minRow}
+              onClick={() => setRowStart((value) => value - PAGE_ROWS)}
+            >
+              이전 행
+            </button>
+            <button
+              type="button"
+              disabled={rowEnd >= bounds.maxRow}
+              onClick={() => setRowStart((value) => value + PAGE_ROWS)}
+            >
+              다음 행
+            </button>
+            <button
+              type="button"
+              disabled={safeColumnStart <= bounds.minColumn}
+              onClick={() =>
+                setColumnStart((value) => value - PAGE_COLUMNS)
+              }
+            >
+              이전 열
+            </button>
+            <button
+              type="button"
+              disabled={columnEnd >= bounds.maxColumn}
+              onClick={() =>
+                setColumnStart((value) => value + PAGE_COLUMNS)
+              }
+            >
+              다음 열
+            </button>
+          </div>
         </div>
       </div>
       <div
+        ref={gridScrollRef}
         className="phase5-grid-scroll"
         tabIndex={0}
         aria-label={`${sheet.name} 시트, 범위 이동 버튼으로 전체 셀을 확인할 수 있습니다.`}
@@ -309,12 +480,28 @@ export default function ValuationWorkbook({
           aria-rowcount={bounds.maxRow - bounds.minRow + 1}
           aria-colcount={bounds.maxColumn - bounds.minColumn + 1}
           style={{
-            gridTemplateColumns: `44px repeat(${columns.length}, minmax(108px, 1fr))`,
+            gridTemplateColumns: [
+              `${44 * zoom}px`,
+              ...columnWidths.map((width) => `${width * zoom}px`),
+            ].join(" "),
           }}
         >
-          <div className="phase5-grid-corner" aria-hidden="true" />
-          {columns.map((column) => (
-            <div key={column} role="columnheader" className="phase5-grid-header">
+          <div
+            className="phase5-grid-corner"
+            aria-hidden="true"
+            style={{ gridColumn: 1, gridRow: 1 }}
+          />
+          {columns.map((column, index) => (
+            <div
+              key={column}
+              role="columnheader"
+              className="phase5-grid-header"
+              style={{
+                gridColumn: index + 2,
+                gridRow: 1,
+                minHeight: `${31 * zoom}px`,
+              }}
+            >
               {columnName(column)}
             </div>
           ))}
@@ -325,38 +512,91 @@ export default function ValuationWorkbook({
               role="row"
               aria-rowindex={row}
             >
-              <div role="rowheader" className="phase5-grid-header">
+              <div
+                role="rowheader"
+                className="phase5-grid-header"
+                style={{
+                  gridColumn: 1,
+                  gridRow: (rowIndex.get(row) ?? 0) + 2,
+                  height: `${
+                    (bounds.rowDimensions.get(row)?.heightPixels ??
+                      DEFAULT_ROW_HEIGHT) * zoom
+                  }px`,
+                }}
+              >
                 {row}
               </div>
               {columns.map((column) => {
-                const cell = bounds.byPosition.get(`${row}:${column}`);
+                const position = `${row}:${column}`;
+                const merged = mergedByPosition.get(position);
+                if (merged && merged.anchor !== position) return null;
+                const cell =
+                  merged?.source ?? bounds.byPosition.get(position);
+                const rowHeight =
+                  (bounds.rowDimensions.get(row)?.heightPixels ??
+                    DEFAULT_ROW_HEIGHT) * zoom;
+                const placement = {
+                  gridColumn: `${(columnIndex.get(column) ?? 0) + 2} / span ${
+                    merged?.columnSpan ?? 1
+                  }`,
+                  gridRow: `${(rowIndex.get(row) ?? 0) + 2} / span ${
+                    merged?.rowSpan ?? 1
+                  }`,
+                  minHeight: `${rowHeight}px`,
+                };
                 if (!cell) {
                   return (
                     <div
                       key={`${row}-${column}`}
                       role="gridcell"
                       className="phase5-grid-cell is-empty"
+                      style={placement}
                     />
                   );
                 }
                 const isSelected =
                   selected?.sheetId === sheet.sheetId &&
                   selected.address === cell.address;
-                const style = {
+                const style: CSSProperties = {
+                  ...placement,
                   fontWeight: cell.bold ? 650 : 450,
+                  fontStyle: cell.italic ? "italic" : "normal",
+                  fontSize: `${Math.max(
+                    8,
+                    (cell.fontSize ?? 11) * zoom,
+                  )}px`,
                   backgroundColor: cell.editable
-                    ? "#fff8d6"
+                    ? editableColor(cell.fill, "#fff2cc")
                     : editableColor(cell.fill, "#ffffff"),
-                  color: editableColor(cell.fontColor, "#111410"),
+                  color: cell.editable
+                    ? editableColor(cell.fontColor, "#0000ff")
+                    : editableColor(cell.fontColor, "#111410"),
+                  textAlign: horizontalAlignment(
+                    cell.horizontalAlignment,
+                    cell.valueType,
+                  ),
+                  justifyContent: horizontalJustification(
+                    cell.horizontalAlignment,
+                    cell.valueType,
+                  ),
+                  alignItems: verticalAlignment(cell.verticalAlignment),
+                  whiteSpace: cell.wrapText ? "normal" : "nowrap",
+                  borderTop: visibleBorder(cell.borderTop),
+                  borderRight: visibleBorder(cell.borderRight),
+                  borderBottom: visibleBorder(cell.borderBottom),
+                  borderLeft: visibleBorder(cell.borderLeft),
                 };
                 return (
                   <div
                     key={`${sheet.sheetId}:${cell.address}`}
                     role="gridcell"
                     aria-selected={isSelected}
+                    aria-readonly={!cell.editable}
                     className={[
                       "phase5-grid-cell",
                       cell.editable ? "is-editable" : "is-readonly",
+                      cell.wrapText ? "is-wrapped" : "",
+                      merged ? "is-merged" : "",
                       isSelected ? "is-selected" : "",
                     ].join(" ")}
                     style={style}
@@ -429,20 +669,33 @@ export default function ValuationWorkbook({
         )}
       </div>
       <nav className="phase5-sheet-tabs" aria-label="Excel 시트">
-        {model.sheets.map((item) => (
-          <button
-            key={item.sheetId}
-            type="button"
-            aria-pressed={item.sheetId === sheet.sheetId}
-            onClick={() => {
-              setActiveSheetId(item.sheetId);
-              setRowStart(1);
-              setColumnStart(1);
-            }}
-          >
-            {item.name}
-          </button>
-        ))}
+        {model.sheets.map((item) => {
+          const editableCount =
+            editableCountBySheet.get(item.sheetId) ?? 0;
+          return (
+            <button
+              key={item.sheetId}
+              type="button"
+              className={
+                editableCount > 0 ? "has-editable-cells" : undefined
+              }
+              aria-label={
+                editableCount > 0
+                  ? `${item.name}, 사용자 입력 셀 ${editableCount}개`
+                  : `${item.name}, 읽기 전용`
+              }
+              aria-pressed={item.sheetId === sheet.sheetId}
+              onClick={() => {
+                setActiveSheetId(item.sheetId);
+                setRowStart(1);
+                setColumnStart(1);
+              }}
+            >
+              <span>{item.name}</span>
+              {editableCount > 0 && <small>입력 {editableCount}</small>}
+            </button>
+          );
+        })}
       </nav>
       <div className="phase5-mobile-inputs">
         <h3>입력 가능한 셀</h3>

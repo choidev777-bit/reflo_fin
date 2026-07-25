@@ -12454,3 +12454,148 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     transition: none;
   }
 }
+
+/* Phase 06 · source-faithful workbook surface */
+.phase5-name-box em {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 3px 10px;
+  color: #697066;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.phase5-name-box em.is-editable {
+  border-left: 1px solid #dbe7bd;
+  background: #efffc5;
+  color: #557909;
+}
+
+.phase5-grid-tools,
+.phase5-grid-pages,
+.phase5-grid-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.phase5-grid-tools {
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.phase5-grid-zoom {
+  padding-right: 8px;
+  border-right: 1px solid #dfe4dc;
+}
+
+.phase5-grid-zoom button:nth-child(2) {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase5-grid-cell {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+.phase5-grid-cell.is-readonly {
+  cursor: default;
+}
+
+.phase5-grid-cell.is-editable {
+  background: #fff2cc;
+  color: #0000ff;
+  box-shadow: inset 0 0 0 1px rgba(117, 169, 0, .18);
+}
+
+.phase5-grid-cell.is-editable::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border-left: 1px solid #75a900;
+  border-bottom: 1px solid #75a900;
+  background: #c8ff3d;
+  content: "";
+  pointer-events: none;
+}
+
+.phase5-grid-cell > button,
+.phase5-grid-input {
+  overflow: hidden;
+  display: flex;
+  align-items: inherit;
+  justify-content: inherit;
+  color: inherit;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  white-space: inherit;
+}
+
+.phase5-grid-cell > button {
+  cursor: cell;
+}
+
+.phase5-grid-cell.is-wrapped > button,
+.phase5-grid-cell.is-wrapped > .phase5-grid-input {
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.phase5-grid-cell.is-merged {
+  z-index: 1;
+}
+
+.phase5-sheet-tabs button {
+  min-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.phase5-sheet-tabs button.has-editable-cells {
+  border-top: 2px solid #c8ff3d;
+  background: #f8ffe8;
+  color: #394f08;
+}
+
+.phase5-sheet-tabs button.has-editable-cells small {
+  border-radius: 999px;
+  background: #c8ff3d;
+  padding: 2px 5px;
+  color: #111410;
+  font-size: 8px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase5-sheet-tabs button[aria-pressed="true"].has-editable-cells {
+  border-bottom-color: #111410;
+  background: #efffc5;
+  box-shadow: inset 0 2px 0 #75a900;
+}
+
+@media (max-width: 860px) {
+  .phase5-grid-pager {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .phase5-grid-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase5-sheet-tabs button,
+  .phase5-grid-pager button {
+    transition: none;
+  }
+}

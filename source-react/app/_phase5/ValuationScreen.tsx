@@ -593,7 +593,8 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                     <strong>{workspace.workbook.displayName}</strong>
                   </div>
                   <small>
-                    ClosedXML 0.105.0 · v{workspace.workbook.workbookVersion}
+                    업로드 원본 기반 · 작업 사본 v
+                    {workspace.workbook.workbookVersion} · ClosedXML 0.105.0
                   </small>
                 </header>
                 {cellError && (

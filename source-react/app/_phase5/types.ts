@@ -23,6 +23,15 @@ export type WorkbookCell = {
   fill: string;
   fontColor: string;
   bold: boolean;
+  italic?: boolean;
+  fontSize?: number;
+  horizontalAlignment?: string;
+  verticalAlignment?: string;
+  wrapText?: boolean;
+  borderTop?: string;
+  borderRight?: string;
+  borderBottom?: string;
+  borderLeft?: string;
 };
 
 export type WorkbookReadModel = {
@@ -37,6 +46,22 @@ export type WorkbookReadModel = {
     usedRange: string;
     freezeRows: number;
     freezeColumns: number;
+    columnWidths?: Array<{
+      column: number;
+      widthPixels: number;
+      hidden: boolean;
+    }>;
+    rowHeights?: Array<{
+      row: number;
+      heightPixels: number;
+      hidden: boolean;
+    }>;
+    mergedRanges?: Array<{
+      firstRow: number;
+      firstColumn: number;
+      lastRow: number;
+      lastColumn: number;
+    }>;
     cells: WorkbookCell[];
   }>;
   editableCells: Array<{
