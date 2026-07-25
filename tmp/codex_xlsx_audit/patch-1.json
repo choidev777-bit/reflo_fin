@@ -1,0 +1,109 @@
+{
+  "clear": [
+    {"sheet": "Forward EPS", "range": "F6:F13"},
+    {"sheet": "Forward EPS", "range": "F16"},
+    {"sheet": "Forward EPS", "range": "F19:F20"},
+    {"sheet": "Forward EPS", "range": "F22:F23"},
+    {"sheet": "Forward EPS", "range": "F25"},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F6:F13"},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F16"},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F19:F20"},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F22:F23"},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F25"}
+  ],
+  "values": [
+    {"sheet": "Forward EPS", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "Target PER", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "00_\uc694\uc57d", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "02_\ucd94\uc815\ubcc0\uacbd", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "04_\ud53c\uc5b4\uc2e4\uc801", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "06_\uc7ac\ubb34\uc694\uc57d", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "08_Forward_EPS", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "08-01", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "09_Target_PER", "range": "A3", "data": [["ISC (095340) | \ubcf4\uace0\uc11c \uae30\uc900\uc77c 2026-04-28 | \uc0ac\uc804 \ucd94\uc815 \uae30\uc900 2026-04-20 | 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30"]]},
+
+    {"sheet": "Forward EPS", "range": "F5", "data": [["1Q26A \uc785\ub825"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F5", "data": [["1Q26A \uc785\ub825"]]},
+    {"sheet": "Forward EPS", "range": "G6:I27", "data": [
+      [72.8,84.4,88.7],[56.2,66.5,73.6],[12,11.4,9.1],[2.6,3.6,2.7],[1.1,1.8,1.9],[1.1,1.2,1.4],[0,0,0],[0,0,0],
+      [40.9,30.9,22.6],[12.8,16,5.1],[40.1,45.4,47.7],[32.7,39,41],[45,46.2,46.2],[10.5,11.8,13.6],[22.2,27.3,27.5],[30.6,32.3,31],
+      [25.4,30.4,30.5],[19.8,23.7,23.8],[27.2,28.1,26.8],[966,1159,1163],[71.9,47.5,9.6],[17.7,19.9,0.4]
+    ]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "G6:I27", "data": [
+      [72.8,84.4,88.7],[56.2,66.5,73.6],[12,11.4,9.1],[2.6,3.6,2.7],[1.1,1.8,1.9],[1.1,1.2,1.4],[0,0,0],[0,0,0],
+      [40.9,30.9,22.6],[12.8,16,5.1],[40.1,45.4,47.7],[32.7,39,41],[45,46.2,46.2],[10.5,11.8,13.6],[22.2,27.3,27.5],[30.6,32.3,31],
+      [25.4,30.4,30.5],[19.8,23.7,23.8],[27.2,28.1,26.8],[966,1159,1163],[71.9,47.5,9.6],[17.7,19.9,0.4]
+    ]},
+    {"sheet": "Forward EPS", "range": "K6:L27", "data": [
+      [310.5,402.5],[244.1,327.4],[43.8,49],[11.5,13.2],[6.5,6.9],[4.6,5.9],[0,0],[0,0],[41,29.6],[null,null],
+      [170.1,219],[140.3,183.5],[45.2,45.6],[45.1,53.4],[95.3,130.1],[30.7,32.3],[107.8,141.5],[84.1,110.4],[27.1,27.4],[4109,5395],[49.8,31.3],[null,null]
+    ]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "K6:L27", "data": [
+      [310.5,402.5],[244.1,327.4],[43.8,49],[11.5,13.2],[6.5,6.9],[4.6,5.9],[0,0],[0,0],[41,29.6],[null,null],
+      [170.1,219],[140.3,183.5],[45.2,45.6],[45.1,53.4],[95.3,130.1],[30.7,32.3],[107.8,141.5],[84.1,110.4],[27.1,27.4],[4109,5395],[49.8,31.3],[null,null]
+    ]},
+    {"sheet": "Forward EPS", "range": "A29", "data": [["\uc790\ub8cc: ISC, \uc0bc\uc131\uc99d\uad8c 2026-04-20 1Q26 Preview p.43 | 1Q26A \uc5f4\uc740 DART\u00b7IR \ud655\uc778 \ud6c4 \uc785\ub825 | \uae08\uc561: \uc2ed\uc5b5\uc6d0, \ube44\uc728: %"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "A29", "data": [["\uc790\ub8cc: ISC, \uc0bc\uc131\uc99d\uad8c 2026-04-20 1Q26 Preview p.43 | 1Q26A \uc5f4\uc740 DART\u00b7IR \ud655\uc778 \ud6c4 \uc785\ub825 | \uae08\uc561: \uc2ed\uc5b5\uc6d0, \ube44\uc728: %"]]},
+
+    {"sheet": "00_\uc694\uc57d", "range": "A1", "data": [["ISC 1Q26 Pre-Review & WinWay Peer PER Valuation Template"]]},
+    {"sheet": "00_\uc694\uc57d", "range": "B6", "data": [["BUY"]]},
+    {"sheet": "00_\uc694\uc57d", "range": "B11", "data": [["FY26E"]]},
+    {"sheet": "00_\uc694\uc57d", "range": "A14:A18", "data": [
+      ["\u2022 1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \ub300\uae30: \ub9e4\ucd9c\u00b7\uc601\uc5c5\uc774\uc775\u00b7\uc9c0\ubc30\uc8fc\uc8fc\uc21c\uc774\uc775\u00b7EPS\ub294 DART\u00b7IR \uac80\uc99d \ud6c4 \uc785\ub825."],
+      ["\u2022 \uc0ac\uc804 \ucd94\uc815\uc740 1Q26 \ub9e4\ucd9c 646\uc5b5\uc6d0, \uc601\uc5c5\uc774\uc775 183\uc5b5\uc6d0, \uc601\uc5c5\uc774\uc775\ub960 28.3%."],
+      ["\u2022 2Q26~4Q26\u00b7FY26~FY27 \ucd94\uc815\uce58\ub294 \uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview \uae30\uc900."],
+      ["\u2022 \uc0ac\uc804 \uae30\uc900 BUY, \ubaa9\ud45c\uc8fc\uac00 280,000\uc6d0, FY26E EPS 4,109\uc6d0, FY27E EPS 5,395\uc6d0."],
+      ["\u2022 \uc0bc\uc131\uc99d\uad8c 1Q26 Review\ub294 \ucd08\uc548 \uc0dd\uc131 \ud6c4 \ube44\uad50\uc6a9. \ubcf8 \ud15c\ud50c\ub9bf \uc785\ub825\u00b7\ucd9c\ucc98\uc5d0\uc11c \uc81c\uc678."]
+    ]},
+    {"sheet": "00_\uc694\uc57d", "range": "A21:A24", "data": [
+      ["\uc0c9\uc0c1: \ub178\ub791=\uc785\ub825 \ub300\uae30, \ud30c\ub791=\uc0ac\uc804 \ucd94\uc815, \ud68c\uc0c9=\uc218\uc2dd/\ucd9c\ucc98"],
+      ["\uc0ac\uc6a9: 1Q26 DART\u00b7IR \uacf5\uc2dc \ud6c4 '1Q26A \uc785\ub825' \uc5f4\uc5d0 \uc2e4\uc81c\uac12\ub9cc \uc785\ub825."],
+      ["\uae30\uc900: \uc0bc\uc131\uc99d\uad8c 2026-04-20 1Q26 Preview. \uc2e4\uc801 \ubc1c\ud45c \uc804 \uc0ac\uc804 \ucd94\uc815."],
+      ["\uc81c\uc678: 2026-04-28 1Q26 Review \uc2e4\uc81c\uac12\u00b7\uc0ac\ud6c4 \ucd94\uc815\uce58\ub294 \ube44\uad50 \uc2dc\uc810\uae4c\uc9c0 \ube44\uacf5\uac1c."]
+    ]},
+
+    {"sheet": "02_\ucd94\uc815\ubcc0\uacbd", "range": "A5:K5", "data": [["\uad6c\ubd84","FY26E \uc2e0\uaddc","FY27E \uc2e0\uaddc","FY26E \uc774\uc804","FY27E \uc774\uc804","FY26E \ubcc0\uacbd\ub960","FY27E \ubcc0\uacbd\ub960","\uad6c\ubd84","\uc2e0\uaddc","\uc774\uc804","\ubcc0\uacbd\ub960"]]},
+    {"sheet": "02_\ucd94\uc815\ubcc0\uacbd", "range": "A6:E8", "data": [["\ub9e4\ucd9c\uc561",310.5,402.5,268,303.7],["\uc601\uc5c5\uc774\uc775",95.3,130.1,73.8,85.4],["EPS",4109,5395,3215,3597]]},
+    {"sheet": "02_\ucd94\uc815\ubcc0\uacbd", "range": "H6:J8", "data": [["\ubaa9\ud45c\uc8fc\uac00",280000,160000],["FY26E EPS",4109,3215],["FY27E EPS",5395,3597]]},
+    {"sheet": "02_\ucd94\uc815\ubcc0\uacbd", "range": "A10", "data": [["\uc8fc: \uc2e0\uaddc \ucd94\uc815\uc740 2026-04-20 1Q26 Preview \uae30\uc900. 1Q26 \uc2e4\uc81c\uac12 \ubc18\uc601 \uc804."]]},
+
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "A6:C13", "data": [
+      ["FY26E EPS",null,"\uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview"],
+      ["WinWay 2026E P/E",114,"Bloomberg, \uc0bc\uc131\uc99d\uad8c 2026-04-17"],
+      ["\ud560\uc778\uc728",0.4,"\uc0bc\uc131\uc99d\uad8c \uc0ac\uc804 \uac00\uc815"],
+      ["\uc801\uc6a9 PER",null,"WinWay P/E\u00d7(1-\ud560\uc778\uc728)"],
+      ["\uc0b0\ucd9c \uac00\uce58",null,"EPS\u00d7\uc801\uc6a9 PER"],
+      ["\ubaa9\ud45c\uc8fc\uac00",null,"1\ub9cc\uc6d0 \ub2e8\uc704 \ubc18\uc62c\ub9bc"],
+      ["\uae30\uc900\uc8fc\uac00",229000,"2026-04-17 \uc885\uac00"],
+      ["\uc0c1\uc2b9\uc5ec\ub825",null,"\ubaa9\ud45c\uc8fc\uac00/\uae30\uc900\uc8fc\uac00-1"]
+    ]},
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "A17:A20", "data": [
+      ["\u2022 \ubc38\ub958\uc5d0\uc774\uc158 \uae30\uc900\uc77c: 2026-04-17 \uc885\uac00."],
+      ["\u2022 \ube44\uad50\uae30\uc5c5: \ubbf8\uad6d \ud14c\uc2a4\ud2b8 \uc18c\ucf13 \uc5c5\uccb4 WinWay."],
+      ["\u2022 \ud560\uc778\uc728 40% \uc801\uc6a9, Target P/E 68\ubc30."],
+      ["\u2022 1Q26 Review \uc2e4\uc81c\uac12\u00b7\uc0ac\ud6c4 \ubaa9\ud45c\uc8fc\uac00\ub294 \uc0ac\uc6a9\ud558\uc9c0 \uc54a\uc74c."]
+    ]}
+  ],
+  "formulas": [
+    {"sheet": "Forward EPS", "range": "F14:F15", "data": [["=IF(OR(F6=\"\",B6=\"\"),\"\",((F6/B6)-1)*100)"],["=IF(OR(F6=\"\",E6=\"\"),\"\",((F6/E6)-1)*100)"]]},
+    {"sheet": "Forward EPS", "range": "F17:F18", "data": [["=IF(OR(F6=\"\",F16=\"\"),\"\",F6-F16)"],["=IF(OR(F17=\"\",F6=\"\"),\"\",F17/F6*100)"]]},
+    {"sheet": "Forward EPS", "range": "F21", "data": [["=IF(OR(F20=\"\",F6=\"\"),\"\",F20/F6*100)"]]},
+    {"sheet": "Forward EPS", "range": "F24", "data": [["=IF(OR(F23=\"\",F6=\"\"),\"\",F23/F6*100)"]]},
+    {"sheet": "Forward EPS", "range": "F26:F27", "data": [["=IF(OR(F25=\"\",B25=\"\"),\"\",((F25/B25)-1)*100)"],["=IF(OR(F25=\"\",E25=\"\"),\"\",((F25/E25)-1)*100)"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F14:F15", "data": [["=IF(OR(F6=\"\",B6=\"\"),\"\",((F6/B6)-1)*100)"],["=IF(OR(F6=\"\",E6=\"\"),\"\",((F6/E6)-1)*100)"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F17:F18", "data": [["=IF(OR(F6=\"\",F16=\"\"),\"\",F6-F16)"],["=IF(OR(F17=\"\",F6=\"\"),\"\",F17/F6*100)"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F21", "data": [["=IF(OR(F20=\"\",F6=\"\"),\"\",F20/F6*100)"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F24", "data": [["=IF(OR(F23=\"\",F6=\"\"),\"\",F23/F6*100)"]]},
+    {"sheet": "01_\uc2e4\uc801\ucd94\uc774", "range": "F26:F27", "data": [["=IF(OR(F25=\"\",B25=\"\"),\"\",((F25/B25)-1)*100)"],["=IF(OR(F25=\"\",E25=\"\"),\"\",((F25/E25)-1)*100)"]]},
+
+    {"sheet": "00_\uc694\uc57d", "range": "B7:B10", "data": [["='03_\ubaa9\ud45c\uc8fc\uac00'!B11"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B12"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B13"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B9"]]},
+    {"sheet": "00_\uc694\uc57d", "range": "E6:E10", "data": [["='08_Forward_EPS'!C15"],["='08_Forward_EPS'!C25"],["='08_Forward_EPS'!D15"],["='08_Forward_EPS'!D25"],["='08_Forward_EPS'!D36"]]},
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "B6", "data": [["='08_Forward_EPS'!C36"]]},
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "B9:B11", "data": [["=ROUND(B7*(1-B8),0)"],["=B6*B9"],["=ROUND(B10,-4)"]]},
+    {"sheet": "03_\ubaa9\ud45c\uc8fc\uac00", "range": "B13", "data": [["=B11/B12-1"]]}
+  ]
+}

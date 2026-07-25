@@ -1,0 +1,77 @@
+{
+  "clear": [
+    {"sheet": "09_Target_PER", "range": "A6:I17"},
+    {"sheet": "09_Target_PER", "range": "A22:I26"},
+    {"sheet": "Target PER", "range": "A5:I29"}
+  ],
+  "values": [
+    {"sheet": "09_Target_PER", "range": "A6:D10", "data": [
+      ["\uae30\uc900 \ud53c\uc5b4","WinWay","","\ubbf8\uad6d \ud14c\uc2a4\ud2b8 \uc18c\ucf13"],
+      ["FY26E EPS",null,"","08_Forward_EPS \uc5f0\uacb0"],
+      ["WinWay 2026E P/E",114,"x","2026-04-17 \uae30\uc900"],
+      ["\uae30\uc900 P/E",null,"x","WinWay \ub2e8\uc77c \ud53c\uc5b4"],
+      ["\uc870\uc815\ub960",-0.4,"","\uc0bc\uc131\uc99d\uad8c \uc0ac\uc804 \uac00\uc815"]
+    ]},
+    {"sheet": "09_Target_PER", "range": "A13:D17", "data": [
+      ["Target P/E",68,"x","114x\u00d7(1-40%), \ubc18\uc62c\ub9bc"],
+      ["\uc801\uc815\uac00\uce58",null,"\uc6d0","FY26E EPS\u00d7Target P/E"],
+      ["\ubaa9\ud45c\uc8fc\uac00",null,"\uc6d0","1\ub9cc\uc6d0 \ub2e8\uc704 \ubc18\uc62c\ub9bc"],
+      ["\uae30\uc900\uc8fc\uac00",229000,"\uc6d0","2026-04-17 \uc885\uac00"],
+      ["\uc0c1\uc2b9\uc5ec\ub825",null,"","\ubaa9\ud45c\uc8fc\uac00/\uae30\uc900\uc8fc\uac00-1"]
+    ]},
+    {"sheet": "09_Target_PER", "range": "A22:I26", "data": [
+      ["WinWay","","\ubbf8\uad6d","\ud14c\uc2a4\ud2b8 \uc18c\ucf13",114,-0.4,null,"\uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview","\uae30\uc900 \ud53c\uc5b4"],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 1","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30","\uc0dd\uc131 \uc2dc\uc810 \uc2dc\uc7a5\ub370\uc774\ud130"],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 2","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30","\uc0dd\uc131 \uc2dc\uc810 \uc2dc\uc7a5\ub370\uc774\ud130"],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 3","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30","\uc0dd\uc131 \uc2dc\uc810 \uc2dc\uc7a5\ub370\uc774\ud130"],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 4","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30","\uc0dd\uc131 \uc2dc\uc810 \uc2dc\uc7a5\ub370\uc774\ud130"]
+    ]},
+    {"sheet": "09_Target_PER", "range": "A35:F37", "data": [
+      ["FY26E EPS",null,4109,null,null,"08_Forward_EPS \uc5f0\uacb0"],
+      ["Target P/E",null,68,null,null,"WinWay 40% \ud560\uc778"],
+      ["\ubaa9\ud45c\uc8fc\uac00",null,280000,null,null,"EPS\u00d7Target P/E"]
+    ]},
+
+    {"sheet": "Target PER", "range": "A5:I10", "data": [
+      ["Peer","Ticker","\uad6d\uac00","\uc0ac\uc5c5","2026E P/E","\uc870\uc815\ub960","\uc801\uc6a9 P/E","\ucd9c\ucc98","\ube44\uace0"],
+      ["WinWay","","\ubbf8\uad6d","\ud14c\uc2a4\ud2b8 \uc18c\ucf13",114,-0.4,null,"\uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview","\uae30\uc900 \ud53c\uc5b4"],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 1","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30",""],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 2","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30",""],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 3","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30",""],
+      ["\uad6d\ub0b4 \ud53c\uc5b4 4","","\ud55c\uad6d","",null,null,null,"\uc785\ub825 \ub300\uae30",""]
+    ]},
+    {"sheet": "Target PER", "range": "A13:D17", "data": [
+      ["FY26E EPS",4109,"\uc6d0","\uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview"],
+      ["Target P/E",68,"x","WinWay 114x\u00d7(1-40%)"],
+      ["\uc801\uc815\uac00\uce58",279412,"\uc6d0","EPS\u00d7Target P/E"],
+      ["\ubaa9\ud45c\uc8fc\uac00",280000,"\uc6d0","1\ub9cc\uc6d0 \ub2e8\uc704 \ubc18\uc62c\ub9bc"],
+      ["\uae30\uc900\uc8fc\uac00",229000,"\uc6d0","2026-04-17 \uc885\uac00"]
+    ]},
+    {"sheet": "Target PER", "range": "A20", "data": [["\uc8fc: 1Q26 Review \uc2e4\uc81c\uac12\u00b7\uc0ac\ud6c4 \ud53c\uc5b4 \ub370\uc774\ud130 \ubbf8\uc0ac\uc6a9. \uc0c1\uc138 \uc0b0\ucd9c\uc740 09_Target_PER \ucc38\uc870."]]}
+  ],
+  "formulas": [
+    {"sheet": "09_Target_PER", "range": "B7", "data": [["='08_Forward_EPS'!C36"]]},
+    {"sheet": "09_Target_PER", "range": "B9", "data": [["=IFERROR(B8,\"\")"]]},
+    {"sheet": "09_Target_PER", "range": "B14:B15", "data": [["=ROUND(B7*B13,0)"],["=ROUND(B14,-4)"]]},
+    {"sheet": "09_Target_PER", "range": "B17", "data": [["=IFERROR(B15/B16-1,\"\")"]]},
+    {"sheet": "09_Target_PER", "range": "G22:G26", "data": [
+      ["=IF(OR(E22=\"\",F22=\"\"),\"\",E22*(1+F22))"],
+      ["=IF(OR(E23=\"\",F23=\"\"),\"\",E23*(1+F23))"],
+      ["=IF(OR(E24=\"\",F24=\"\"),\"\",E24*(1+F24))"],
+      ["=IF(OR(E25=\"\",F25=\"\"),\"\",E25*(1+F25))"],
+      ["=IF(OR(E26=\"\",F26=\"\"),\"\",E26*(1+F26))"]
+    ]},
+    {"sheet": "09_Target_PER", "range": "B35:B37", "data": [["='08_Forward_EPS'!C36"],["=B13"],["=B15"]]},
+    {"sheet": "09_Target_PER", "range": "D35:D37", "data": [["=B35-C35"],["=B36-C36"],["=B37-C37"]]},
+    {"sheet": "09_Target_PER", "range": "E35:E37", "data": [
+      ["=IF(ABS(D35)<=1,\"OK\",\"CHECK\")"],["=IF(ABS(D36)<=1,\"OK\",\"CHECK\")"],["=IF(ABS(D37)<=10000,\"OK\",\"CHECK\")"]
+    ]},
+    {"sheet": "Target PER", "range": "G6:G10", "data": [
+      ["=IF(OR(E6=\"\",F6=\"\"),\"\",E6*(1+F6))"],
+      ["=IF(OR(E7=\"\",F7=\"\"),\"\",E7*(1+F7))"],
+      ["=IF(OR(E8=\"\",F8=\"\"),\"\",E8*(1+F8))"],
+      ["=IF(OR(E9=\"\",F9=\"\"),\"\",E9*(1+F9))"],
+      ["=IF(OR(E10=\"\",F10=\"\"),\"\",E10*(1+F10))"]
+    ]}
+  ]
+}

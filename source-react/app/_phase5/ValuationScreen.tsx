@@ -13,6 +13,7 @@ import { apiJson, ClientApiError } from "../_phase1/api";
 import { useSession } from "../_phase1/useSession";
 import { ProcessShell } from "../_phase4/ProcessShell";
 import type {
+  CellPatchResult,
   Sensitivity,
   ValuationWorkspace,
   WorkbookReadModel,
@@ -76,6 +77,16 @@ const blockerLabels: Record<string, string> = {
   VALUATION_NOT_APPROVED: "최신 입력값 승인이 필요합니다.",
 };
 
+const impactLabels: Record<string, string> = {
+  forward_eps_driver: "EPS 영향",
+  target_per_driver: "PER 영향",
+  target_price_driver: "목표주가 영향",
+  report_table_driver: "보고서 전용",
+  source_metadata: "출처·메모",
+  inactive_branch: "현재 계산 미사용",
+  unmapped: "계산 연결 미확인",
+};
+
 export function ValuationScreen({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { session } = useSession();
@@ -101,6 +112,8 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
   const [targetPerIsDirty, setTargetPerIsDirty] = useState(false);
   const [targetPriceIsDirty, setTargetPriceIsDirty] = useState(false);
   const [pendingCellCount, setPendingCellCount] = useState(0);
+  const [lastCellResult, setLastCellResult] =
+    useState<CellPatchResult | null>(null);
   const [sensitivity, setSensitivity] = useState<Sensitivity | null>(null);
   const sensitivityDialog = useRef<HTMLDialogElement | null>(null);
   const sensitivityTrigger = useRef<HTMLButtonElement | null>(null);
@@ -211,7 +224,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
     };
     const requestId = mutationKey("valuation.cells.patch", payload);
     try {
-      await apiJson(
+      const result = await apiJson<CellPatchResult>(
         `/api/projects/${projectId}/valuation/workbook/cells`,
         {
           method: "PATCH",
@@ -228,6 +241,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
       );
       mutationKeys.current.delete("valuation.cells.patch");
       const loaded = await load(true);
+      if (loaded) setLastCellResult(result);
       return loaded;
     } catch (error) {
       if (!routeError(error)) setCellError(errorMessage(error));
@@ -432,6 +446,16 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
       .find((sheet) => sheet.sheetId === selected.sheetId)
       ?.cells.find((cell) => cell.address === selected.address) ?? null;
   }, [model, selected]);
+  const selectedEditable = useMemo(() => {
+    if (!selected || !model) return null;
+    return (
+      model.editableCells.find(
+        (cell) =>
+          cell.sheetId === selected.sheetId &&
+          cell.address === selected.address,
+      ) ?? null
+    );
+  }, [model, selected]);
 
   const onTabKey = (event: React.KeyboardEvent, current: Tab) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -597,6 +621,47 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                     {workspace.workbook.workbookVersion} · ClosedXML 0.105.0
                   </small>
                 </header>
+                {lastCellResult && (
+                  <section
+                    className="phase5-calculation-impact"
+                    aria-live="polite"
+                  >
+                    <header>
+                      <div>
+                        <span>재계산 완료</span>
+                        <b>workbook v{lastCellResult.workbookVersion}</b>
+                      </div>
+                      <small>
+                        수식 {lastCellResult.affectedCells.length}개 변경
+                      </small>
+                    </header>
+                    <div>
+                      {(
+                        [
+                          ["Forward EPS", lastCellResult.outputDiff.forwardEps],
+                          ["Target PER", lastCellResult.outputDiff.targetPer],
+                          ["목표주가", lastCellResult.outputDiff.targetPrice],
+                        ] as const
+                      ).map(([label, delta]) => (
+                        <article
+                          key={label}
+                          className={delta.changed ? "is-changed" : ""}
+                        >
+                          <small>{label}</small>
+                          <b>
+                            {delta.beforeFormatted ?? "—"}
+                            <i aria-hidden="true">→</i>
+                            {delta.afterFormatted ?? "—"}
+                          </b>
+                        </article>
+                      ))}
+                    </div>
+                    <p>
+                      workbook 변경으로 기존 결정·승인과 보고서 검증을
+                      최신 계산 기준으로 다시 확인해야 합니다.
+                    </p>
+                  </section>
+                )}
                 {cellError && (
                   <div className="phase5-cell-error" role="alert">
                     {cellError}
@@ -626,6 +691,26 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                       <div>
                         <small>역할</small>
                         <b>{selectedCell.editable ? "사용자 추정치 · 편집 가능" : selectedCell.readOnlyReason}</b>
+                      </div>
+                      <div>
+                        <small>영향 범위</small>
+                        <b>
+                          {selectedEditable
+                            ? `${selectedEditable.impactTypes
+                                .map(
+                                  (impact) =>
+                                    impactLabels[impact] ?? impact,
+                                )
+                                .join(" · ")}${
+                                selectedEditable.activeInCurrentMode === null &&
+                                !selectedEditable.impactTypes.includes(
+                                  "unmapped",
+                                )
+                                  ? " · 조건 분기 가능"
+                                  : ""
+                              }`
+                            : "읽기 전용"}
+                        </b>
                       </div>
                       <div>
                         <small>값 · 형식</small>

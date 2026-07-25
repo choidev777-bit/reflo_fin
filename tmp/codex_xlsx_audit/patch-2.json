@@ -1,0 +1,62 @@
+{
+  "clear": [
+    {"sheet": "04_\ud53c\uc5b4\uc2e4\uc801", "range": "E6:G9"},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "E6:G9"},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "A7:G13"}
+  ],
+  "values": [
+    {"sheet": "04_\ud53c\uc5b4\uc2e4\uc801", "range": "I6:I9", "data": [["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "04_\ud53c\uc5b4\uc2e4\uc801", "range": "A11", "data": [["\uc8fc: 2026-04-20 \uc774\ud6c4 \uc2dc\uc810\uc758 \ud53c\uc5b4 \uc2e4\uc801\u00b7\uc2dc\uc7a5\ub370\uc774\ud130\ub294 \uc81c\uac70. \ubcf4\uace0\uc11c \uc0dd\uc131 \uc2dc\uc810\uc5d0 \uc0c8\ub85c \uc785\ub825."]]},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "H6:H9", "data": [["N"],["N"],["N"],["N"]]},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "I6:I9", "data": [["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"],["\uc785\ub825 \ub300\uae30"]]},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "A15", "data": [["\uc8fc: 2026-07 \uc2dc\uac00\ucd1d\uc561\u00b7PER \ub370\uc774\ud130 \uc81c\uac70. \uc0ac\uc804 \uae30\uc900\uc77c \uc774\ud6c4 \ub370\uc774\ud130\ub294 \uc0ac\uc6a9\ud558\uc9c0 \uc54a\uc74c."]]},
+
+    {"sheet": "06_\uc7ac\ubb34\uc694\uc57d", "range": "E7:F20", "data": [
+      [310,402],[170,219],[140,184],[45.2,45.6],[45,53],[95,130],[30.7,32.3],[13,11],[108,142],[24,31],[84,110],[84,110],[110,152],[4109,5395]
+    ]},
+    {"sheet": "06_\uc7ac\ubb34\uc694\uc57d", "range": "E25:F41", "data": [
+      [73,83],[84,110],[15,22],[13,21],[1,1],[-25,-49],[-100,-40],[-100,-40],[0,0],[0,0],[-17,-18],[0,0],[0,0],[-17,-18],[-44,24],[80,36],[36,60]
+    ]},
+    {"sheet": "06_\uc7ac\ubb34\uc694\uc57d", "range": "L7:M30", "data": [
+      [429,517],[36,60],[94,121],[26,34],[273,302],[261,279],[6,6],[178,197],[18,17],[59,59],[690,796],[83,98],[53,68],[0,0],[30,30],[2,2],[86,100],[603,695],[11,11],[290,290],[327,419],[-24,-24],[1,1],[604,696]
+    ]},
+    {"sheet": "06_\uc7ac\ubb34\uc694\uc57d", "range": "L35:M45", "data": [
+      [4109,5395],[29482,33977],[900,1000],[55.7,42.4],[7.8,6.7],[41.6,29.7],[14.8,17],[12.8,14.9],[34.9,35.4],[21.9,18.5],[0.4,0.4]
+    ]},
+
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "A7:G10", "data": [
+      ["SRC-01","ISC 1Q26 Preview p.41-44","https://www.samsungpop.com/common.do?cmd=down&contentType=application%2Fpdf&fileName=2020%2F2026041900400143K_02_06.pdf&inlineYn=Y&saveKey=research.pdf","2026-04-20","\uc0bc\uc131\uc99d\uad8c","\uc0ac\uc804 \uc2e4\uc801\u00b7EPS\u00b7\ubaa9\ud45c\uc8fc\uac00 \uae30\uc900","OK"],
+      ["SRC-02","ISC IR Book 2026","https://isc21.kr/kor/ir/ir.php","2026-03-11","ISC","\uc0ac\uc5c5\u00b7\uc81c\ud488\u00b7\uc804\ub7b5 \uacf5\uc2dd \uc790\ub8cc","OK"],
+      ["SRC-03","ISC 2025 \uc0ac\uc5c5\ubcf4\uace0\uc11c","https://dart.fss.or.kr/","2026-03-18","\uae08\uc735\uac10\ub3c5\uc6d0 DART","2025 \ud655\uc815 \uc2e4\uc801 \uae30\uc900","OK"],
+      ["SRC-04","\ud53c\uc5b4 \uc2dc\uc7a5\ub370\uc774\ud130","","","\uc785\ub825 \ub300\uae30","\uc0dd\uc131 \uc2dc\uc810 \uae30\uc900\uc73c\ub85c \uc0c8\ub85c \uc785\ub825","PENDING"]
+    ]},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "A18:G24", "data": [
+      ["\uac80\uc99d \ud56d\ubaa9","\uac80\uc99d\uac12","\uae30\ub300\uac12","\ucc28\uc774","\ud5c8\uc6a9\uc624\ucc28","\uc0c1\ud0dc","\ube44\uace0"],
+      ["WinWay \ud560\uc778\uc728",null,0.4,null,0,null,"40%"],
+      ["Target P/E",null,68,null,1,null,"68x"],
+      ["FY26E EPS",null,4109,null,1,null,"\uc6d0"],
+      ["\ubaa9\ud45c\uc8fc\uac00",null,280000,null,10000,null,"\uc6d0"],
+      ["FY27E EPS",null,5395,null,1,null,"\uc6d0"],
+      ["1Q26 \uc2e4\uc81c\uac12 \uc785\ub825 \uc218",null,0,null,0,null,"0\uc774\uba74 Pre-Review"]
+    ]},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "A27:A31", "data": [
+      ["\uc138\uc774\uc158 \uba54\ubaa8"],
+      ["\ubcf8 \ud30c\uc77c\uc740 1Q26 \uc2e4\uc801 \ubc1c\ud45c \uc804 \uc0c1\ud0dc\ub97c \uc7ac\ud604\ud55c Pre-Review \ud15c\ud50c\ub9bf."],
+      ["1Q26 Review \uc2e4\uc81c\uac12\u00b7\uc0ac\ud6c4 \ucd94\uc815\uce58\ub294 \ucd08\uc548 \uc0dd\uc131 \ud6c4 \ube44\uad50\uc5d0\ub9cc \uc0ac\uc6a9."],
+      ["\ud53c\uc5b4 \uc2e4\uc801\u00b7\ubc38\ub958\uc5d0\uc774\uc158\uc740 \uc0dd\uc131 \uc2dc\uc810\uc758 \ucd9c\ucc98\uc640 \uae30\uc900\uc77c\uc744 \ubc18\ub4dc\uc2dc \ud568\uaed8 \uae30\ub85d."],
+      ["\ub300\uc0c1 \uc0b0\ucd9c\ubb3c: 2026\ub144 1\ubd84\uae30 \ub9ac\ud3ec\ud2b8 \ucd08\uc548. \uc2e4\uc81c \ub9ac\ud3ec\ud2b8\uc640 \ube44\uad50 \uc608\uc815."]
+    ]}
+  ],
+  "formulas": [
+    {"sheet": "04_\ud53c\uc5b4\uc2e4\uc801", "range": "H6:H9", "data": [["=IF(COUNTA(E6:G6)=0,\"\",AVERAGE(E6:G6))"],["=IF(COUNTA(E7:G7)=0,\"\",AVERAGE(E7:G7))"],["=IF(COUNTA(E8:G8)=0,\"\",AVERAGE(E8:G8))"],["=IF(COUNTA(E9:G9)=0,\"\",AVERAGE(E9:G9))"]]},
+    {"sheet": "05_\ud53c\uc5b4\ubc38\ub958", "range": "J6:J9", "data": [["=IF(COUNTA(E6:G6)=0,\"\",AVERAGE(E6:G6))"],["=IF(COUNTA(E7:G7)=0,\"\",AVERAGE(E7:G7))"],["=IF(COUNTA(E8:G8)=0,\"\",AVERAGE(E8:G8))"],["=IF(COUNTA(E9:G9)=0,\"\",AVERAGE(E9:G9))"]]},
+
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "B19:B24", "data": [
+      ["='03_\ubaa9\ud45c\uc8fc\uac00'!B8"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B9"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B6"],["='03_\ubaa9\ud45c\uc8fc\uac00'!B11"],["='08_Forward_EPS'!D36"],["=COUNT('01_\uc2e4\uc801\ucd94\uc774'!F6:F25)"]
+    ]},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "D19:D24", "data": [["=B19-C19"],["=B20-C20"],["=B21-C21"],["=B22-C22"],["=B23-C23"],["=B24-C24"]]},
+    {"sheet": "07_\ucd9c\ucc98\uac80\uc99d", "range": "F19:F24", "data": [
+      ["=IF(ABS(D19)<=E19,\"OK\",\"CHECK\")"],["=IF(ABS(D20)<=E20,\"OK\",\"CHECK\")"],["=IF(ABS(D21)<=E21,\"OK\",\"CHECK\")"],["=IF(ABS(D22)<=E22,\"OK\",\"CHECK\")"],["=IF(ABS(D23)<=E23,\"OK\",\"CHECK\")"],["=IF(ABS(D24)<=E24,\"OK\",\"CHECK\")"]
+    ]}
+  ]
+}

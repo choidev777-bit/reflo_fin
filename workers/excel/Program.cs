@@ -569,11 +569,10 @@ static ValuationReadModel BuildValuationReadModel(
 {
     var sheets = new List<ValuationSheet>();
     var editable = new List<ValuationEditableCell>();
-    foreach (var worksheet in workbook.Worksheets
-                 .Where(sheet => sheet.Visibility == XLWorksheetVisibility.Visible)
-                 .OrderBy(sheet => sheet.Position))
+    foreach (var worksheet in workbook.Worksheets.OrderBy(sheet => sheet.Position))
     {
         var sheetId = $"sheet_{worksheet.Position}";
+        var visibility = WorksheetVisibility(worksheet);
         var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
         var cells = new List<ValuationCell>();
         var firstRow = used?.RangeAddress.FirstAddress.RowNumber ?? 1;
@@ -612,7 +611,9 @@ static ValuationReadModel BuildValuationReadModel(
             {
                 var fill = ColorHex(cell.Style.Fill.BackgroundColor);
                 var font = ColorHex(cell.Style.Font.FontColor);
-                var canEdit = IsWorkflowEditableCell(cell);
+                var canEdit =
+                    visibility == "visible" &&
+                    IsWorkflowEditableCell(cell);
                 var address = cell.Address?.ToString() ?? "";
                 var label = FindLabel(worksheet, cell);
                 var valueType = EditableValueType(cell);
@@ -627,7 +628,13 @@ static ValuationReadModel BuildValuationReadModel(
                     cell.Style.NumberFormat.Format ?? "",
                     label,
                     canEdit,
-                    canEdit ? null : cell.HasFormula ? "수식 결과" : "읽기 전용",
+                    canEdit
+                        ? null
+                        : visibility != "visible"
+                            ? "숨김 시트"
+                            : cell.HasFormula
+                                ? "수식 결과"
+                                : "읽기 전용",
                     fill,
                     font,
                     cell.Style.Font.Bold,
@@ -657,7 +664,10 @@ static ValuationReadModel BuildValuationReadModel(
                         valueType,
                         label,
                         cell.Style.NumberFormat.Format ?? "",
-                        cell.Value.Type != XLDataType.Blank));
+                        cell.Value.Type != XLDataType.Blank,
+                        [],
+                        null,
+                        []));
                 }
             }
         }
@@ -665,6 +675,7 @@ static ValuationReadModel BuildValuationReadModel(
             sheetId,
             worksheet.Name,
             worksheet.Position,
+            visibility,
             used is null ? "A1:A1" : RelativeAddress(used),
             (int)worksheet.SheetView.SplitRow,
             (int)worksheet.SheetView.SplitColumn,
@@ -675,12 +686,348 @@ static ValuationReadModel BuildValuationReadModel(
     }
 
     var outputs = BuildValuationOutputs(workbook, outputBindings);
+    var dependencyAnalysis = AnalyzeValuationDependencies(
+        workbook,
+        outputBindings,
+        editable);
+    editable = editable
+        .Select(cell =>
+        {
+            var key = $"{cell.SheetId}:{cell.Address}";
+            return cell with
+            {
+                ImpactTypes = dependencyAnalysis.ImpactTypes
+                    .GetValueOrDefault(key, ["unmapped"]),
+                ActiveInCurrentMode = dependencyAnalysis.ActiveInCurrentMode
+                    .GetValueOrDefault(key),
+                DownstreamOutputs = dependencyAnalysis.DownstreamOutputs
+                    .GetValueOrDefault(key, []),
+            };
+        })
+        .ToList();
     return new ValuationReadModel(
-        "1.1",
+        "1.2",
         workbookHash,
         sheets,
         editable,
-        outputs);
+        outputs,
+        dependencyAnalysis.Analysis);
+}
+
+static string WorksheetVisibility(IXLWorksheet worksheet)
+{
+    return worksheet.Visibility switch
+    {
+        XLWorksheetVisibility.Hidden => "hidden",
+        XLWorksheetVisibility.VeryHidden => "very_hidden",
+        _ => "visible",
+    };
+}
+
+static DependencyImpactResult AnalyzeValuationDependencies(
+    XLWorkbook workbook,
+    IReadOnlyList<ValuationOutputBinding> outputBindings,
+    IReadOnlyList<ValuationEditableCell> editableCells)
+{
+    var editableKeys = editableCells
+        .Select(cell => $"{cell.SheetId}:{cell.Address}")
+        .ToHashSet(StringComparer.Ordinal);
+    var impactTypes = editableKeys.ToDictionary(
+        key => key,
+        _ => new HashSet<string>(StringComparer.Ordinal),
+        StringComparer.Ordinal);
+    var downstreamOutputs = editableKeys.ToDictionary(
+        key => key,
+        _ => new HashSet<string>(StringComparer.Ordinal),
+        StringComparer.Ordinal);
+    var activeInCurrentMode = editableKeys.ToDictionary(
+        key => key,
+        _ => (bool?)null,
+        StringComparer.Ordinal);
+    var warnings = new SortedSet<string>(StringComparer.Ordinal);
+    var edges = new List<ValuationDependencyEdge>();
+    var edgeKeys = new HashSet<string>(StringComparer.Ordinal);
+    var namedRanges = workbook.DefinedNames
+        .Select(name => name.Name)
+        .Concat(workbook.Worksheets.SelectMany(
+            worksheet => worksheet.DefinedNames.Select(name => name.Name)))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    foreach (var binding in outputBindings)
+    {
+        var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
+            $"sheet_{sheet.Position}" == binding.SheetId);
+        if (worksheet is null)
+        {
+            warnings.Add($"OUTPUT_SHEET_MISSING:{binding.Metric}");
+            continue;
+        }
+
+        var impactType = binding.Metric switch
+        {
+            "forward_eps" => "forward_eps_driver",
+            "target_per" => "target_per_driver",
+            "target_price" => "target_price_driver",
+            _ => null,
+        };
+        if (impactType is null) continue;
+
+        var stack = new Stack<(
+            IXLWorksheet Worksheet,
+            string Address,
+            bool ConditionalPath)>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        stack.Push((
+            worksheet,
+            NormalizeCellAddress(binding.Address),
+            false));
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            var currentSheetId = $"sheet_{current.Worksheet.Position}";
+            var currentKey = $"{currentSheetId}:{current.Address}";
+            if (!visited.Add(
+                    $"{currentKey}:{current.ConditionalPath}"))
+            {
+                continue;
+            }
+
+            if (editableKeys.Contains(currentKey))
+            {
+                impactTypes[currentKey].Add(impactType);
+                downstreamOutputs[currentKey].Add(binding.Metric);
+                if (!current.ConditionalPath)
+                {
+                    activeInCurrentMode[currentKey] = true;
+                }
+            }
+
+            if (!TryCell(current.Worksheet, current.Address, out var cell) ||
+                !cell.HasFormula)
+            {
+                continue;
+            }
+
+            var parsed = ParseFormulaDependencies(
+                workbook,
+                current.Worksheet,
+                cell.FormulaA1,
+                namedRanges);
+            foreach (var warning in parsed.Warnings)
+            {
+                warnings.Add(
+                    $"{warning}:{current.Worksheet.Name}!{current.Address}");
+            }
+            foreach (var reference in parsed.References)
+            {
+                var referencedSheet = workbook.Worksheets.FirstOrDefault(
+                    sheet => string.Equals(
+                        sheet.Name,
+                        reference.SheetName,
+                        StringComparison.OrdinalIgnoreCase));
+                if (referencedSheet is null)
+                {
+                    warnings.Add(
+                        $"REFERENCE_SHEET_MISSING:{reference.SheetName}");
+                    continue;
+                }
+                var referencedSheetId = $"sheet_{referencedSheet.Position}";
+                var edgeKey =
+                    $"{binding.Metric}:{currentSheetId}:{current.Address}:" +
+                    $"{referencedSheetId}:{reference.Address}";
+                if (edgeKeys.Add(edgeKey))
+                {
+                    edges.Add(new ValuationDependencyEdge(
+                        binding.Metric,
+                        currentSheetId,
+                        current.Address,
+                        referencedSheetId,
+                        reference.Address));
+                }
+                stack.Push((
+                    referencedSheet,
+                    reference.Address,
+                    current.ConditionalPath || parsed.HasConditionalBranch));
+            }
+        }
+    }
+
+    var orderedImpactTypes = impactTypes.ToDictionary(
+        pair => pair.Key,
+        pair => (IReadOnlyList<string>)(pair.Value.Count == 0
+            ? ["unmapped"]
+            : pair.Value
+                .OrderBy(ImpactTypeOrder)
+                .ToArray()),
+        StringComparer.Ordinal);
+    var orderedDownstreamOutputs = downstreamOutputs.ToDictionary(
+        pair => pair.Key,
+        pair => (IReadOnlyList<string>)pair.Value
+            .OrderBy(OutputMetricOrder)
+            .ToArray(),
+        StringComparer.Ordinal);
+    var warningList = warnings.ToArray();
+    return new DependencyImpactResult(
+        orderedImpactTypes,
+        activeInCurrentMode,
+        orderedDownstreamOutputs,
+        new ValuationDependencyAnalysis(
+            warningList.Length == 0 ? "complete" : "partial",
+            warningList,
+            edges));
+}
+
+static int ImpactTypeOrder(string impactType)
+{
+    return impactType switch
+    {
+        "forward_eps_driver" => 0,
+        "target_per_driver" => 1,
+        "target_price_driver" => 2,
+        "report_table_driver" => 3,
+        "source_metadata" => 4,
+        "inactive_branch" => 5,
+        _ => 6,
+    };
+}
+
+static int OutputMetricOrder(string metric)
+{
+    return metric switch
+    {
+        "forward_eps" => 0,
+        "target_per" => 1,
+        "target_price" => 2,
+        _ => 3,
+    };
+}
+
+static FormulaDependencyParse ParseFormulaDependencies(
+    XLWorkbook workbook,
+    IXLWorksheet currentWorksheet,
+    string formula,
+    IReadOnlyList<string> namedRanges)
+{
+    var warnings = new SortedSet<string>(StringComparer.Ordinal);
+    var references = new List<FormulaDependencyReference>();
+    var referenceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var scrubbed = Regex.Replace(
+        formula,
+        "\"(?:[^\"]|\"\")*\"",
+        "\"\"");
+    if (scrubbed.Contains('[') || scrubbed.Contains(']'))
+    {
+        warnings.Add("UNSUPPORTED_STRUCTURED_OR_EXTERNAL_REFERENCE");
+    }
+    if (Regex.IsMatch(
+            scrubbed,
+            @"(?<![A-Z0-9_.])(INDIRECT|OFFSET)\s*\(",
+            RegexOptions.IgnoreCase))
+    {
+        warnings.Add("UNSUPPORTED_DYNAMIC_REFERENCE");
+    }
+    var hasConditionalBranch = Regex.IsMatch(
+        scrubbed,
+        @"(?<![A-Z0-9_.])(IF|IFS|CHOOSE|SWITCH)\s*\(",
+        RegexOptions.IgnoreCase);
+    if (hasConditionalBranch)
+    {
+        warnings.Add("BRANCH_ACTIVITY_NOT_EVALUATED");
+    }
+    foreach (var name in namedRanges)
+    {
+        if (Regex.IsMatch(
+                scrubbed,
+                $@"(?<![A-Z0-9_.]){Regex.Escape(name)}(?![A-Z0-9_.])",
+                RegexOptions.IgnoreCase))
+        {
+            warnings.Add($"UNSUPPORTED_DEFINED_NAME:{name}");
+        }
+    }
+
+    const string referencePattern =
+        @"(?<![A-Z0-9_.])" +
+        @"(?:(?:'(?<quoted>(?:[^']|'')+)'|(?<plain>[A-Z0-9_가-힣]+))!)?" +
+        @"(?<first>\$?[A-Z]{1,3}\$?[1-9]\d{0,6})" +
+        @"(?::(?<last>\$?[A-Z]{1,3}\$?[1-9]\d{0,6}))?" +
+        @"(?![A-Z0-9_(])";
+    foreach (Match match in Regex.Matches(
+                 scrubbed,
+                 referencePattern,
+                 RegexOptions.IgnoreCase))
+    {
+        var sheetName = match.Groups["quoted"].Success
+            ? match.Groups["quoted"].Value.Replace("''", "'")
+            : match.Groups["plain"].Success
+                ? match.Groups["plain"].Value
+                : currentWorksheet.Name;
+        var firstAddress = NormalizeCellAddress(match.Groups["first"].Value);
+        var lastAddress = match.Groups["last"].Success
+            ? NormalizeCellAddress(match.Groups["last"].Value)
+            : firstAddress;
+        var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
+            string.Equals(
+                sheet.Name,
+                sheetName,
+                StringComparison.OrdinalIgnoreCase));
+        if (worksheet is null)
+        {
+            warnings.Add($"REFERENCE_SHEET_MISSING:{sheetName}");
+            continue;
+        }
+        if (!TryCell(worksheet, firstAddress, out var firstCell) ||
+            !TryCell(worksheet, lastAddress, out var lastCell))
+        {
+            warnings.Add("REFERENCE_ADDRESS_INVALID");
+            continue;
+        }
+        var firstRow = Math.Min(
+            firstCell.Address.RowNumber,
+            lastCell.Address.RowNumber);
+        var lastRow = Math.Max(
+            firstCell.Address.RowNumber,
+            lastCell.Address.RowNumber);
+        var firstColumn = Math.Min(
+            firstCell.Address.ColumnNumber,
+            lastCell.Address.ColumnNumber);
+        var lastColumn = Math.Max(
+            firstCell.Address.ColumnNumber,
+            lastCell.Address.ColumnNumber);
+        var rangeCellCount =
+            (long)(lastRow - firstRow + 1) *
+            (lastColumn - firstColumn + 1);
+        if (rangeCellCount > MaxCandidateCells)
+        {
+            warnings.Add("DEPENDENCY_RANGE_TOO_LARGE");
+            continue;
+        }
+        for (var row = firstRow; row <= lastRow; row++)
+        {
+            for (var column = firstColumn; column <= lastColumn; column++)
+            {
+                var address =
+                    worksheet.Cell(row, column).Address?.ToString() ??
+                    $"{column}:{row}";
+                var key = $"{worksheet.Name}:{address}";
+                if (referenceKeys.Add(key))
+                {
+                    references.Add(new FormulaDependencyReference(
+                        worksheet.Name,
+                        address));
+                }
+            }
+        }
+    }
+    return new FormulaDependencyParse(
+        references,
+        warnings.ToArray(),
+        hasConditionalBranch);
+}
+
+static string NormalizeCellAddress(string address)
+{
+    return address.Replace("$", "", StringComparison.Ordinal).ToUpperInvariant();
 }
 
 static ValuationOutputs BuildValuationOutputs(
@@ -1182,11 +1529,15 @@ public sealed record ValuationEditableCell(
     string ValueType,
     string Label,
     string NumberFormat,
-    bool Required);
+    bool Required,
+    IReadOnlyList<string> ImpactTypes,
+    bool? ActiveInCurrentMode,
+    IReadOnlyList<string> DownstreamOutputs);
 public sealed record ValuationSheet(
     string SheetId,
     string Name,
     int Index,
+    string Visibility,
     string UsedRange,
     int FreezeRows,
     int FreezeColumns,
@@ -1217,12 +1568,35 @@ public sealed record ValuationOutputs(
     ValuationOutput? ForwardEps,
     ValuationOutput? TargetPer,
     ValuationOutput? TargetPrice);
+public sealed record ValuationDependencyEdge(
+    string OutputMetric,
+    string FromSheetId,
+    string FromAddress,
+    string ToSheetId,
+    string ToAddress);
+public sealed record ValuationDependencyAnalysis(
+    string Status,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<ValuationDependencyEdge> Edges);
 public sealed record ValuationReadModel(
     string SchemaVersion,
     string WorkbookHash,
     IReadOnlyList<ValuationSheet> Sheets,
     IReadOnlyList<ValuationEditableCell> EditableCells,
-    ValuationOutputs Outputs);
+    ValuationOutputs Outputs,
+    ValuationDependencyAnalysis DependencyAnalysis);
+public sealed record FormulaDependencyReference(
+    string SheetName,
+    string Address);
+public sealed record FormulaDependencyParse(
+    IReadOnlyList<FormulaDependencyReference> References,
+    IReadOnlyList<string> Warnings,
+    bool HasConditionalBranch);
+public sealed record DependencyImpactResult(
+    IReadOnlyDictionary<string, IReadOnlyList<string>> ImpactTypes,
+    IReadOnlyDictionary<string, bool?> ActiveInCurrentMode,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> DownstreamOutputs,
+    ValuationDependencyAnalysis Analysis);
 public sealed record ValuationAppliedCell(
     string SheetId,
     string SheetName,

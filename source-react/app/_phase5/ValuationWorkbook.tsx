@@ -20,6 +20,42 @@ const PAGE_ROWS = 60;
 const PAGE_COLUMNS = 16;
 const DEFAULT_COLUMN_WIDTH = 108;
 const DEFAULT_ROW_HEIGHT = 34;
+type ImpactFilter = "all" | "eps" | "per" | "price" | "other";
+
+const impactFilters: Array<{
+  key: ImpactFilter;
+  label: string;
+}> = [
+  { key: "all", label: "전체" },
+  { key: "eps", label: "EPS" },
+  { key: "per", label: "PER" },
+  { key: "price", label: "목표주가" },
+  { key: "other", label: "기타·미연결" },
+];
+
+function matchesImpact(
+  impactTypes: string[],
+  filter: ImpactFilter,
+) {
+  if (filter === "all") return true;
+  if (filter === "eps") {
+    return impactTypes.includes("forward_eps_driver");
+  }
+  if (filter === "per") {
+    return impactTypes.includes("target_per_driver");
+  }
+  if (filter === "price") {
+    return impactTypes.includes("target_price_driver");
+  }
+  return impactTypes.some((impact) =>
+    [
+      "report_table_driver",
+      "source_metadata",
+      "inactive_branch",
+      "unmapped",
+    ].includes(impact),
+  );
+}
 
 function columnName(column: number): string {
   let value = column;
@@ -225,10 +261,16 @@ export default function ValuationWorkbook({
   const [rowStart, setRowStart] = useState(1);
   const [columnStart, setColumnStart] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const [impactFilter, setImpactFilter] =
+    useState<ImpactFilter>("all");
   const gridScrollRef = useRef<HTMLDivElement | null>(null);
+  const visibleSheets = useMemo(
+    () => model.sheets.filter((item) => item.visibility === "visible"),
+    [model.sheets],
+  );
   const sheet =
-    model.sheets.find((item) => item.sheetId === activeSheetId) ??
-    model.sheets[0];
+    visibleSheets.find((item) => item.sheetId === activeSheetId) ??
+    visibleSheets[0];
   const editableCountBySheet = useMemo(() => {
     const counts = new Map<string, number>();
     for (const cell of model.editableCells) {
@@ -236,6 +278,24 @@ export default function ValuationWorkbook({
     }
     return counts;
   }, [model.editableCells]);
+  const editableMetadata = useMemo(
+    () =>
+      new Map(
+        model.editableCells.map((cell) => [
+          `${cell.sheetId}:${cell.address}`,
+          cell,
+        ]),
+      ),
+    [model.editableCells],
+  );
+  const filteredEditableCountBySheet = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const cell of model.editableCells) {
+      if (!matchesImpact(cell.impactTypes, impactFilter)) continue;
+      counts.set(cell.sheetId, (counts.get(cell.sheetId) ?? 0) + 1);
+    }
+    return counts;
+  }, [impactFilter, model.editableCells]);
 
   const bounds = useMemo(() => {
     const cells = sheet?.cells ?? [];
@@ -339,6 +399,8 @@ export default function ValuationWorkbook({
       ? sheet.cells.find((cell) => cell.address === selected.address) ?? null
       : null;
   const activeEditableCount = editableCountBySheet.get(sheet.sheetId) ?? 0;
+  const activeFilteredEditableCount =
+    filteredEditableCountBySheet.get(sheet.sheetId) ?? 0;
 
   const fitToWidth = () => {
     const viewportWidth = gridScrollRef.current?.clientWidth;
@@ -390,9 +452,38 @@ export default function ValuationWorkbook({
         </span>
         <em className={activeEditableCount > 0 ? "is-editable" : ""}>
           {activeEditableCount > 0
-            ? `사용자 입력 ${activeEditableCount}개`
+            ? impactFilter === "all"
+              ? `사용자 입력 ${activeEditableCount}개`
+              : `필터 결과 ${activeFilteredEditableCount}개`
             : "읽기 전용 시트"}
         </em>
+      </div>
+      <div
+        className="phase5-impact-filters"
+        role="group"
+        aria-label="입력 셀 영향 범위"
+      >
+        <span>입력 영향</span>
+        {impactFilters.map((filter) => {
+          const count = model.editableCells.filter((cell) =>
+            matchesImpact(cell.impactTypes, filter.key),
+          ).length;
+          return (
+            <button
+              key={filter.key}
+              type="button"
+              aria-pressed={impactFilter === filter.key}
+              onClick={() => setImpactFilter(filter.key)}
+            >
+              {filter.label} <small>{count}</small>
+            </button>
+          );
+        })}
+        {model.dependencyAnalysis.status === "partial" && (
+          <em title={model.dependencyAnalysis.warnings.join("\n")}>
+            일부 수식 추적 제한
+          </em>
+        )}
       </div>
       <div className="phase5-grid-pager" aria-label="Workbook 표시 범위">
         <span>
@@ -557,6 +648,16 @@ export default function ValuationWorkbook({
                 const isSelected =
                   selected?.sheetId === sheet.sheetId &&
                   selected.address === cell.address;
+                const impact = editableMetadata.get(
+                  `${sheet.sheetId}:${cell.address}`,
+                );
+                const isImpactMuted =
+                  cell.editable &&
+                  impactFilter !== "all" &&
+                  !matchesImpact(
+                    impact?.impactTypes ?? ["unmapped"],
+                    impactFilter,
+                  );
                 const style: CSSProperties = {
                   ...placement,
                   fontWeight: cell.bold ? 650 : 450,
@@ -597,6 +698,7 @@ export default function ValuationWorkbook({
                       cell.editable ? "is-editable" : "is-readonly",
                       cell.wrapText ? "is-wrapped" : "",
                       merged ? "is-merged" : "",
+                      isImpactMuted ? "is-impact-muted" : "",
                       isSelected ? "is-selected" : "",
                     ].join(" ")}
                     style={style}
@@ -669,15 +771,22 @@ export default function ValuationWorkbook({
         )}
       </div>
       <nav className="phase5-sheet-tabs" aria-label="Excel 시트">
-        {model.sheets.map((item) => {
+        {visibleSheets.map((item) => {
           const editableCount =
             editableCountBySheet.get(item.sheetId) ?? 0;
+          const filteredCount =
+            filteredEditableCountBySheet.get(item.sheetId) ?? 0;
           return (
             <button
               key={item.sheetId}
               type="button"
               className={
-                editableCount > 0 ? "has-editable-cells" : undefined
+                [
+                  editableCount > 0 ? "has-editable-cells" : "",
+                  impactFilter !== "all" && filteredCount === 0
+                    ? "is-impact-muted"
+                    : "",
+                ].filter(Boolean).join(" ") || undefined
               }
               aria-label={
                 editableCount > 0
@@ -692,14 +801,22 @@ export default function ValuationWorkbook({
               }}
             >
               <span>{item.name}</span>
-              {editableCount > 0 && <small>입력 {editableCount}</small>}
+              {editableCount > 0 && (
+                <small>
+                  입력 {impactFilter === "all" ? editableCount : filteredCount}
+                </small>
+              )}
             </button>
           );
         })}
       </nav>
       <div className="phase5-mobile-inputs">
         <h3>입력 가능한 셀</h3>
-        {model.editableCells.map((editable) => {
+        {model.editableCells
+          .filter((editable) =>
+            matchesImpact(editable.impactTypes, impactFilter),
+          )
+          .map((editable) => {
           const sourceSheet = model.sheets.find(
             (item) => item.sheetId === editable.sheetId,
           );
@@ -730,7 +847,7 @@ export default function ValuationWorkbook({
               />
             </label>
           );
-        })}
+          })}
       </div>
     </section>
   );

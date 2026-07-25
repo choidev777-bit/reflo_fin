@@ -1,0 +1,28 @@
+{
+  "values": [
+    {"sheet": "08_Forward_EPS", "range": "A11", "data": [["\uc8fc: Driver\ub294 \uc0bc\uc131\uc99d\uad8c 2026-04-20 Preview\uc758 FY26E\u00b7FY27E \uc218\uce58\ub97c \uc5ed\uc0b0\ud558\uc5ec \uc785\ub825. 1Q26 \uc2e4\uc801 \ubc18\uc601 \uc804."]]},
+    {"sheet": "08_Forward_EPS", "range": "C16:D16", "data": [[0.41008174386921,0.296296296296296]]},
+    {"sheet": "08_Forward_EPS", "range": "C19:D19", "data": [[0.547826086956522,0.544099378881988]]},
+    {"sheet": "08_Forward_EPS", "range": "C24:D24", "data": [[0.14524959742351,0.132670807453416]]},
+    {"sheet": "08_Forward_EPS", "range": "C29:D29", "data": [[0.0402576489533011,0.0283229813664596]]},
+    {"sheet": "08_Forward_EPS", "range": "C33:D33", "data": [[0.219851576994434,0.219787985865724]]},
+    {"sheet": "08_Forward_EPS", "range": "C35:D35", "data": [[20.4672669749331,20.4633920296571]]},
+    {"sheet": "08_Forward_EPS", "range": "D42:D45", "data": [["310.5\uc2ed\uc5b5\uc6d0"],["402.5\uc2ed\uc5b5\uc6d0"],["4,109\uc6d0"],["5,395\uc6d0"]]},
+
+    {"sheet": "08-01", "range": "A6", "data": [["\uc8fc: 2026-04-20 Preview \uae30\uc900 Driver. 1Q26 Review \uc2e4\uc81c\uac12\u00b7\uc0ac\ud6c4 \ucd94\uc815\uce58 \ubbf8\ubc18\uc601."]]},
+    {"sheet": "08-01", "range": "C11:D11", "data": [[0.41008174386921,0.296296296296296]]},
+    {"sheet": "08-01", "range": "C13:D13", "data": [[0.547826086956522,0.544099378881988]]},
+    {"sheet": "08-01", "range": "C17:D17", "data": [[0.14524959742351,0.132670807453416]]},
+    {"sheet": "08-01", "range": "C21:D21", "data": [[0.0402576489533011,0.0283229813664596]]},
+    {"sheet": "08-01", "range": "C24:D24", "data": [[0.219851576994434,0.219787985865724]]},
+    {"sheet": "08-01", "range": "C25:D25", "data": [[20.4672669749331,20.4633920296571]]}
+  ],
+  "formulas": [
+    {"sheet": "08_Forward_EPS", "range": "B42:B45", "data": [
+      ["=IFERROR(C15-310.5,\"\")"],["=IFERROR(D15-402.5,\"\")"],["=IFERROR(C36-4109,\"\")"],["=IFERROR(D36-5395,\"\")"]
+    ]},
+    {"sheet": "08_Forward_EPS", "range": "C42:C45", "data": [
+      ["=IF(ABS(B42)<=0.1,\"OK\",\"CHECK\")"],["=IF(ABS(B43)<=0.1,\"OK\",\"CHECK\")"],["=IF(ABS(B44)<=1,\"OK\",\"CHECK\")"],["=IF(ABS(B45)<=1,\"OK\",\"CHECK\")"]
+    ]}
+  ]
+}

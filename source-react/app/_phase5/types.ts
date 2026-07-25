@@ -34,6 +34,30 @@ export type WorkbookCell = {
   borderLeft?: string;
 };
 
+export type ValuationImpactType =
+  | "forward_eps_driver"
+  | "target_per_driver"
+  | "target_price_driver"
+  | "report_table_driver"
+  | "source_metadata"
+  | "inactive_branch"
+  | "unmapped";
+
+export type EditableWorkbookCell = {
+  sheetId: string;
+  sheetName: string;
+  address: string;
+  valueType: string;
+  label: string;
+  numberFormat: string;
+  required: boolean;
+  impactTypes: ValuationImpactType[];
+  activeInCurrentMode: boolean | null;
+  downstreamOutputs: Array<
+    "forward_eps" | "target_per" | "target_price"
+  >;
+};
+
 export type WorkbookReadModel = {
   workbookVersion: number;
   editableCellSetVersion: number;
@@ -43,6 +67,7 @@ export type WorkbookReadModel = {
     sheetId: string;
     name: string;
     index: number;
+    visibility: "visible" | "hidden" | "very_hidden";
     usedRange: string;
     freezeRows: number;
     freezeColumns: number;
@@ -64,20 +89,53 @@ export type WorkbookReadModel = {
     }>;
     cells: WorkbookCell[];
   }>;
-  editableCells: Array<{
-    sheetId: string;
-    sheetName: string;
-    address: string;
-    valueType: string;
-    label: string;
-    numberFormat: string;
-    required: boolean;
-  }>;
+  editableCells: EditableWorkbookCell[];
   outputs: {
     forwardEps: OutputCell | null;
     targetPer: OutputCell | null;
     targetPrice: OutputCell | null;
   };
+  dependencyAnalysis: {
+    status: "complete" | "partial";
+    warnings: string[];
+    edges: Array<{
+      outputMetric: "forward_eps" | "target_per" | "target_price";
+      fromSheetId: string;
+      fromAddress: string;
+      toSheetId: string;
+      toAddress: string;
+    }>;
+  };
+};
+
+export type ValuationOutputDelta = {
+  before: string | null;
+  after: string | null;
+  beforeFormatted: string | null;
+  afterFormatted: string | null;
+  changed: boolean;
+};
+
+export type CellPatchResult = {
+  workbookVersion: number;
+  calculationRunId: string;
+  appliedChanges: Array<{
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    valueType: string;
+    rawValue: string | null;
+    formattedText: string;
+  }>;
+  affectedCells: WorkbookCell[];
+  outputDiff: {
+    forwardEps: ValuationOutputDelta;
+    targetPer: ValuationOutputDelta;
+    targetPrice: ValuationOutputDelta;
+  };
+  affectedReportBindings: string[];
+  invalidatedResults: string[];
+  savedAt: string | null;
 };
 
 export type ValuationWorkspace = {
@@ -100,6 +158,7 @@ export type ValuationWorkspace = {
       sheetId: string;
       name: string;
       index: number;
+      visibility: "visible";
       usedRange: string;
     }>;
     savedAt: string;

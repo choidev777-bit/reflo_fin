@@ -44,6 +44,19 @@ type WorkbookCell = {
   bold: boolean;
 };
 
+type EditableCell = {
+  sheetId: string;
+  sheetName: string;
+  address: string;
+  valueType: string;
+  label: string;
+  numberFormat: string;
+  required: boolean;
+  impactTypes?: string[];
+  activeInCurrentMode?: boolean | null;
+  downstreamOutputs?: string[];
+};
+
 type ReadModel = {
   schemaVersion: string;
   workbookHash: string;
@@ -51,24 +64,28 @@ type ReadModel = {
     sheetId: string;
     name: string;
     index: number;
+    visibility?: "visible" | "hidden" | "very_hidden";
     usedRange: string;
     freezeRows: number;
     freezeColumns: number;
     cells: WorkbookCell[];
   }>;
-  editableCells: Array<{
-    sheetId: string;
-    sheetName: string;
-    address: string;
-    valueType: string;
-    label: string;
-    numberFormat: string;
-    required: boolean;
-  }>;
+  editableCells: EditableCell[];
   outputs: {
     forwardEps: OutputCell | null;
     targetPer: OutputCell | null;
     targetPrice: OutputCell | null;
+  };
+  dependencyAnalysis?: {
+    status: "complete" | "partial";
+    warnings: string[];
+    edges: Array<{
+      outputMetric: string;
+      fromSheetId: string;
+      fromAddress: string;
+      toSheetId: string;
+      toAddress: string;
+    }>;
   };
 };
 
@@ -190,6 +207,33 @@ function sameDecimal(
   } catch {
     return false;
   }
+}
+
+function outputDelta(
+  before: OutputCell | null,
+  after: OutputCell | null,
+) {
+  return {
+    before: before?.rawValue ?? null,
+    after: after?.rawValue ?? null,
+    beforeFormatted: before?.formattedText ?? null,
+    afterFormatted: after?.formattedText ?? null,
+    changed:
+      (before?.rawValue ?? null) !== (after?.rawValue ?? null) ||
+      (before?.formattedText ?? null) !==
+        (after?.formattedText ?? null),
+  };
+}
+
+function outputDiff(
+  before: ReadModel["outputs"],
+  after: ReadModel["outputs"],
+) {
+  return {
+    forwardEps: outputDelta(before.forwardEps, after.forwardEps),
+    targetPer: outputDelta(before.targetPer, after.targetPer),
+    targetPrice: outputDelta(before.targetPrice, after.targetPrice),
+  };
 }
 
 function missingRequiredCells(readModel: ReadModel) {
@@ -666,8 +710,31 @@ function workbookMatchesContext(state: WorkbookState, context: Context) {
   return (
     workbookInputsMatch(state, context) &&
     state.calculationStatus === "success" &&
-    state.readModel.schemaVersion === "1.1"
+    state.readModel.schemaVersion === "1.2"
   );
+}
+
+function mergeEditableCellMetadata(
+  authoritative: EditableCell[],
+  analyzed: EditableCell[],
+): EditableCell[] {
+  const analyzedByKey = new Map(
+    analyzed.map((cell) => [
+      `${cell.sheetId}:${cell.address}`,
+      cell,
+    ]),
+  );
+  return authoritative.map((cell) => {
+    const next = analyzedByKey.get(`${cell.sheetId}:${cell.address}`);
+    return {
+      ...cell,
+      impactTypes: next?.impactTypes ?? cell.impactTypes ?? ["unmapped"],
+      activeInCurrentMode:
+        next?.activeInCurrentMode ?? cell.activeInCurrentMode ?? null,
+      downstreamOutputs:
+        next?.downstreamOutputs ?? cell.downstreamOutputs ?? [],
+    };
+  });
 }
 
 async function ensureWorkbook(
@@ -755,7 +822,10 @@ async function ensureWorkbook(
       );
       persistedReadModel = {
         ...readModel,
-        editableCells: current.readModel.editableCells,
+        editableCells: mergeEditableCellMetadata(
+          current.readModel.editableCells,
+          readModel.editableCells,
+        ),
         outputs:
           calculation.rows[0]?.outputs_json ?? current.readModel.outputs,
         sheets: readModel.sheets.map((sheet) => ({
@@ -1054,7 +1124,10 @@ async function calculateAndSave(
   const allowedKeys = new Set(editable.keys());
   const nextReadModel: ReadModel = {
     ...result.readModel,
-    editableCells: input.state.readModel.editableCells,
+    editableCells: mergeEditableCellMetadata(
+      input.state.readModel.editableCells,
+      result.readModel.editableCells,
+    ),
     sheets: result.readModel.sheets.map((sheet) => ({
       ...sheet,
       cells: sheet.cells.map((cell) => {
@@ -1207,6 +1280,10 @@ async function calculateAndSave(
     calculationRunId,
     appliedChanges: result.appliedChanges,
     affectedCells,
+    outputDiff: outputDiff(
+      input.state.readModel.outputs,
+      nextReadModel.outputs,
+    ),
   };
 }
 
@@ -1392,12 +1469,15 @@ export async function getValuationWorkspace(
         editableCellSetVersion: state.editableCellSetVersion,
         displayName: context.sourceFilename,
         readModelUrl: `/api/projects/${projectId}/valuation/workbook?version=${state.workbookVersion}`,
-        visibleSheets: state.readModel.sheets.map((sheet) => ({
-          sheetId: sheet.sheetId,
-          name: sheet.name,
-          index: sheet.index,
-          usedRange: sheet.usedRange,
-        })),
+        visibleSheets: state.readModel.sheets
+          .filter((sheet) => (sheet.visibility ?? "visible") === "visible")
+          .map((sheet) => ({
+            sheetId: sheet.sheetId,
+            name: sheet.name,
+            index: sheet.index,
+            visibility: "visible" as const,
+            usedRange: sheet.usedRange,
+          })),
         savedAt: state.savedAt,
       },
       permissions: {
@@ -1566,6 +1646,8 @@ export async function patchValuationCells(input: {
       appliedChanges: result.appliedChanges,
       affectedCells: result.affectedCells,
       outputs: result.state?.readModel.outputs,
+      outputDiff: result.outputDiff,
+      affectedReportBindings: [],
       invalidatedResults: [
         "valuation_approval",
         "report_outline",
