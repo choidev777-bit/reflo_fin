@@ -1,28 +1,38 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ApiError } from "../../http/api-error";
 import { contentHash, randomToken, sha256 } from "../../domain/hash";
 import { processRoute } from "../../domain/project";
 import { uuidv7 } from "../../domain/ids";
 import {
   applyReportOperations,
+  attachTemplateGeometry,
   buildInitialOutline,
   buildReportDocument,
+  normalizeOutlineContent,
   patchOutline,
   proposeReportRewrite,
   reportContentHash,
   reportFilename,
   validateOutline,
   validateReportDocument,
+  type OutlineChange,
   type OutlineContent,
-  type OutlineNarrative,
   type ReportDocument,
+  type ReportMappingBinding,
   type ReportTemplatePage,
 } from "../../domain/report";
 import {
   withTransaction,
   type TransactionClient,
 } from "../database/transaction";
-import { readObjectBytes } from "../object-storage/s3";
+import { suggestReportOutline } from "../agents/report-outline-agent";
+import { suggestReportDraft } from "../agents/report-draft-agent";
+import {
+  createWorkerDownloadUrl,
+  objectStoreBucket,
+  putImmutableObject,
+  readObjectBytes,
+} from "../object-storage/s3";
 
 type IdempotentResult = { status: number; body: unknown };
 
@@ -45,9 +55,11 @@ type Context = {
   templateResourceVersionId: string;
   templateVersion: number;
   templatePages: ReportTemplatePage[];
+  templateSourcePdfHash: string;
   mappingSetResourceVersionId: string;
   mappingVersion: number;
   mappingConfirmed: boolean;
+  mappingBindings: ReportMappingBinding[];
   validationApprovalId: string;
   validationRunId: string;
   validationVersion: number;
@@ -67,6 +79,8 @@ type Context = {
   thesis: string;
   sourcePdfArtifactId: string;
   sourcePdfFilename: string;
+  sourcePdfObjectKey: string;
+  sourcePdfSha256: string;
   inputFingerprint: string;
   evidence: EvidenceSummary[];
 };
@@ -86,6 +100,38 @@ type EvidenceSummary = {
   canonicalUrl: string | null;
   locator: Record<string, unknown>;
   provenance: Record<string, unknown>;
+};
+
+type PdfRenderWarning = {
+  code: string;
+  message: string;
+};
+
+type PdfRenderResult = {
+  pdfBase64: string;
+  sha256: string;
+  byteSize: number;
+  mediaType: "application/pdf";
+  renderPlan: {
+    version: string;
+    sourcePdfHash: string;
+    operations: unknown[];
+  };
+  validation: {
+    passed: boolean;
+    profile: Record<string, unknown>;
+    pages: unknown[];
+  };
+  warnings: PdfRenderWarning[];
+};
+
+type PdfInspectionResult = {
+  compatible: boolean;
+  issues: unknown[];
+  templateIr?: {
+    source?: { pdfHash?: string };
+    pages?: ReportTemplatePage[];
+  };
 };
 
 type OutlineRow = {
@@ -114,6 +160,84 @@ type ReportRow = {
   content_json: ReportDocument;
   outline_approval_id: string;
 };
+
+async function callPdfWorker<T>(path: string, body: unknown): Promise<T> {
+  const base =
+    process.env.REFLO_PDF_WORKER_URL?.trim() || "http://127.0.0.1:8091";
+  let response: Response;
+  try {
+    response = await fetch(`${base.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    throw new ApiError(
+      503,
+      "PDF_RENDER_SERVICE_UNAVAILABLE",
+      "PDF 미리보기 생성 서비스에 연결하지 못했습니다.",
+      { retryable: true },
+    );
+  }
+  const payload = (await response.json()) as T & { error?: string };
+  if (!response.ok) {
+    const message =
+      typeof payload.error === "string"
+        ? payload.error
+        : "PDF 미리보기를 생성하지 못했습니다.";
+    throw new ApiError(
+      response.status === 422 ? 422 : 503,
+      message.startsWith("BLOCK_OVERFLOW")
+        ? "REPORT_BLOCK_OVERFLOW"
+        : "PDF_RENDER_FAILED",
+      message.startsWith("BLOCK_OVERFLOW")
+        ? "수정한 문장이 원본 PDF 영역을 벗어납니다. 문장을 줄여주세요."
+        : message,
+      { retryable: response.status >= 500 },
+    );
+  }
+  return payload;
+}
+
+async function resolvedTemplatePages(
+  context: Context,
+): Promise<ReportTemplatePage[]> {
+  if (
+    context.templatePages.length > 0 &&
+    context.templateSourcePdfHash === context.sourcePdfSha256
+  ) {
+    return context.templatePages;
+  }
+  const downloadUrl = await createWorkerDownloadUrl(
+    context.sourcePdfObjectKey,
+    10 * 60,
+  );
+  const inspected = await callPdfWorker<PdfInspectionResult>("/inspect", {
+    downloadUrl,
+  });
+  const pages = inspected.templateIr?.pages;
+  if (!inspected.compatible || !Array.isArray(pages) || pages.length === 0) {
+    throw new ApiError(
+      422,
+      "SOURCE_PDF_TEMPLATE_INCOMPATIBLE",
+      "업로드한 PDF의 편집 가능한 텍스트 구조를 확인하지 못했습니다.",
+      { details: Array.isArray(inspected.issues) ? (inspected.issues as never[]) : [] },
+    );
+  }
+  return pages;
+}
+
+async function hydrateReportDocument(
+  context: Context,
+  document: ReportDocument,
+): Promise<ReportDocument> {
+  return attachTemplateGeometry(
+    document,
+    await resolvedTemplatePages(context),
+    context.mappingBindings,
+  );
+}
 
 function requireVersion(value: unknown, label = "version"): number {
   const version = Number(value);
@@ -328,7 +452,10 @@ async function projectContext(
     cutoff_date: string;
     template_resource_version_id: string;
     template_version: string;
-    template_ir_json: { pages?: ReportTemplatePage[] };
+    template_ir_json: {
+      source?: { pdfHash?: string };
+      pages?: ReportTemplatePage[];
+    };
     mapping_set_resource_version_id: string;
     mapping_version: string;
     mapping_status: string;
@@ -352,6 +479,8 @@ async function projectContext(
     thesis: string;
     source_pdf_artifact_id: string;
     source_pdf_filename: string | null;
+    source_pdf_object_key: string;
+    source_pdf_sha256: string;
   }>(
     `SELECT p.project_id, p.name AS project_name, company.company_name,
        company.ticker, setup.target_year, setup.target_quarter,
@@ -373,7 +502,9 @@ async function projectContext(
        hypothesis.draft_version AS hypothesis_version,
        hypothesis.provisional_rating, hypothesis.thesis,
        pdf_file.artifact_id AS source_pdf_artifact_id,
-       pdf_artifact.original_filename AS source_pdf_filename
+       pdf_artifact.original_filename AS source_pdf_filename,
+       pdf_artifact.object_key AS source_pdf_object_key,
+       pdf_artifact.sha256 AS source_pdf_sha256
      FROM project p
      JOIN project_stage_state setup_state
        ON setup_state.project_id = p.project_id
@@ -493,6 +624,96 @@ async function projectContext(
       { meta: { requiredStage: "validation", resumeRoute: processRoute(projectId, "validation") } },
     );
   }
+  const mappingResult = await client.query<{
+    slot_id: string;
+    semantic_metric: string;
+    binding_kind: "scalar" | "table" | "chart";
+    mapping_status: "confirmed" | "suggested" | "unmapped" | "invalid";
+    source_type: string | null;
+    sheet_name: string | null;
+    address: string | null;
+    label: string | null;
+  }>(
+    `SELECT entry.slot_id, entry.semantic_metric, entry.binding_kind,
+       entry.mapping_status, candidate.source_type, candidate.sheet_name,
+       candidate.address, candidate.label
+     FROM mapping_entry entry
+     LEFT JOIN mapping_candidate candidate
+       ON candidate.mapping_candidate_id = entry.selected_candidate_id
+     WHERE entry.mapping_set_version_id = $1`,
+    [row.mapping_set_resource_version_id],
+  );
+  const mappedBindings: ReportMappingBinding[] = mappingResult.rows.map(
+    (item) => ({
+      slotId: item.slot_id,
+      metric: item.semantic_metric,
+      kind: item.binding_kind,
+      status: item.mapping_status,
+      sourceLabel:
+        item.label ??
+        (item.sheet_name && item.address
+          ? `${item.sheet_name} ${item.address}`
+          : null),
+      sourceAddress: item.address,
+      sourceType: item.source_type,
+    }),
+  );
+  const authoritativeBindings: ReportMappingBinding[] = [
+    {
+      slotId: `valuation:${row.valuation_approval_id}:target_price`,
+      metric: "target_price",
+      kind: "scalar",
+      status: "confirmed",
+      sourceLabel: `밸류에이션 승인 v${row.valuation_version}`,
+      sourceAddress: "target_price",
+      sourceType: "valuation_approval",
+    },
+    {
+      slotId: `valuation:${row.valuation_approval_id}:per`,
+      metric: "per",
+      kind: "scalar",
+      status: "confirmed",
+      sourceLabel: `밸류에이션 승인 v${row.valuation_version}`,
+      sourceAddress: "target_per",
+      sourceType: "valuation_approval",
+    },
+    {
+      slotId: `valuation:${row.valuation_approval_id}:eps`,
+      metric: "eps",
+      kind: "scalar",
+      status: "confirmed",
+      sourceLabel: `밸류에이션 승인 v${row.valuation_version}`,
+      sourceAddress: "forward_eps",
+      sourceType: "valuation_approval",
+    },
+    {
+      slotId: `market-price:${row.cutoff_date}:current_price`,
+      metric: "current_price",
+      kind: "scalar",
+      status: "confirmed",
+      sourceLabel: `${row.cutoff_date} 현재주가 스냅샷`,
+      sourceAddress: "current_price",
+      sourceType: "market_price_snapshot",
+    },
+    {
+      slotId: `hypothesis:${row.hypothesis_resource_version_id}:investment_opinion`,
+      metric: "investment_opinion",
+      kind: "scalar",
+      status: "suggested",
+      sourceLabel: `투자 가설 v${row.hypothesis_version}`,
+      sourceAddress: "provisional_rating",
+      sourceType: "hypothesis",
+    },
+  ];
+  const authoritativeMetrics = new Set(
+    authoritativeBindings.map((binding) => `${binding.metric}:${binding.kind}`),
+  );
+  const mappingBindings: ReportMappingBinding[] = [
+    ...mappedBindings.filter(
+      (binding) => !authoritativeMetrics.has(`${binding.metric}:${binding.kind}`),
+    ),
+    ...authoritativeBindings,
+  ];
   const refs = {
     templateResourceVersionId: row.template_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
@@ -511,10 +732,12 @@ async function projectContext(
     templateResourceVersionId: row.template_resource_version_id,
     templateVersion: Number(row.template_version),
     templatePages: row.template_ir_json.pages ?? [],
+    templateSourcePdfHash: row.template_ir_json.source?.pdfHash ?? "",
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     mappingVersion: Number(row.mapping_version),
     mappingConfirmed:
       row.mapping_status === "confirmed" && row.unmapped_required_count === 0,
+    mappingBindings,
     validationApprovalId: row.validation_approval_id,
     validationRunId: row.validation_run_id,
     validationVersion: Number(row.validation_version),
@@ -534,6 +757,8 @@ async function projectContext(
     thesis: row.thesis,
     sourcePdfArtifactId: row.source_pdf_artifact_id,
     sourcePdfFilename: row.source_pdf_filename ?? "previous-report.pdf",
+    sourcePdfObjectKey: row.source_pdf_object_key,
+    sourcePdfSha256: row.source_pdf_sha256,
     inputFingerprint: contentHash(refs),
     evidence,
   };
@@ -569,7 +794,9 @@ async function readOutline(
      ${forUpdate ? "FOR UPDATE OF outline" : ""}`,
     [projectId],
   );
-  return result.rows[0] ?? null;
+  const row = result.rows[0] ?? null;
+  if (row) row.content_json = normalizeOutlineContent(row.content_json);
+  return row;
 }
 
 async function ensureOutline(
@@ -598,18 +825,7 @@ async function ensureOutline(
   const outlineId = uuidv7();
   const resourceId = uuidv7();
   const resourceVersionId = uuidv7();
-  const content = buildInitialOutline(context.templatePages, {
-    companyName: context.companyName,
-    targetYear: context.targetYear,
-    targetQuarter: context.targetQuarter,
-    thesis: context.thesis,
-    rating: context.rating,
-    targetPer: context.targetPer,
-    targetPrice: context.targetPrice,
-    currentPrice: context.currentPrice,
-    mappingConfirmed: context.mappingConfirmed,
-    evidence: context.evidence,
-  });
+  const content = await buildSuggestedOutline(context);
   await client.query(
     `INSERT INTO versioned_resource (
        resource_id, project_id, resource_kind, resource_key
@@ -621,7 +837,7 @@ async function ensureOutline(
        resource_version_id, resource_id, version_no, lifecycle_status,
        validity_status, schema_version, input_fingerprint, content_hash,
        created_by_user_id, created_by_actor_type
-     ) VALUES ($1, $2, 1, 'draft', 'current', '1.0', $3, $4, $5, 'system')`,
+     ) VALUES ($1, $2, 1, 'draft', 'current', '2.0', $3, $4, $5, 'system')`,
     [
       resourceVersionId,
       resourceId,
@@ -645,7 +861,7 @@ async function ensureOutline(
        hypothesis_resource_version_id, generator_profile_version,
        content_json, created_by_user_id
      ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7,
-       'report-outline-structured-v1', $8::jsonb, $9)`,
+       'report-outline-structured-v2', $8::jsonb, $9)`,
     [
       resourceVersionId,
       outlineId,
@@ -659,6 +875,35 @@ async function ensureOutline(
     ],
   );
   return (await readOutline(client, context.projectId))!;
+}
+
+async function buildSuggestedOutline(context: Context): Promise<OutlineContent> {
+  const fallback = buildInitialOutline(context.templatePages, {
+    companyName: context.companyName,
+    targetYear: context.targetYear,
+    targetQuarter: context.targetQuarter,
+    thesis: context.thesis,
+    rating: context.rating,
+    targetPer: context.targetPer,
+    targetPrice: context.targetPrice,
+    currentPrice: context.currentPrice,
+    mappingConfirmed: context.mappingConfirmed,
+    mappingBindings: context.mappingBindings,
+    evidence: context.evidence,
+  });
+  return suggestReportOutline({
+    outline: fallback,
+    companyName: context.companyName,
+    ticker: context.ticker,
+    targetYear: context.targetYear,
+    targetQuarter: context.targetQuarter,
+    rating: context.rating,
+    thesis: context.thesis,
+    targetPer: context.targetPer,
+    targetPrice: context.targetPrice,
+    currentPrice: context.currentPrice,
+    evidence: context.evidence,
+  });
 }
 
 function contextVersions(context: Context) {
@@ -730,6 +975,7 @@ export async function getReportOutlineWorkspace(
         version: Number(outline.current_version),
         status: outline.status,
         savedAt: outline.saved_at.toISOString(),
+        generationSource: outline.content_json.generationSource,
         pages: outline.content_json.pages.map((page) => ({
           ...page,
           reviewStatus: reviewed.includes(page.pageId)
@@ -780,17 +1026,12 @@ export async function patchReportOutline(input: {
   }
   const changes = input.changes.map((value) => {
     const item = value as Record<string, unknown>;
-    const field = String(item.field ?? "") as keyof OutlineNarrative;
+    const field = String(item.field ?? "") as OutlineChange["field"];
     if (
       typeof item.pageId !== "string" ||
+      typeof item.blockId !== "string" ||
       typeof item.value !== "string" ||
-      ![
-        "reportTitle",
-        "companyReview",
-        "companyOutlook",
-        "targetDirection",
-        "targetReason",
-      ].includes(field)
+      !["value", "subtitle", "summary"].includes(field)
     ) {
       throw new ApiError(
         400,
@@ -798,7 +1039,12 @@ export async function patchReportOutline(input: {
         "페이지 입력값이 올바르지 않습니다.",
       );
     }
-    return { pageId: item.pageId, field, value: item.value };
+    return {
+      pageId: item.pageId,
+      blockId: item.blockId,
+      field,
+      value: item.value,
+    };
   });
   return withTransaction(async (client) => {
     const context = await projectContext(
@@ -866,7 +1112,7 @@ export async function patchReportOutline(input: {
          validity_status, supersedes_version_id, schema_version,
          input_fingerprint, content_hash, created_by_user_id,
          created_by_actor_type
-       ) VALUES ($1, $2, $3, 'draft', 'current', $4, '1.0', $5, $6, $7, 'user')`,
+       ) VALUES ($1, $2, $3, 'draft', 'current', $4, '2.0', $5, $6, $7, 'user')`,
       [
         resourceVersionId,
         outline.resource_id,
@@ -885,7 +1131,7 @@ export async function patchReportOutline(input: {
          hypothesis_resource_version_id, generator_profile_version,
          content_json, created_by_user_id
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-         'report-outline-structured-v1', $9::jsonb, $10)`,
+         'report-outline-structured-v2', $9::jsonb, $10)`,
       [
         resourceVersionId,
         outline.outline_id,
@@ -964,8 +1210,10 @@ export async function reviewReportOutlinePage(input: {
       throw new ApiError(404, "PAGE_NOT_FOUND", "페이지를 찾을 수 없습니다.");
     }
     if (
-      page.narrative &&
-      Object.values(page.narrative).some((value) => !String(value).trim())
+      (page.recommendedTitle && !page.recommendedTitle.value.trim()) ||
+      page.narrativeBlocks.some(
+        (block) => !block.subtitle.trim() || !block.summary.trim(),
+      )
     ) {
       throw new ApiError(
         422,
@@ -1061,18 +1309,7 @@ export async function regenerateReportOutline(input: {
         "최신 페이지 구성을 다시 불러와주세요.",
       );
     }
-    const content = buildInitialOutline(context.templatePages, {
-      companyName: context.companyName,
-      targetYear: context.targetYear,
-      targetQuarter: context.targetQuarter,
-      thesis: context.thesis,
-      rating: context.rating,
-      targetPer: context.targetPer,
-      targetPrice: context.targetPrice,
-      currentPrice: context.currentPrice,
-      mappingConfirmed: context.mappingConfirmed,
-      evidence: context.evidence,
-    });
+    const content = await buildSuggestedOutline(context);
     const nextVersion = expectedVersion + 1;
     const resourceVersionId = uuidv7();
     await client.query(
@@ -1086,7 +1323,7 @@ export async function regenerateReportOutline(input: {
          validity_status, supersedes_version_id, schema_version,
          input_fingerprint, content_hash, created_by_user_id,
          created_by_actor_type
-       ) VALUES ($1, $2, $3, 'draft', 'current', $4, '1.0', $5, $6, $7, 'system')`,
+       ) VALUES ($1, $2, $3, 'draft', 'current', $4, '2.0', $5, $6, $7, 'system')`,
       [
         resourceVersionId,
         outline.resource_id,
@@ -1105,7 +1342,7 @@ export async function regenerateReportOutline(input: {
          hypothesis_resource_version_id, generator_profile_version,
          content_json, created_by_user_id
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-         'report-outline-structured-v1', $9::jsonb, $10)`,
+         'report-outline-structured-v2', $9::jsonb, $10)`,
       [
         resourceVersionId,
         outline.outline_id,
@@ -1134,6 +1371,7 @@ export async function regenerateReportOutline(input: {
       operationStatus: "succeeded",
       outlineVersion: nextVersion,
       savedAt: saved.rows[0].saved_at.toISOString(),
+      generationSource: content.generationSource,
       pages: content.pages.map((page) => ({
         ...page,
         reviewStatus: "needs-review",
@@ -1187,13 +1425,35 @@ async function createReport(
   const reportId = uuidv7();
   const resourceId = uuidv7();
   const resourceVersionId = uuidv7();
+  const normalizedOutline = normalizeOutlineContent(input.outline.content_json);
+  const draftTextByBlockId = await suggestReportDraft({
+    outline: normalizedOutline,
+    companyName: input.context.companyName,
+    ticker: input.context.ticker,
+    targetYear: input.context.targetYear,
+    targetQuarter: input.context.targetQuarter,
+    rating: input.context.rating,
+    thesis: input.context.thesis,
+    targetPer: input.context.targetPer,
+    targetPrice: input.context.targetPrice,
+    currentPrice: input.context.currentPrice,
+    evidence: input.context.evidence.map((item) => ({
+      evidenceId: item.evidenceId,
+      title: item.title,
+      oneLineValue: item.oneLineValue,
+      quoteExact: item.quoteExact,
+      stance: item.stance,
+      machineStatus: item.machineStatus,
+    })),
+  });
   const document = buildReportDocument({
-    outline: input.outline.content_json,
+    outline: normalizedOutline,
     rating: input.context.rating,
     targetPer: input.context.targetPer,
     targetPrice: input.context.targetPrice,
     currentPrice: input.context.currentPrice,
     forwardEps: input.context.forwardEps,
+    draftTextByBlockId,
   });
   await client.query(
     `INSERT INTO versioned_resource (
@@ -1601,6 +1861,12 @@ export async function getReportWorkspace(projectId: string, userId: string) {
     const report = await latestReportState(client, projectId);
     const session = await activeEditSession(client, report.report_id);
     const jobs = await latestJobs(client, report);
+    const templatePages = await resolvedTemplatePages(context);
+    const hydratedReport = attachTemplateGeometry(
+      report.content_json,
+      templatePages,
+      context.mappingBindings,
+    );
     return {
       project: {
         projectId,
@@ -1615,6 +1881,7 @@ export async function getReportWorkspace(projectId: string, userId: string) {
       },
       report: {
         ...reportVersionView(report),
+        pageCount: hydratedReport.pageCount,
         validationStatus: jobs.validation?.status ?? "not_run",
         previewStatus: jobs.preview?.status ?? "not_created",
       },
@@ -1634,7 +1901,7 @@ export async function getReportWorkspace(projectId: string, userId: string) {
             ownedByCurrentUser: session.user_id === userId,
           }
         : null,
-      pages: report.content_json.pages,
+      pages: hydratedReport.pages,
       sourcePdf: {
         artifactId: context.sourcePdfArtifactId,
         filename: context.sourcePdfFilename,
@@ -2038,7 +2305,10 @@ export async function patchReportVersion(input: {
     });
     let document;
     try {
-      document = applyReportOperations(report.content_json, operations);
+      document = applyReportOperations(
+        await hydrateReportDocument(context, report.content_json),
+        operations,
+      );
     } catch (error) {
       const code =
         error instanceof Error ? error.message : "INVALID_REPORT_OPERATION";
@@ -2263,7 +2533,11 @@ export async function createReportAiProposal(input: {
   const blockId = input.blockId;
   const prompt = input.prompt.trim();
   return withTransaction(async (client) => {
-    await projectContext(client, input.projectId, input.userId);
+    const context = await projectContext(
+      client,
+      input.projectId,
+      input.userId,
+    );
     const report = await latestReportState(client, input.projectId);
     if (
       report.status !== "working" ||
@@ -2275,7 +2549,11 @@ export async function createReportAiProposal(input: {
         "최신 작업 버전에서 다시 요청해주세요.",
       );
     }
-    const block = report.content_json.pages
+    const hydrated = await hydrateReportDocument(
+      context,
+      report.content_json,
+    );
+    const block = hydrated.pages
       .flatMap((page) => page.blocks)
       .find((item) => item.blockId === blockId);
     if (!block?.editable) {
@@ -2427,7 +2705,11 @@ export async function getReportProvenance(
   return withTransaction(async (client) => {
     const context = await projectContext(client, projectId, userId);
     const report = await latestReportState(client, projectId);
-    const block = report.content_json.pages
+    const hydrated = await hydrateReportDocument(
+      context,
+      report.content_json,
+    );
+    const block = hydrated.pages
       .flatMap((page) => page.blocks)
       .find((item) => item.blockId === blockId);
     if (!block) throw new ApiError(404, "BLOCK_NOT_FOUND", "보고서 영역을 찾을 수 없습니다.");
@@ -2438,6 +2720,7 @@ export async function getReportProvenance(
         label: block.label,
         numericAuthority: block.numericAuthority,
       },
+      binding: block.dataBinding ?? null,
       evidence: context.evidence.filter((item) =>
         block.evidenceIds.includes(item.evidenceId),
       ),
@@ -2464,7 +2747,7 @@ export async function createReportPreview(input: {
     input.reportVersionId,
     "INVALID_REPORT_VERSION",
   );
-  return withTransaction(async (client) => {
+  const snapshot = await withTransaction(async (client) => {
     const context = await projectContext(
       client,
       input.projectId,
@@ -2481,42 +2764,194 @@ export async function createReportPreview(input: {
     const existing = await client.query<{
       preview_id: string;
       preview_status: string;
+      source_artifact_id: string | null;
+      warnings_json: PdfRenderWarning[];
       updated_at: Date;
     }>(
-      `SELECT preview_id, preview_status, updated_at FROM report_preview
+      `SELECT preview_id, preview_status, source_artifact_id,
+         warnings_json, updated_at
+       FROM report_preview
        WHERE report_resource_version_id = $1 AND preview_status = 'ready'
        ORDER BY created_at DESC LIMIT 1`,
       [versionId],
     );
-    if (existing.rows[0]) {
+    if (
+      existing.rows[0]?.source_artifact_id &&
+      existing.rows[0].source_artifact_id !== context.sourcePdfArtifactId
+    ) {
       return {
+        existing: {
         previewId: existing.rows[0].preview_id,
         status: existing.rows[0].preview_status,
-        artifactId: context.sourcePdfArtifactId,
-        contentUrl: `/api/projects/${input.projectId}/artifacts/${context.sourcePdfArtifactId}/content`,
-        updatedAt: existing.rows[0].updated_at.toISOString(),
+          artifactId: existing.rows[0].source_artifact_id,
+          contentUrl:
+            `/api/projects/${input.projectId}/artifacts/` +
+            `${existing.rows[0].source_artifact_id}/content`,
+          warnings: existing.rows[0].warnings_json,
+          updatedAt: existing.rows[0].updated_at.toISOString(),
+        },
+        context,
+        report,
       };
     }
-    const previewId = uuidv7();
+    return {
+      existing: null,
+      context,
+      report,
+    };
+  });
+  if (snapshot.existing) return snapshot.existing;
+
+  const templatePages = await resolvedTemplatePages(snapshot.context);
+  const document = attachTemplateGeometry(
+    snapshot.report.content_json,
+    templatePages,
+    snapshot.context.mappingBindings,
+  );
+  const patches = document.pages.flatMap((page) =>
+    page.blocks
+      .filter(
+        (block) =>
+          block.editable &&
+          block.bbox &&
+          block.patchStrategy !== "fixed" &&
+          block.sourceCoverage !== "review_required",
+      )
+      .map((block) => ({
+        blockId: block.blockId,
+        pageNumber: page.pageNumber,
+        bbox: block.bbox,
+        text: block.text,
+        role: block.role,
+        templateBlockId: block.templateBlockId,
+        sourceObjectIds: block.sourceObjectIds,
+      })),
+  );
+  const skippedBlocks = document.pages.flatMap((page) =>
+    page.blocks
+      .filter(
+        (block) =>
+          block.editable &&
+          (!block.bbox || block.sourceCoverage === "review_required"),
+      )
+      .map((block) => ({
+        code:
+          block.sourceCoverage === "review_required"
+            ? "SOURCE_TEXT_COVERAGE_INCOMPLETE"
+            : "EDITABLE_BLOCK_WITHOUT_SOURCE_GEOMETRY",
+        message:
+          block.sourceCoverage === "review_required"
+            ? `${page.pageNumber}페이지 ${block.label}의 원문 범위가 불완전해 원본을 유지했습니다.`
+            : `${page.pageNumber}페이지 ${block.label}의 원본 좌표를 찾지 못해 PDF에 반영하지 않았습니다.`,
+      })),
+  );
+  const downloadUrl = await createWorkerDownloadUrl(
+    snapshot.context.sourcePdfObjectKey,
+    10 * 60,
+  );
+  const rendered = await callPdfWorker<PdfRenderResult>("/render", {
+    downloadUrl,
+    patches,
+    skipOverflow: true,
+  });
+  const pdfBytes = Buffer.from(rendered.pdfBase64, "base64");
+  if (
+    rendered.mediaType !== "application/pdf" ||
+    rendered.byteSize !== pdfBytes.byteLength ||
+    rendered.sha256 !== createHash("sha256").update(pdfBytes).digest("hex") ||
+    !rendered.validation?.passed
+  ) {
+    throw new ApiError(
+      503,
+      "PDF_RENDER_INTEGRITY_FAILED",
+      "생성된 PDF의 무결성 또는 고정 영역 검증에 실패했습니다.",
+      { retryable: true },
+    );
+  }
+
+  const artifactId = uuidv7();
+  const previewId = uuidv7();
+  const objectKey =
+    `projects/${input.projectId}/report/previews/` +
+    `${versionId}-${previewId}-${rendered.sha256.slice(0, 12)}.pdf`;
+  const stored = await putImmutableObject({
+    objectKey,
+    body: pdfBytes,
+    mediaType: "application/pdf",
+    metadata: {
+      project: input.projectId,
+      reportVersion: versionId,
+      sourcePdfHash: rendered.renderPlan.sourcePdfHash,
+      renderPlanVersion: rendered.renderPlan.version,
+    },
+  });
+  const warnings = [...rendered.warnings, ...skippedBlocks];
+  const filename = snapshot.context.sourcePdfFilename.replace(
+    /\.pdf$/i,
+    "-preview.pdf",
+  );
+  return withTransaction(async (client) => {
+    const context = await projectContext(
+      client,
+      input.projectId,
+      input.userId,
+    );
+    const current = await latestReportState(client, input.projectId);
+    if (current.active_resource_version_id !== versionId) {
+      throw new ApiError(
+        409,
+        "REPORT_VERSION_CONFLICT",
+        "PDF 생성 중 보고서가 변경되었습니다. 최신 버전으로 다시 생성해주세요.",
+      );
+    }
+    await client.query(
+      `UPDATE report_preview
+       SET preview_status = 'stale', updated_at = now()
+       WHERE report_resource_version_id = $1
+         AND preview_status = 'ready'`,
+      [versionId],
+    );
+    await client.query(
+      `INSERT INTO artifact (
+         artifact_id, project_id, artifact_kind, storage_status, bucket_name,
+         object_key, object_version, sha256, byte_size, media_type,
+         original_filename, retention_class, created_by_actor_type,
+         supersedes_artifact_id
+       ) VALUES ($1, $2, 'render', 'accepted', $3, $4, $5, $6, $7,
+         'application/pdf', $8, 'project', 'system', $9)`,
+      [
+        artifactId,
+        input.projectId,
+        objectStoreBucket(),
+        objectKey,
+        stored.objectVersion,
+        rendered.sha256,
+        pdfBytes.byteLength,
+        filename,
+        context.sourcePdfArtifactId,
+      ],
+    );
     const created = await client.query<{ updated_at: Date }>(
       `INSERT INTO report_preview (
          preview_id, project_id, report_resource_version_id,
-         preview_status, source_artifact_id, created_by_user_id
-       ) VALUES ($1, $2, $3, 'ready', $4, $5)
+         preview_status, source_artifact_id, warnings_json, created_by_user_id
+       ) VALUES ($1, $2, $3, 'ready', $4, $5::jsonb, $6)
        RETURNING updated_at`,
       [
         previewId,
         input.projectId,
         versionId,
-        context.sourcePdfArtifactId,
+        artifactId,
+        JSON.stringify(warnings),
         input.userId,
       ],
     );
     return {
       previewId,
       status: "ready",
-      artifactId: context.sourcePdfArtifactId,
-      contentUrl: `/api/projects/${input.projectId}/artifacts/${context.sourcePdfArtifactId}/content`,
+      artifactId,
+      contentUrl: `/api/projects/${input.projectId}/artifacts/${artifactId}/content`,
+      warnings,
       updatedAt: created.rows[0].updated_at.toISOString(),
     };
   });
@@ -2581,9 +3016,15 @@ export async function createReportValidation(input: {
         "최신 저장 버전으로 다시 검증해주세요.",
       );
     }
+    const templatePages = await resolvedTemplatePages(context);
+    const hydrated = attachTemplateGeometry(
+      report.content_json,
+      templatePages,
+      context.mappingBindings,
+    );
     const issues = validateReportDocument({
-      document: report.content_json,
-      templatePageIds: [...context.templatePages]
+      document: hydrated,
+      templatePageIds: [...templatePages]
         .sort((a, b) => a.pageNumber - b.pageNumber)
         .map((page) => page.pageId),
       evidenceIds: new Set(context.evidence.map((item) => item.evidenceId)),
@@ -3156,9 +3597,19 @@ async function authorizedArtifact(
   },
 ) {
   const context = await projectContext(client, input.projectId, input.userId);
-  const allowed =
+  let allowed =
     input.artifactId === context.sourcePdfArtifactId ||
     input.artifactId === context.workbookArtifactId;
+  if (!allowed) {
+    const preview = await client.query(
+      `SELECT 1 FROM report_preview
+       WHERE project_id = $1 AND source_artifact_id = $2
+         AND preview_status = 'ready'
+       LIMIT 1`,
+      [input.projectId, input.artifactId],
+    );
+    allowed = Boolean(preview.rows[0]);
+  }
   if (!allowed) {
     throw new ApiError(404, "ARTIFACT_NOT_FOUND", "파일을 찾을 수 없습니다.");
   }
@@ -3236,7 +3687,7 @@ export const reportConstants = {
   editLeaseSeconds: 120,
   heartbeatSeconds: 30,
   validationRuleVersion: "report-validation-v1",
-  outlineGeneratorVersion: "report-outline-structured-v1",
+  outlineGeneratorVersion: "report-outline-structured-v2",
   reportGeneratorVersion: "report-draft-structured-v1",
   aiProposalVersion: "report-rewrite-structured-v1",
   requestId: randomUUID,

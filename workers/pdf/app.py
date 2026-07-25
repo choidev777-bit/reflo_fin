@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -8,10 +10,22 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import cv2
+import numpy as np
+import pikepdf
 import pymupdf
+import pypdfium2 as pdfium
 
 
 MAX_PDF_BYTES = 50 * 1024 * 1024
+NOTO_CJK_REGULAR = os.environ.get(
+    "REFLO_PDF_FONT_REGULAR",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
+NOTO_CJK_BOLD = os.environ.get(
+    "REFLO_PDF_FONT_BOLD",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+)
 MAX_PAGES = 100
 PARSER_NAME = "PyMuPDF"
 PARSER_VERSION = pymupdf.version[0]
@@ -31,6 +45,35 @@ TABLE_FALLBACKS = {
     2: ("quarterly_performance_table", "분기 실적 표"),
     3: ("financial_statements_table", "재무제표 표"),
 }
+
+DATA_REGION_HEADINGS: tuple[
+    tuple[str, tuple[str, ...], str, str], ...
+] = (
+    (
+        "key_data",
+        ("key data", "핵심 데이터", "주요 데이터", "주요 지표"),
+        "table",
+        "핵심 데이터",
+    ),
+    (
+        "consensus_data",
+        ("consensus data", "consensus", "컨센서스 데이터", "컨센서스"),
+        "table",
+        "컨센서스 데이터",
+    ),
+    (
+        "stock_price",
+        ("stock price", "주가 추이", "주가 차트", "주가 동향"),
+        "chart",
+        "주가 추이",
+    ),
+    (
+        "financial_data",
+        ("financial data", "재무 데이터", "재무지표"),
+        "table",
+        "재무 데이터",
+    ),
+)
 
 
 def digest(value: bytes | str) -> str:
@@ -88,12 +131,16 @@ def normalize_text(value: str) -> str:
 
 
 def infer_metric(text: str) -> tuple[str, str, bool] | None:
+    if re.match(r"^\s*(buy|hold|sell|매수|중립|매도)\b", text, re.IGNORECASE):
+        return "investment_opinion", "string", False
     if re.search(r"\bp\s*/\s*e\b", text, re.IGNORECASE):
         return "per", "decimal", True
     normalized = re.sub(r"[^0-9a-z가-힣]", "", normalize_text(text))
     for metric, aliases, value_type, required in SCALAR_METRICS:
         if any(
-            re.sub(r"[^0-9a-z가-힣]", "", alias.lower()) in normalized
+            normalized.startswith(
+                re.sub(r"[^0-9a-z가-힣]", "", alias.lower())
+            )
             for alias in aliases
         ):
             return metric, value_type, required
@@ -102,17 +149,144 @@ def infer_metric(text: str) -> tuple[str, str, bool] | None:
 
 def infer_table_metric(page_number: int, page_text: str) -> tuple[str, str] | None:
     normalized = normalize_text(page_text)
-    if "부문" in normalized or "segment" in normalized:
+    if any(
+        term in normalized
+        for term in ("부문별 매출", "사업부별 매출", "segment revenue")
+    ):
         return "segment_revenue_table", "부문별 매출 표"
     if any(term in normalized for term in ("재무상태표", "현금흐름", "손익계산서")):
         return "financial_statements_table", "재무제표 표"
     if "목표주가" in normalized and any(term in normalized for term in ("추이", "history")):
         return "target_price_history_table", "목표주가 추이 표"
-    if "분기" in normalized and sum(
-        term in normalized for term in ("매출", "영업이익", "순이익")
-    ) >= 2:
+    if any(
+        term in normalized
+        for term in ("분기 실적 표", "분기별 실적", "quarterly performance")
+    ):
         return "quarterly_performance_table", "분기 실적 표"
     return TABLE_FALLBACKS.get(page_number)
+
+
+def normalized_heading(value: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]", "", normalize_text(value))
+
+
+def data_region_heading(
+    value: str,
+) -> tuple[str, str, str] | None:
+    normalized = normalized_heading(value)
+    for metric, aliases, value_type, label in DATA_REGION_HEADINGS:
+        if any(normalized == normalized_heading(alias) for alias in aliases):
+            return metric, value_type, label
+    return None
+
+
+def dominant_prose_left(spans: list[dict[str, Any]]) -> float | None:
+    groups: dict[int, int] = {}
+    for span in spans:
+        text = str(span.get("text") or "").strip()
+        if len(text) < 20:
+            continue
+        key = round(float(span["bbox"][0]) / 4) * 4
+        groups[key] = groups.get(key, 0) + len(text)
+    if not groups:
+        return None
+    return float(max(groups.items(), key=lambda item: item[1])[0])
+
+
+def boxes_intersect(left: list[float], right: list[float]) -> bool:
+    return not (
+        left[2] <= right[0]
+        or left[0] >= right[2]
+        or left[3] <= right[1]
+        or left[1] >= right[3]
+    )
+
+
+def detect_data_regions(
+    spans: list[dict[str, Any]],
+    page_box: list[float],
+) -> list[dict[str, Any]]:
+    headings: list[dict[str, Any]] = []
+    for span in spans:
+        detected = data_region_heading(str(span.get("text") or ""))
+        if not detected:
+            continue
+        metric, value_type, label = detected
+        headings.append(
+            {
+                "span": span,
+                "metric": metric,
+                "valueType": value_type,
+                "label": label,
+            }
+        )
+    headings.sort(
+        key=lambda item: (
+            float(item["span"]["bbox"][1]),
+            float(item["span"]["bbox"][0]),
+        )
+    )
+    regions: list[dict[str, Any]] = []
+    page_width = max(1.0, page_box[2] - page_box[0])
+    max_column_width = min(150.0, max(120.0, page_width * 0.25))
+    prose_left = dominant_prose_left(spans)
+    for heading in headings:
+        heading_box = heading["span"]["bbox"]
+        heading_left = float(heading_box[0])
+        heading_top = float(heading_box[1])
+        next_heading = next(
+            (
+                item
+                for item in headings
+                if float(item["span"]["bbox"][1]) > heading_top + 1
+                and abs(float(item["span"]["bbox"][0]) - heading_left) <= 36
+            ),
+            None,
+        )
+        hard_bottom = (
+            float(next_heading["span"]["bbox"][1]) - 2
+            if next_heading
+            else float(page_box[3]) - 12
+        )
+        right_limit = heading_left + max_column_width
+        if prose_left is not None and prose_left > heading_left + 30:
+            right_limit = min(right_limit, prose_left - 8)
+        candidates = sorted(
+            (
+                span
+                for span in spans
+                if float(span["bbox"][1]) >= heading_top - 1
+                and float(span["bbox"][1]) < hard_bottom
+                and float(span["bbox"][0]) >= heading_left - 10
+                and float(span["bbox"][0]) <= right_limit
+            ),
+            key=lambda span: (
+                float(span["bbox"][1]),
+                float(span["bbox"][0]),
+            ),
+        )
+        included: list[dict[str, Any]] = []
+        previous_bottom = float(heading_box[3])
+        for span in candidates:
+            top = float(span["bbox"][1])
+            if included and top - previous_bottom > 36:
+                break
+            included.append(span)
+            previous_bottom = max(previous_bottom, float(span["bbox"][3]))
+        if not included:
+            included = [heading["span"]]
+        region_box = union_bbox(
+            [span["bbox"] for span in included],
+            heading_box,
+        )
+        regions.append(
+            {
+                **heading,
+                "bbox": region_box,
+                "spans": included,
+            }
+        )
+    return regions
 
 
 def content_streams(doc: pymupdf.Document, page: pymupdf.Page) -> list[dict[str, Any]]:
@@ -391,6 +565,7 @@ def extract_text_and_styles(
                         "styleId": style_id,
                         "bbox": span_box,
                         "text": text,
+                        "fontSize": text_run["fontSize"],
                         "metric": metric,
                     }
                 )
@@ -448,7 +623,7 @@ def build_blocks_and_slots(
     page_box: list[float],
     page_text: str,
     spans: list[dict[str, Any]],
-    path_count: int,
+    page_objects: list[dict[str, Any]],
     document_metrics: set[str],
     document_period: str | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -456,25 +631,121 @@ def build_blocks_and_slots(
     slots: list[dict[str, Any]] = []
     masks: list[dict[str, Any]] = []
     used_metrics: set[str] = set()
+    prose_left = dominant_prose_left(spans)
+    data_regions = detect_data_regions(spans, page_box)
+    data_region_object_ids: set[str] = set()
+
+    for region in data_regions:
+        metric = str(region["metric"])
+        value_type = str(region["valueType"])
+        label = str(region["label"])
+        box = region["bbox"]
+        object_ids = [
+            str(item["objectId"])
+            for item in page_objects
+            if boxes_intersect(list(item.get("bbox") or [0, 0, 0, 0]), box)
+        ]
+        data_region_object_ids.update(object_ids)
+        block_id = opaque(
+            "block",
+            f"{page_id}:data-region:{metric}:{region['span']['objectId']}",
+        )
+        slot_id = opaque(
+            "slot",
+            f"{page_id}:data-region:{metric}:{region['span']['objectId']}",
+        )
+        mask_id = opaque("mask", f"{page_id}:{slot_id}")
+        blocks.append(
+            {
+                "blockId": block_id,
+                "role": "chart" if value_type == "chart" else "table",
+                "bbox": box,
+                "objectIds": object_ids,
+                "slotIds": [slot_id],
+                "allowedRegion": box,
+                "patchStrategy": "block_vector_replace",
+                "fallbackStrategies": ["region_background_patch"],
+                "overflow": "reject",
+                "validationMaskIds": [mask_id],
+                "intersections": [],
+                "generationRule": label,
+            }
+        )
+        slots.append(
+            {
+                "slotId": slot_id,
+                "blockId": block_id,
+                "valueType": value_type,
+                "semanticKey": {
+                    "metric": metric,
+                    **({"period": document_period} if document_period else {}),
+                },
+                "required": False,
+                "targetObjectIds": object_ids,
+                "bindingRefs": [],
+                "valueAuthority": "mapping",
+                "overflow": "reject",
+            }
+        )
+        masks.append(
+            {
+                "maskId": mask_id,
+                "kind": "dynamic",
+                "geometry": box,
+                "blockIds": [block_id],
+                "objectIds": object_ids,
+                "reason": f"{label} 선택 영역",
+            }
+        )
+
     for span in spans:
         metric_info = span["metric"]
         if not metric_info:
             continue
         metric, value_type, required = metric_info
+        span_left = float(span["bbox"][0])
+        if span["objectId"] in data_region_object_ids:
+            continue
+        if prose_left is not None and abs(span_left - prose_left) <= 24:
+            continue
+        if len(str(span.get("text") or "").strip()) > 80:
+            continue
         if metric in used_metrics or metric in document_metrics:
             continue
+        target_span = span
+        if value_type != "string":
+            same_row_values = [
+                candidate
+                for candidate in spans
+                if candidate["objectId"] != span["objectId"]
+                and candidate["objectId"] not in data_region_object_ids
+                and float(candidate["bbox"][0]) >= float(span["bbox"][2]) - 2
+                and abs(
+                    float(candidate["bbox"][1]) - float(span["bbox"][1])
+                )
+                <= 3
+                and any(
+                    char.isdigit()
+                    for char in str(candidate.get("text") or "")
+                )
+            ]
+            if same_row_values:
+                target_span = min(
+                    same_row_values,
+                    key=lambda candidate: float(candidate["bbox"][0]),
+                )
         used_metrics.add(metric)
         document_metrics.add(metric)
         block_id = opaque("block", f"{page_id}:scalar:{metric}")
-        slot_id = opaque("slot", metric)
-        box = span["bbox"]
+        slot_id = opaque("slot", f"{page_id}:{metric}:{span['objectId']}")
+        box = target_span["bbox"]
         mask_id = opaque("mask", f"{page_id}:{slot_id}")
         blocks.append(
             {
                 "blockId": block_id,
                 "role": "scalar_group",
                 "bbox": box,
-                "objectIds": [span["objectId"]],
+                "objectIds": [target_span["objectId"]],
                 "slotIds": [slot_id],
                 "allowedRegion": box,
                 "patchStrategy": "operator_replace",
@@ -494,8 +765,8 @@ def build_blocks_and_slots(
                     **({"period": document_period} if document_period else {}),
                 },
                 "required": required,
-                "styleRef": span["styleId"],
-                "targetObjectIds": [span["objectId"]],
+                "styleRef": target_span["styleId"],
+                "targetObjectIds": [target_span["objectId"]],
                 "bindingRefs": [],
                 "valueAuthority": "mapping",
                 "overflow": "shrink_to_fit",
@@ -508,7 +779,7 @@ def build_blocks_and_slots(
                 "kind": "dynamic",
                 "geometry": box,
                 "blockIds": [block_id],
-                "objectIds": [span["objectId"]],
+                "objectIds": [target_span["objectId"]],
                 "reason": f"{metric} 값 교체 영역",
             }
         )
@@ -517,14 +788,20 @@ def build_blocks_and_slots(
     if (
         table_metric
         and table_metric[0] not in document_metrics
-        and (path_count >= 3 or page_number in TABLE_FALLBACKS)
+        and (
+            sum(1 for item in page_objects if item.get("type") == "path") >= 3
+            or page_number in TABLE_FALLBACKS
+        )
     ):
         metric, label = table_metric
         document_metrics.add(metric)
         block_id = opaque("block", f"{page_id}:table:{metric}")
-        slot_id = opaque("slot", metric)
-        object_ids = [span["objectId"] for span in spans]
-        content_box = union_bbox([span["bbox"] for span in spans], page_box)
+        slot_id = opaque("slot", f"{page_id}:table:{metric}")
+        object_ids = [str(item["objectId"]) for item in page_objects]
+        content_box = union_bbox(
+            [list(item.get("bbox") or page_box) for item in page_objects],
+            page_box,
+        )
         mask_id = opaque("mask", f"{page_id}:{slot_id}")
         blocks.append(
             {
@@ -694,7 +971,7 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
                 page_box,
                 page_text,
                 spans,
-                len(path_objects),
+                objects,
                 document_metrics,
                 document_period,
             )
@@ -850,6 +1127,418 @@ def inspect_pdf(download_url: str) -> dict[str, Any]:
     return inspect_pdf_bytes(payload)
 
 
+def download_pdf(download_url: str) -> bytes:
+    with urllib.request.urlopen(download_url, timeout=120) as response:
+        payload = response.read(MAX_PDF_BYTES + 1)
+    if len(payload) > MAX_PDF_BYTES:
+        raise ValueError("PDF exceeds the 50 MiB limit")
+    if not payload.startswith(b"%PDF-"):
+        raise ValueError("source is not a PDF")
+    return payload
+
+
+def color_components(value: int | None) -> tuple[float, float, float]:
+    color = int(value or 0)
+    return (
+        ((color >> 16) & 255) / 255,
+        ((color >> 8) & 255) / 255,
+        (color & 255) / 255,
+    )
+
+
+def source_style(page: pymupdf.Page, rect: pymupdf.Rect) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for block in page.get_text("dict", flags=pymupdf.TEXTFLAGS_DICT).get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                span_rect = pymupdf.Rect(span.get("bbox"))
+                overlap = span_rect & rect
+                if overlap.is_empty:
+                    continue
+                font_name = str(span.get("font") or "")
+                candidates.append(
+                    {
+                        "overlap": overlap.get_area(),
+                        "fontSize": float(span.get("size") or 10),
+                        "color": color_components(span.get("color")),
+                        "bold": bool(int(span.get("flags") or 0) & 16)
+                        or bool(
+                            re.search(
+                                r"(bold|black|semibold|demi|medium|medi)",
+                                font_name,
+                                re.IGNORECASE,
+                            )
+                        ),
+                        "lineHeight": max(
+                            1.0,
+                            float(span_rect.height)
+                            / max(1.0, float(span.get("size") or 10)),
+                        ),
+                    }
+                )
+    if not candidates:
+        return {
+            "fontSize": max(7.0, min(11.0, rect.height * 0.7)),
+            "color": (0.0, 0.0, 0.0),
+            "bold": False,
+            "lineHeight": 1.25,
+        }
+    return max(candidates, key=lambda item: item["overlap"])
+
+
+def render_pdfium_page(
+    document: pdfium.PdfDocument,
+    page_index: int,
+    scale: float,
+) -> np.ndarray:
+    page = document[page_index]
+    bitmap = page.render(scale=scale, rev_byteorder=True)
+    array = bitmap.to_numpy().copy()
+    if array.ndim == 2:
+        array = cv2.cvtColor(array, cv2.COLOR_GRAY2RGB)
+    elif array.shape[2] == 4:
+        rgb = array[:, :, :3].astype(np.float32)
+        alpha = array[:, :, 3:4].astype(np.float32) / 255.0
+        array = np.clip(rgb * alpha + 255.0 * (1.0 - alpha), 0, 255).astype(
+            np.uint8
+        )
+    return array[:, :, :3]
+
+
+def validate_fixed_regions(
+    source_pdf: bytes,
+    result_pdf: bytes,
+    patches: list[dict[str, Any]],
+    dpi: int = 288,
+) -> dict[str, Any]:
+    source = pdfium.PdfDocument(source_pdf)
+    result = pdfium.PdfDocument(result_pdf)
+    if len(source) != len(result):
+        raise ValueError("result page count differs from the source PDF")
+    scale = dpi / 72
+    patches_by_page: dict[int, list[list[float]]] = {}
+    for patch in patches:
+        patches_by_page.setdefault(int(patch["pageNumber"]) - 1, []).append(
+            [float(value) for value in patch["bbox"]]
+        )
+    page_results: list[dict[str, Any]] = []
+    passed = True
+    try:
+        for page_index in range(len(source)):
+            source_image = render_pdfium_page(source, page_index, scale)
+            result_image = render_pdfium_page(result, page_index, scale)
+            if source_image.shape != result_image.shape:
+                raise ValueError("result page dimensions differ from the source PDF")
+            fixed_mask = np.ones(source_image.shape[:2], dtype=np.uint8)
+            for rect in patches_by_page.get(page_index, []):
+                guard = 1.0
+                x0 = max(0, int(np.floor((rect[0] - guard) * scale)))
+                y0 = max(0, int(np.floor((rect[1] - guard) * scale)))
+                x1 = min(
+                    fixed_mask.shape[1],
+                    int(np.ceil((rect[2] + guard) * scale)),
+                )
+                y1 = min(
+                    fixed_mask.shape[0],
+                    int(np.ceil((rect[3] + guard) * scale)),
+                )
+                fixed_mask[y0:y1, x0:x1] = 0
+            difference = cv2.absdiff(source_image, result_image)
+            changed = (np.max(difference, axis=2) > 2).astype(np.uint8)
+            changed[fixed_mask == 0] = 0
+            fixed_pixels = int(np.count_nonzero(fixed_mask))
+            changed_pixels = int(np.count_nonzero(changed))
+            match_ratio = (
+                1.0
+                if fixed_pixels == 0
+                else max(0.0, 1.0 - changed_pixels / fixed_pixels)
+            )
+            component_count = 0
+            if changed_pixels:
+                component_count = max(
+                    0,
+                    cv2.connectedComponentsWithStats(changed, connectivity=8)[0] - 1,
+                )
+            page_passed = match_ratio >= 0.995
+            passed = passed and page_passed
+            page_results.append(
+                {
+                    "pageNumber": page_index + 1,
+                    "fixedPixelMatchRatio": round(match_ratio, 8),
+                    "changedFixedPixels": changed_pixels,
+                    "differenceComponentCount": component_count,
+                    "passed": page_passed,
+                }
+            )
+    finally:
+        source.close()
+        result.close()
+    return {
+        "profile": {
+            "renderer": "PDFium",
+            "dpi": dpi,
+            "color": "opaque_srgb",
+            "channelDifferenceThreshold": 2,
+            "fixedPixelMatchThreshold": 0.995,
+        },
+        "passed": passed,
+        "pages": page_results,
+    }
+
+
+def normalize_render_patches(
+    patches: Any,
+    page_count: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(patches, list):
+        raise ValueError("patches must be an array")
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in patches:
+        if not isinstance(item, dict):
+            raise ValueError("patch item must be an object")
+        block_id = str(item.get("blockId") or "").strip()
+        page_number = int(item.get("pageNumber") or 0)
+        text = str(item.get("text") or "").strip()
+        rect = item.get("bbox")
+        if (
+            not block_id
+            or block_id in seen
+            or page_number < 1
+            or page_number > page_count
+            or not text
+            or len(text) > 2_000
+            or not isinstance(rect, list)
+            or len(rect) != 4
+        ):
+            raise ValueError("invalid report patch")
+        coordinates = [float(value) for value in rect]
+        if (
+            not all(np.isfinite(value) for value in coordinates)
+            or coordinates[2] <= coordinates[0]
+            or coordinates[3] <= coordinates[1]
+        ):
+            raise ValueError("invalid report patch rectangle")
+        seen.add(block_id)
+        normalized.append(
+            {
+                "blockId": block_id,
+                "pageNumber": page_number,
+                "bbox": coordinates,
+                "text": text,
+                "role": str(item.get("role") or "narrative"),
+                "templateBlockId": item.get("templateBlockId"),
+                "sourceObjectIds": item.get("sourceObjectIds") or [],
+            }
+        )
+    return normalized
+
+
+def render_pdf_bytes(
+    payload: bytes,
+    patch_input: Any,
+    skip_overflow: bool = False,
+) -> dict[str, Any]:
+    document = pymupdf.open(stream=payload, filetype="pdf")
+    try:
+        patches = normalize_render_patches(patch_input, document.page_count)
+        patches_by_page: dict[int, list[dict[str, Any]]] = {}
+        for patch in patches:
+            patches_by_page.setdefault(patch["pageNumber"] - 1, []).append(patch)
+
+        warnings: list[dict[str, str]] = []
+        render_operations: list[dict[str, Any]] = []
+        applied_patches: list[dict[str, Any]] = []
+        for page_index, page_patches in patches_by_page.items():
+            page = document[page_index]
+            page_rect = page.rect
+            prepared: list[dict[str, Any]] = []
+            for patch in page_patches:
+                rect = pymupdf.Rect(patch["bbox"])
+                if not page_rect.contains(rect):
+                    raise ValueError(
+                        f"patch {patch['blockId']} is outside the source page"
+                    )
+                style = source_style(page, rect)
+                uses_korean = bool(re.search(r"[가-힣]", patch["text"]))
+                font_file: str | None = None
+                if uses_korean and os.path.exists(NOTO_CJK_REGULAR):
+                    font_file = (
+                        NOTO_CJK_BOLD
+                        if style["bold"] and os.path.exists(NOTO_CJK_BOLD)
+                        else NOTO_CJK_REGULAR
+                    )
+                    font_name = (
+                        "RefloNotoCjkBold"
+                        if style["bold"]
+                        else "RefloNotoCjkRegular"
+                    )
+                else:
+                    font_name = "korea" if uses_korean else "helv"
+                source_font_size = float(style["fontSize"])
+                minimum_font_size = max(5.5, source_font_size * 0.55)
+                font_step = max(0.25, source_font_size * 0.03)
+                fitted_font_size = source_font_size
+                spare_height = -1.0
+                while fitted_font_size >= minimum_font_size:
+                    shape = page.new_shape()
+                    spare_height = shape.insert_textbox(
+                        rect,
+                        patch["text"],
+                        fontname=font_name,
+                        fontfile=font_file,
+                        fontsize=fitted_font_size,
+                        lineheight=style["lineHeight"],
+                        color=style["color"],
+                        align=pymupdf.TEXT_ALIGN_LEFT,
+                    )
+                    if spare_height >= 0:
+                        break
+                    fitted_font_size -= font_step
+                if spare_height < 0:
+                    if skip_overflow:
+                        warnings.append(
+                            {
+                                "code": "BLOCK_OVERFLOW_SKIPPED",
+                                "message": (
+                                    f"{patch['blockId']} 블록이 원본 영역을 벗어나 "
+                                    "미리보기에서는 원문을 유지했습니다."
+                                ),
+                            }
+                        )
+                        continue
+                    raise ValueError(
+                        f"BLOCK_OVERFLOW:{patch['blockId']}:{round(spare_height, 3)}"
+                    )
+                page.add_redact_annot(rect, fill=None, cross_out=False)
+                prepared.append(
+                    {
+                        "patch": patch,
+                        "rect": rect,
+                        "style": style,
+                        "fontName": font_name,
+                        "fontFile": font_file,
+                        "sourceFontSize": source_font_size,
+                        "fittedFontSize": fitted_font_size,
+                    }
+                )
+            if prepared:
+                page.apply_redactions(
+                    images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                    graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                    text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+                )
+            for item in prepared:
+                patch = item["patch"]
+                rect = item["rect"]
+                style = item["style"]
+                font_name = item["fontName"]
+                font_file = item["fontFile"]
+                source_font_size = item["sourceFontSize"]
+                fitted_font_size = item["fittedFontSize"]
+                shape = page.new_shape()
+                spare_height = shape.insert_textbox(
+                    rect,
+                    patch["text"],
+                    fontname=font_name,
+                    fontfile=font_file,
+                    fontsize=fitted_font_size,
+                    lineheight=style["lineHeight"],
+                    color=style["color"],
+                    align=pymupdf.TEXT_ALIGN_LEFT,
+                )
+                if spare_height < 0:
+                    raise ValueError(
+                        f"BLOCK_OVERFLOW:{patch['blockId']}:{round(spare_height, 3)}"
+                    )
+                shape.commit(overlay=True)
+                if fitted_font_size < source_font_size - 0.01:
+                    warnings.append(
+                        {
+                            "code": "FONT_SIZE_REDUCED_TO_FIT",
+                            "message": (
+                                f"{patch['blockId']} 블록 글자 크기를 "
+                                f"{source_font_size:.2f}pt에서 "
+                                f"{fitted_font_size:.2f}pt로 줄였습니다."
+                            ),
+                        }
+                    )
+                render_operations.append(
+                    {
+                        "blockId": patch["blockId"],
+                        "pageNumber": patch["pageNumber"],
+                        "bbox": patch["bbox"],
+                        "strategy": "region_background_patch",
+                        "font": font_name,
+                        "fontSize": round(fitted_font_size, 4),
+                        "sourceFontSize": round(source_font_size, 4),
+                        "sourceObjectIds": patch["sourceObjectIds"],
+                    }
+                )
+                applied_patches.append(patch)
+        intermediate = document.tobytes(
+            garbage=0,
+            deflate=True,
+            clean=False,
+        )
+    finally:
+        document.close()
+
+    final_stream = io.BytesIO()
+    with pikepdf.Pdf.open(io.BytesIO(intermediate)) as final_pdf:
+        final_pdf.save(final_stream)
+    result = final_stream.getvalue()
+    validation = validate_fixed_regions(payload, result, applied_patches)
+    if not validation["passed"]:
+        raise ValueError("FIXED_REGION_VISUAL_REGRESSION")
+    if applied_patches:
+        warnings.append(
+            {
+                "code": "REGION_BACKGROUND_PATCH_FALLBACK",
+                "message": (
+                    "초기 구현은 변경 영역의 텍스트 객체만 제거한 뒤 벡터 텍스트를 "
+                    "삽입합니다. content stream operator 직접 교체는 후속 구현 대상입니다."
+                ),
+            }
+        )
+        warnings.append(
+            {
+                "code": "FONT_SUBSTITUTED_WITHIN_METRIC_TOLERANCE",
+                "message": (
+                    "새 한글 문자는 원본 subset glyph를 재사용하지 못하면 Noto Sans CJK로 "
+                    "대체되며 원본 영역 안에서 크기를 검증합니다."
+                ),
+            }
+        )
+    return {
+        "pdfBase64": base64.b64encode(result).decode("ascii"),
+        "sha256": digest(result),
+        "byteSize": len(result),
+        "mediaType": "application/pdf",
+        "renderPlan": {
+            "version": "report-render-plan-v1",
+            "sourcePdfHash": digest(payload),
+            "operations": render_operations,
+        },
+        "validation": validation,
+        "warnings": warnings,
+    }
+
+
+def render_pdf(
+    download_url: str,
+    patches: Any,
+    skip_overflow: bool = False,
+) -> dict[str, Any]:
+    return render_pdf_bytes(
+        download_pdf(download_url),
+        patches,
+        skip_overflow=skip_overflow,
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path != "/health":
@@ -865,7 +1554,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if self.path != "/inspect":
+        if self.path not in {"/inspect", "/render"}:
             self.send_error(404)
             return
         try:
@@ -876,7 +1565,15 @@ class Handler(BaseHTTPRequestHandler):
                 ("http://", "https://")
             ):
                 raise ValueError("downloadUrl is required")
-            result = inspect_pdf(download_url)
+            result = (
+                inspect_pdf(download_url)
+                if self.path == "/inspect"
+                else render_pdf(
+                    download_url,
+                    request.get("patches"),
+                    skip_overflow=bool(request.get("skipOverflow")),
+                )
+            )
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
