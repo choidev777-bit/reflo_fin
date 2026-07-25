@@ -1,4 +1,4 @@
-import LegacyClient from "../../../../legacy-client";
+import { ValuationScreen } from "../../../../_phase5/ValuationScreen";
 import { requireProjectPageAccess } from "../../_lib/project-page-access";
 
 export default async function ValuationPage({
@@ -9,5 +9,5 @@ export default async function ValuationPage({
   const { projectId } = await params;
   const route = `/projects/${projectId}/process/valuation`;
   await requireProjectPageAccess(projectId, route);
-  return <LegacyClient />;
+  return <ValuationScreen projectId={projectId} />;
 }

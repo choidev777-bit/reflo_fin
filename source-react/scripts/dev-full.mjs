@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
+// Run the complete local application: Next.js plus the Temporal control worker.
 for (const envFile of [".env.development.local", ".env.local"]) {
   try {
     process.loadEnvFile(envFile);

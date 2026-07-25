@@ -32,7 +32,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run db:up && npm run db:migrate && npm run dev:phase2 -- --hostname 127.0.0.1 --port 3100",
+    command: "npm run db:up && npm run db:migrate && npm run dev:full -- --hostname 127.0.0.1 --port 3100",
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

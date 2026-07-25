@@ -234,7 +234,7 @@ test("외부 returnTo는 거부", async ({ request }) => {
   });
 });
 
-test("Phase 2 완료 → Phase 3 승인 → Phase 4 수집·검증 완료", async ({
+test("Phase 2 완료 → Phase 3 승인 → Phase 4 검증 → Phase 5 밸류에이션 완료", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -499,5 +499,187 @@ test("Phase 2 완료 → Phase 3 승인 → Phase 4 수집·검증 완료", asyn
   await expect(page.getByRole("button", { name: /^다음/ })).toBeEnabled();
   await page.getByRole("button", { name: /^다음/ }).click();
   await expect(page).toHaveURL(/\/process\/valuation$/);
+
+  await expect(
+    page.getByRole("heading", { name: "PER 밸류에이션" }),
+  ).toBeVisible();
+  await expect(page.getByRole("grid")).toBeVisible();
+  await page.getByRole("tab", { name: /Target PER 설정/ }).click();
+
+  await page.getByLabel("사용자 목표주가").fill("90000");
+  const inverseDraftResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/valuation/draft"),
+  );
+  await page.getByRole("button", { name: "목표주가 반영" }).click();
+  const inverseDraftResponse = await inverseDraftResponsePromise;
+  const inverseDraftBody = await inverseDraftResponse.json();
+  expect(
+    inverseDraftResponse.status(),
+    JSON.stringify(inverseDraftBody),
+  ).toBe(200);
+  expect(inverseDraftBody).toMatchObject({
+    inputMode: "target_price",
+    targetPer: "16.0",
+    requestedTargetPrice: "90000",
+    targetPrice: "90000",
+  });
+
+  await page.getByLabel("사용자 최종 승인 Target PER").fill("14.2");
+  const draftResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/valuation/draft"),
+  );
+  await page.getByRole("button", { name: "Target PER 반영" }).click();
+  const draftResponse = await draftResponsePromise;
+  const draftBody = await draftResponse.json();
+  expect(draftResponse.status(), JSON.stringify(draftBody)).toBe(200);
+  expect(draftBody).toMatchObject({
+    targetPer: "14.2",
+    targetPrice: "80000",
+    formattedTargetPrice: "80,000원",
+  });
+  await expect(page.locator(".phase5-summary")).toContainText("80,000원");
+
+  const approvalResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/valuation/approve"),
+  );
+  await page.getByRole("button", { name: "입력값 승인" }).click();
+  const approvalResponse = await approvalResponsePromise;
+  const approvalBody = await approvalResponse.json();
+  expect(approvalResponse.status(), JSON.stringify(approvalBody)).toBe(200);
+  await expect(
+    page.getByRole("button", { name: "입력값 승인 완료" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "민감도 표 보기" }).click();
+  const sensitivityDialog = page.getByRole("dialog", {
+    name: "목표주가 민감도",
+  });
+  await expect(sensitivityDialog).toBeVisible();
+  await expect(sensitivityDialog.locator("tbody td")).toHaveCount(25);
+  await expect(sensitivityDialog.locator("td.is-current")).toHaveCount(1);
+  await page.getByRole("button", { name: "민감도 표 닫기" }).click();
+
+  const workbookDownload = await page.request.get(
+    `/api/projects/${projectId}/valuation/workbook.xlsx?approvalVersion=${approvalBody.valuationApprovalVersion}`,
+  );
+  expect(workbookDownload.status()).toBe(200);
+  expect(workbookDownload.headers()["x-valuation-approval-version"]).toBe(
+    String(approvalBody.valuationApprovalVersion),
+  );
+  expect(workbookDownload.headers()["content-type"]).toContain(
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  expect((await workbookDownload.body()).subarray(0, 2).toString()).toBe("PK");
+
+  await expect(page.getByRole("button", { name: "다음", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(page).toHaveURL(/\/process\/report-outline$/);
+
+  const completedWorkspaceResponse = await page.request.get(
+    `/api/projects/${projectId}/valuation`,
+  );
+  expect(completedWorkspaceResponse.status()).toBe(200);
+  const completedWorkspace = await completedWorkspaceResponse.json();
+  const completedModelResponse = await page.request.get(
+    completedWorkspace.workbook.readModelUrl,
+  );
+  expect(completedModelResponse.status()).toBe(200);
+  const completedModel = await completedModelResponse.json();
+  const targetPerOutput = completedModel.outputs.targetPer;
+  expect(targetPerOutput).toBeTruthy();
+
+  const auth = await session(page.request);
+  const protectedChangeResponse = await page.request.patch(
+    `/api/projects/${projectId}/valuation/workbook/cells`,
+    {
+      headers: { "X-CSRF-Token": auth.csrfToken },
+      data: {
+        workbookVersion: completedWorkspace.workbook.workbookVersion,
+        editableCellSetVersion:
+          completedWorkspace.workbook.editableCellSetVersion,
+        requestId: crypto.randomUUID(),
+        changes: [
+          {
+            sheetId: targetPerOutput.sheetId,
+            address: targetPerOutput.address,
+            valueType: "number",
+            value: "15.0",
+          },
+        ],
+      },
+    },
+  );
+  expect(protectedChangeResponse.status()).toBe(422);
+  await expect(protectedChangeResponse.json()).resolves.toMatchObject({
+    error: { code: "READ_ONLY_CELL" },
+  });
+
+  const targetPerInputAddress = targetPerOutput.address.replace(
+    /(\d+)$/,
+    (_match: string, row: string) => String(Number(row) - 1),
+  );
+  const editableTargetPer = completedModel.editableCells.find(
+    (cell: { sheetId: string; address: string }) =>
+      cell.sheetId === targetPerOutput.sheetId &&
+      cell.address === targetPerInputAddress,
+  );
+  expect(editableTargetPer).toBeTruthy();
+  const invalidationResponse = await page.request.patch(
+    `/api/projects/${projectId}/valuation/workbook/cells`,
+    {
+      headers: { "X-CSRF-Token": auth.csrfToken },
+      data: {
+        workbookVersion: completedWorkspace.workbook.workbookVersion,
+        editableCellSetVersion:
+          completedWorkspace.workbook.editableCellSetVersion,
+        requestId: crypto.randomUUID(),
+        changes: [
+          {
+            sheetId: editableTargetPer.sheetId,
+            address: editableTargetPer.address,
+            valueType: "number",
+            value: "14.3",
+          },
+        ],
+      },
+    },
+  );
+  expect(invalidationResponse.status()).toBe(200);
+  await expect(invalidationResponse.json()).resolves.toMatchObject({
+    invalidatedResults: [
+      "valuation_approval",
+      "report_outline",
+      "report_validation",
+    ],
+  });
+
+  const invalidatedWorkspaceResponse = await page.request.get(
+    `/api/projects/${projectId}/valuation`,
+  );
+  const invalidatedWorkspace = await invalidatedWorkspaceResponse.json();
+  expect(invalidatedWorkspace.approval).toBeNull();
+  expect(invalidatedWorkspace.valuationDraft.status).toBe(
+    "revalidation_required",
+  );
+  expect(invalidatedWorkspace.completion.canComplete).toBe(false);
+  expect(invalidatedWorkspace.completion.blockers).toContain(
+    "DRAFT_REVALIDATION_REQUIRED",
+  );
+  expect(
+    invalidatedWorkspace.workflow.stageStates.find(
+      (stage: { stageKey: string }) => stage.stageKey === "valuation",
+    ).status,
+  ).toBe("in_progress");
+  expect(
+    invalidatedWorkspace.workflow.stageStates.find(
+      (stage: { stageKey: string }) => stage.stageKey === "report_outline",
+    ).status,
+  ).toBe("revalidation_required");
   assertNoRuntimeErrors();
 });

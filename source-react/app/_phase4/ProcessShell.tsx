@@ -22,12 +22,14 @@ export function ProcessShell({
   stages,
   children,
   footer,
+  onBeforeNavigate,
 }: {
   projectName: string;
-  activeStage: "research_plan" | "validation";
+  activeStage: "research_plan" | "validation" | "valuation";
   stages: StageState[];
   children: ReactNode;
   footer: ReactNode;
+  onBeforeNavigate?: () => boolean;
 }) {
   const router = useRouter();
   const { session } = useSession();
@@ -36,7 +38,12 @@ export function ProcessShell({
     <div className="planned-process-page phase4-page">
       <PhaseOneHeader active="projects" session={session} />
       <div className="phase4-project-strip">
-        <button type="button" onClick={() => router.push("/projects")}>
+        <button
+          type="button"
+          onClick={() => {
+            if (onBeforeNavigate?.() ?? true) router.push("/projects");
+          }}
+        >
           ← 프로젝트
         </button>
         <strong>{projectName}</strong>
@@ -58,7 +65,14 @@ export function ProcessShell({
                   className={active ? "active" : ""}
                   disabled={!accessible}
                   aria-current={active ? "step" : undefined}
-                  onClick={() => accessible && router.push(stage.route)}
+                  onClick={() => {
+                    if (
+                      accessible &&
+                      (onBeforeNavigate?.() ?? true)
+                    ) {
+                      router.push(stage.route);
+                    }
+                  }}
                 >
                   <i>{stage.status === "completed" ? "✓" : label.no}</i>
                   <span>

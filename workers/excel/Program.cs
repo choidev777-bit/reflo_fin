@@ -150,10 +150,8 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                             SafeCellText(cell)));
                     }
 
-                    var fill = ColorHex(cell.Style.Fill.BackgroundColor);
-                    var font = ColorHex(cell.Style.Font.FontColor);
                     var styleFingerprint = CellStyleFingerprint(cell);
-                    if (fill == "FFF2CC" && font == "0000FF")
+                    if (IsWorkflowEditableCell(cell))
                     {
                         editableCells.Add(new EditableCell(
                             sheetId,
@@ -162,8 +160,8 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                             cell.HasFormula ? "formula" : "user_input",
                             styleFingerprint,
                             cell.Style.NumberFormat.Format ?? "",
-                            ValueType(cell),
-                            true,
+                            EditableValueType(cell),
+                            cell.Value.Type != XLDataType.Blank,
                             FindLabel(worksheet, cell)));
                     }
 
@@ -364,7 +362,437 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
     }
 });
 
+app.MapPost("/valuation/read-model", async (
+    ValuationReadRequest request,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
+        using var stream = new MemoryStream(bytes);
+        using var workbook = new XLWorkbook(stream);
+        workbook.RecalculateAllFormulas();
+        return Results.Ok(BuildValuationReadModel(
+            workbook,
+            Sha(bytes),
+            request.OutputBindings ?? []));
+    }
+    catch (Exception error)
+    {
+        var code = error is ValuationContractException contract
+            ? contract.Code
+            : "FORMULA_CALCULATION_FAILED";
+        return Results.UnprocessableEntity(new
+        {
+            error = new
+            {
+                code,
+                message = Trim(error.Message, 300),
+            },
+        });
+    }
+});
+
+app.MapPost("/valuation/calculate", async (
+    ValuationCalculateRequest request,
+    CancellationToken cancellationToken) =>
+{
+    var startedAt = DateTimeOffset.UtcNow;
+    try
+    {
+        var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
+        using var stream = new MemoryStream(bytes);
+        using var workbook = new XLWorkbook(stream);
+        var before = new List<ValuationAppliedCell>();
+        var allowedCells = (request.AllowedCells ?? [])
+            .ToDictionary(
+                cell => $"{cell.SheetId}:{cell.Address}",
+                StringComparer.Ordinal);
+        if (allowedCells.Count == 0)
+        {
+            throw new ValuationContractException(
+                "EDITABLE_CELL_SET_CHANGED",
+                "Server editable-cell whitelist is required.");
+        }
+        if (request.Changes
+            .GroupBy(
+                change => $"{change.SheetId}:{change.Address}",
+                StringComparer.Ordinal)
+            .Any(group => group.Count() > 1))
+        {
+            throw new ValuationContractException(
+                "INVALID_CELL_VALUE",
+                "Duplicate cell addresses are not allowed.");
+        }
+
+        foreach (var change in request.Changes)
+        {
+            var worksheet = workbook.Worksheets
+                .FirstOrDefault(sheet =>
+                    $"sheet_{sheet.Position}" == change.SheetId &&
+                    sheet.Visibility == XLWorksheetVisibility.Visible);
+            if (worksheet is null || !TryCell(worksheet, change.Address, out var cell))
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    error = new { code = "READ_ONLY_CELL", message = "편집할 수 없는 셀입니다." },
+                });
+            }
+            if (!allowedCells.TryGetValue(
+                    $"{change.SheetId}:{change.Address}",
+                    out var allowed) ||
+                !IsWorkflowEditableCell(cell) ||
+                !ChangeTypeMatches(allowed, change) ||
+                (allowed.Required && change.ValueType == "blank"))
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    error = new { code = "READ_ONLY_CELL", message = "편집할 수 없는 셀입니다." },
+                });
+            }
+            before.Add(new ValuationAppliedCell(
+                change.SheetId,
+                worksheet.Name,
+                change.Address,
+                ValueType(cell),
+                CanonicalValue(cell),
+                SafeFormattedText(cell)));
+        }
+
+        foreach (var change in request.Changes)
+        {
+            var worksheet = workbook.Worksheets.First(sheet =>
+                $"sheet_{sheet.Position}" == change.SheetId);
+            var cell = worksheet.Cell(change.Address);
+            ApplyTypedValue(cell, change);
+        }
+
+        workbook.RecalculateAllFormulas();
+        var formulaErrors = workbook.Worksheets
+            .SelectMany(sheet => sheet.CellsUsed(XLCellsUsedOptions.All)
+                .Where(IsCalculationError)
+                .Select(cell => new
+                {
+                    sheetId = $"sheet_{sheet.Position}",
+                    sheetName = sheet.Name,
+                    address = cell.Address.ToString(),
+                    code = SafeFormattedText(cell),
+                }))
+            .Take(100)
+            .ToArray();
+        if (formulaErrors.Length > 0)
+        {
+            return Results.UnprocessableEntity(new
+            {
+                error = new
+                {
+                    code = "FORMULA_CALCULATION_FAILED",
+                    message = "Excel 수식 계산 오류가 있습니다.",
+                    details = formulaErrors,
+                },
+            });
+        }
+
+        await using var output = new MemoryStream();
+        workbook.SaveAs(output);
+        var outputBytes = output.ToArray();
+        var readModel = BuildValuationReadModel(
+            workbook,
+            Sha(outputBytes),
+            request.OutputBindings ?? []);
+        var applied = request.Changes.Select(change =>
+        {
+            var worksheet = workbook.Worksheets.First(sheet =>
+                $"sheet_{sheet.Position}" == change.SheetId);
+            var cell = worksheet.Cell(change.Address);
+            return new ValuationAppliedCell(
+                change.SheetId,
+                worksheet.Name,
+                change.Address,
+                ValueType(cell),
+                CanonicalValue(cell),
+                SafeFormattedText(cell));
+        }).ToArray();
+        return Results.Ok(new ValuationCalculationResult(
+            EngineName,
+            EngineVersion,
+            Convert.ToBase64String(outputBytes),
+            Sha(outputBytes),
+            readModel,
+            before,
+            applied,
+            readModel.Outputs,
+            (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds));
+    }
+    catch (Exception error)
+    {
+        var code = error is ValuationContractException contract
+            ? contract.Code
+            : error.Message == "INVALID_CELL_VALUE"
+                ? "INVALID_CELL_VALUE"
+                : "FORMULA_CALCULATION_FAILED";
+        return Results.UnprocessableEntity(new
+        {
+            error = new
+            {
+                code,
+                message = Trim(error.Message, 300),
+            },
+        });
+    }
+});
+
 app.Run();
+
+static async Task<byte[]> DownloadWorkbook(
+    string downloadUrl,
+    CancellationToken cancellationToken)
+{
+    if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+    {
+        throw new InvalidOperationException("downloadUrl is required");
+    }
+    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+    var bytes = await http.GetByteArrayAsync(uri, cancellationToken);
+    if (bytes.LongLength > MaxWorkbookBytes)
+    {
+        throw new InvalidOperationException("FILE_TOO_LARGE");
+    }
+    return bytes;
+}
+
+static ValuationReadModel BuildValuationReadModel(
+    XLWorkbook workbook,
+    string workbookHash,
+    IReadOnlyList<ValuationOutputBinding> outputBindings)
+{
+    var sheets = new List<ValuationSheet>();
+    var editable = new List<ValuationEditableCell>();
+    foreach (var worksheet in workbook.Worksheets
+                 .Where(sheet => sheet.Visibility == XLWorksheetVisibility.Visible)
+                 .OrderBy(sheet => sheet.Position))
+    {
+        var sheetId = $"sheet_{worksheet.Position}";
+        var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
+        var cells = new List<ValuationCell>();
+        if (used is not null)
+        {
+            foreach (var cell in used.CellsUsed(XLCellsUsedOptions.All))
+            {
+                var fill = ColorHex(cell.Style.Fill.BackgroundColor);
+                var font = ColorHex(cell.Style.Font.FontColor);
+                var canEdit = IsWorkflowEditableCell(cell);
+                var address = cell.Address?.ToString() ?? "";
+                var label = FindLabel(worksheet, cell);
+                var valueType = EditableValueType(cell);
+                cells.Add(new ValuationCell(
+                    address,
+                    cell.Address!.RowNumber,
+                    cell.Address.ColumnNumber,
+                    valueType,
+                    CanonicalValue(cell),
+                    SafeFormattedText(cell),
+                    cell.HasFormula ? cell.FormulaA1 : null,
+                    cell.Style.NumberFormat.Format ?? "",
+                    label,
+                    canEdit,
+                    canEdit ? null : cell.HasFormula ? "수식 결과" : "읽기 전용",
+                    fill,
+                    font,
+                    cell.Style.Font.Bold));
+                if (canEdit)
+                {
+                    editable.Add(new ValuationEditableCell(
+                        sheetId,
+                        worksheet.Name,
+                        address,
+                        valueType,
+                        label,
+                        cell.Style.NumberFormat.Format ?? "",
+                        cell.Value.Type != XLDataType.Blank));
+                }
+            }
+        }
+        sheets.Add(new ValuationSheet(
+            sheetId,
+            worksheet.Name,
+            worksheet.Position,
+            used is null ? "A1:A1" : RelativeAddress(used),
+            (int)worksheet.SheetView.SplitRow,
+            (int)worksheet.SheetView.SplitColumn,
+            cells));
+    }
+
+    var outputs = BuildValuationOutputs(workbook, outputBindings);
+    return new ValuationReadModel(
+        "1.0",
+        workbookHash,
+        sheets,
+        editable,
+        outputs);
+}
+
+static ValuationOutputs BuildValuationOutputs(
+    XLWorkbook workbook,
+    IReadOnlyList<ValuationOutputBinding> bindings)
+{
+    var values = bindings.ToDictionary(
+        binding => binding.Metric,
+        binding => BoundOutput(workbook, binding),
+        StringComparer.Ordinal);
+    return new ValuationOutputs(
+        values.GetValueOrDefault("forward_eps"),
+        values.GetValueOrDefault("target_per"),
+        values.GetValueOrDefault("target_price"));
+}
+
+static ValuationOutput BoundOutput(
+    XLWorkbook workbook,
+    ValuationOutputBinding binding)
+{
+    var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
+        $"sheet_{sheet.Position}" == binding.SheetId &&
+        sheet.Visibility == XLWorksheetVisibility.Visible);
+    if (worksheet is null || !TryCell(worksheet, binding.Address, out var cell))
+    {
+        throw new ValuationContractException(
+            "MAPPING_STRUCTURE_MISMATCH",
+            $"Mapped valuation output is missing: {binding.Metric}.");
+    }
+    var formula = cell.HasFormula ? cell.FormulaA1 : null;
+    if (!string.IsNullOrWhiteSpace(binding.ExpectedFormulaHash) &&
+        ShaText(formula ?? "") != binding.ExpectedFormulaHash)
+    {
+        throw new ValuationContractException(
+            "MAPPING_STRUCTURE_MISMATCH",
+            $"Mapped formula changed: {binding.Metric}.");
+    }
+    var label = FindLabel(worksheet, cell);
+    var structureFingerprint = ShaText(
+        $"{binding.SheetId}:{binding.Address}:{formula}:{cell.Style.NumberFormat.Format}:{label}");
+    // LibreOffice normalizes otherwise equivalent number-format strings while
+    // recalculating. For formula outputs, the exact sheet/address/formula hash
+    // is the stable structural authority. Retain the broader fingerprint check
+    // only for value outputs that do not have a formula hash.
+    if (string.IsNullOrWhiteSpace(binding.ExpectedFormulaHash) &&
+        !string.IsNullOrWhiteSpace(binding.ExpectedStructureFingerprint) &&
+        structureFingerprint != binding.ExpectedStructureFingerprint)
+    {
+        throw new ValuationContractException(
+            "MAPPING_STRUCTURE_MISMATCH",
+            $"Mapped cell structure changed: {binding.Metric}.");
+    }
+    return new ValuationOutput(
+        binding.SheetId,
+        worksheet.Name,
+        binding.Address,
+        CanonicalValue(cell),
+        SafeFormattedText(cell));
+}
+
+static bool TryCell(IXLWorksheet worksheet, string address, out IXLCell cell)
+{
+    cell = worksheet.Cell(1, 1);
+    if (!Regex.IsMatch(address, @"^[A-Z]{1,3}[1-9][0-9]{0,6}$")) return false;
+    try
+    {
+        cell = worksheet.Cell(address);
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+static bool IsWorkflowEditableCell(IXLCell cell)
+{
+    if (cell.HasFormula ||
+        cell.IsMerged() ||
+        cell.WorksheetRow().IsHidden ||
+        cell.WorksheetColumn().IsHidden)
+    {
+        return false;
+    }
+    return ColorHex(cell.Style.Fill.BackgroundColor) == "FFF2CC" &&
+           ColorHex(cell.Style.Font.FontColor) == "0000FF";
+}
+
+static string EditableValueType(IXLCell cell)
+{
+    var valueType = ValueType(cell);
+    if (valueType != "blank") return valueType;
+    var format = cell.Style.NumberFormat.Format ?? "";
+    return string.IsNullOrWhiteSpace(format) ||
+           string.Equals(format, "General", StringComparison.OrdinalIgnoreCase)
+        ? "string"
+        : "decimal";
+}
+
+static bool ChangeTypeMatches(
+    ValuationAllowedCell allowed,
+    ValuationCellChange change)
+{
+    if (change.ValueType == "blank") return !allowed.Required;
+    return allowed.ValueType switch
+    {
+        "decimal" or "integer" => change.ValueType == "number",
+        "boolean" => change.ValueType == "boolean",
+        _ => change.ValueType == "string",
+    };
+}
+
+static void ApplyTypedValue(IXLCell cell, ValuationCellChange change)
+{
+    switch (change.ValueType)
+    {
+        case "number":
+            if (!decimal.TryParse(
+                    change.Value,
+                    NumberStyles.Number | NumberStyles.AllowExponent,
+                    CultureInfo.InvariantCulture,
+                    out var number))
+            {
+                throw new InvalidOperationException("INVALID_CELL_VALUE");
+            }
+            cell.Value = (double)number;
+            break;
+        case "boolean":
+            if (!bool.TryParse(change.Value, out var boolean))
+                throw new InvalidOperationException("INVALID_CELL_VALUE");
+            cell.Value = boolean;
+            break;
+        case "blank":
+            cell.Clear(XLClearOptions.Contents);
+            break;
+        case "string":
+            cell.Value = change.Value ?? "";
+            break;
+        default:
+            throw new InvalidOperationException("INVALID_CELL_VALUE");
+    }
+}
+
+static string? CanonicalValue(IXLCell cell)
+{
+    try
+    {
+        return cell.Value.Type switch
+        {
+            XLDataType.Number => cell.GetDouble().ToString("G15", CultureInfo.InvariantCulture),
+            XLDataType.Boolean => cell.GetBoolean() ? "true" : "false",
+            XLDataType.DateTime => cell.GetDateTime().ToString("O"),
+            XLDataType.TimeSpan => cell.GetTimeSpan().ToString(),
+            XLDataType.Blank => null,
+            _ => SafeCellText(cell),
+        };
+    }
+    catch
+    {
+        return SafeCellText(cell);
+    }
+}
 
 static InspectionResult EmptyResult(IReadOnlyList<Issue> issues) => new(
     0,
@@ -609,6 +1037,100 @@ static ZipInsights ReadZipInsights(byte[] bytes)
 }
 
 public sealed record InspectRequest(string DownloadUrl);
+public sealed record ValuationOutputBinding(
+    string Metric,
+    string SheetId,
+    string Address,
+    string? ExpectedFormulaHash,
+    string? ExpectedStructureFingerprint);
+public sealed record ValuationAllowedCell(
+    string SheetId,
+    string Address,
+    string ValueType,
+    bool Required);
+public sealed record ValuationReadRequest(
+    string DownloadUrl,
+    IReadOnlyList<ValuationOutputBinding>? OutputBindings);
+public sealed record ValuationCellChange(
+    string SheetId,
+    string Address,
+    string ValueType,
+    string? Value);
+public sealed record ValuationCalculateRequest(
+    string DownloadUrl,
+    IReadOnlyList<ValuationCellChange> Changes,
+    IReadOnlyList<ValuationAllowedCell>? AllowedCells,
+    IReadOnlyList<ValuationOutputBinding>? OutputBindings);
+public sealed record ValuationCell(
+    string Address,
+    int Row,
+    int Column,
+    string ValueType,
+    string? RawValue,
+    string FormattedText,
+    string? Formula,
+    string NumberFormat,
+    string Label,
+    bool Editable,
+    string? ReadOnlyReason,
+    string Fill,
+    string FontColor,
+    bool Bold);
+public sealed record ValuationEditableCell(
+    string SheetId,
+    string SheetName,
+    string Address,
+    string ValueType,
+    string Label,
+    string NumberFormat,
+    bool Required);
+public sealed record ValuationSheet(
+    string SheetId,
+    string Name,
+    int Index,
+    string UsedRange,
+    int FreezeRows,
+    int FreezeColumns,
+    IReadOnlyList<ValuationCell> Cells);
+public sealed record ValuationOutput(
+    string SheetId,
+    string SheetName,
+    string Address,
+    string? RawValue,
+    string FormattedText);
+public sealed record ValuationOutputs(
+    ValuationOutput? ForwardEps,
+    ValuationOutput? TargetPer,
+    ValuationOutput? TargetPrice);
+public sealed record ValuationReadModel(
+    string SchemaVersion,
+    string WorkbookHash,
+    IReadOnlyList<ValuationSheet> Sheets,
+    IReadOnlyList<ValuationEditableCell> EditableCells,
+    ValuationOutputs Outputs);
+public sealed record ValuationAppliedCell(
+    string SheetId,
+    string SheetName,
+    string Address,
+    string ValueType,
+    string? RawValue,
+    string FormattedText);
+public sealed record ValuationCalculationResult(
+    string EngineName,
+    string EngineVersion,
+    string WorkbookBase64,
+    string WorkbookHash,
+    ValuationReadModel ReadModel,
+    IReadOnlyList<ValuationAppliedCell> Before,
+    IReadOnlyList<ValuationAppliedCell> AppliedChanges,
+    ValuationOutputs Outputs,
+    int DurationMs);
+public sealed class ValuationContractException(
+    string code,
+    string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
 public sealed record Issue(string Code, string Severity, string Message);
 public sealed record ContractWarning(string Code, string Message);
 public sealed record ToolDescriptor(string Name, string Version);

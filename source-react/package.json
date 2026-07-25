@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "dev:phase2": "node scripts/dev-phase2.mjs",
+    "dev:full": "node scripts/dev-full.mjs",
     "build": "next build",
     "start": "next start",
     "db:up": "docker compose -f ../infra/local/compose.yaml up -d --build --wait",
@@ -29,6 +29,7 @@
     "@temporalio/client": "^1.21.1",
     "@temporalio/worker": "^1.21.1",
     "@temporalio/workflow": "^1.21.1",
+    "decimal.js": "10.6.0",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
     "next": "16.2.6",
