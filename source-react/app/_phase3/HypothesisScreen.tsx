@@ -73,7 +73,6 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
   const [newQuestion, setNewQuestion] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [questionBusy, setQuestionBusy] = useState(false);
-  const [draggedQuestionId, setDraggedQuestionId] = useState<string | null>(null);
   const [undoQuestion, setUndoQuestion] = useState<HypothesisQuestion | null>(null);
   const saveSequence = useRef(0);
   const debounceTimer = useRef<number | null>(null);
@@ -391,29 +390,6 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
       { expectedQuestionSetVersion: questionSet.version },
     );
     if (updated) setUndoQuestion(question);
-  };
-
-  const reorderQuestions = async (questionIds: string[]) => {
-    const questionSet = workspace?.questionSet;
-    if (!questionSet) return;
-    await questionRequest(
-      `/api/projects/${projectId}/hypothesis/question-sets/${questionSet.questionSetId}/order`,
-      "PUT",
-      {
-        expectedQuestionSetVersion: questionSet.version,
-        questionIds,
-      },
-    );
-  };
-
-  const moveQuestion = (questionId: string, direction: -1 | 1) => {
-    const questions = workspace?.questionSet?.questions ?? [];
-    const index = questions.findIndex((question) => question.questionId === questionId);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= questions.length) return;
-    const next = questions.map((question) => question.questionId);
-    [next[index], next[target]] = [next[target], next[index]];
-    void reorderQuestions(next);
   };
 
   const approve = async () => {
@@ -741,7 +717,7 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
                         <i>03</i>
                         <span>
                           <h2>현재 의견을 반영한 가설 질문</h2>
-                          <p>질문을 검토하고 순서를 정한 뒤 전체를 승인하세요.</p>
+                          <p>질문을 검토한 뒤 전체를 승인하세요.</p>
                         </span>
                       </div>
                       <span
@@ -767,19 +743,6 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
                       <div
                         className="rf-question-row phase3-question-row"
                         key={question.questionId}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => {
-                          if (!draggedQuestionId || draggedQuestionId === question.questionId)
-                            return;
-                          const ids = workspace.questionSet!.questions.map(
-                            (item) => item.questionId,
-                          );
-                          const from = ids.indexOf(draggedQuestionId);
-                          ids.splice(from, 1);
-                          ids.splice(index, 0, draggedQuestionId);
-                          setDraggedQuestionId(null);
-                          void reorderQuestions(ids);
-                        }}
                       >
                         <i>{String(index + 1).padStart(2, "0")}</i>
                         {editingQuestionId === question.questionId ? (
@@ -821,43 +784,8 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
                           <>
                             <span className="phase3-question-copy">
                               {question.text}
-                              <small>
-                                {question.period} · {question.comparison} ·{" "}
-                                {question.metrics.join(", ")}
-                              </small>
                             </span>
                             <span className="rf-row-actions phase3-row-actions">
-                              <button
-                                type="button"
-                                className="phase3-drag-handle"
-                                draggable
-                                aria-label={`${String(index + 1).padStart(2, "0")}번 질문 드래그하여 이동`}
-                                onDragStart={() =>
-                                  setDraggedQuestionId(question.questionId)
-                                }
-                                onDragEnd={() => setDraggedQuestionId(null)}
-                              >
-                                ↕
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`${String(index + 1).padStart(2, "0")}번 질문 위로 이동`}
-                                disabled={index === 0 || questionBusy}
-                                onClick={() => moveQuestion(question.questionId, -1)}
-                              >
-                                ↑
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`${String(index + 1).padStart(2, "0")}번 질문 아래로 이동`}
-                                disabled={
-                                  index === workspace.questionSet!.questions.length - 1 ||
-                                  questionBusy
-                                }
-                                onClick={() => moveQuestion(question.questionId, 1)}
-                              >
-                                ↓
-                              </button>
                               <button
                                 type="button"
                                 onClick={() => {

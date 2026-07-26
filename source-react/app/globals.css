@@ -9571,14 +9571,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding:8px 0;
 }
 .phase3-question-copy {
-  display:flex;
-  flex-direction:column;
-  gap:5px;
-}
-.phase3-question-copy small {
-  color:#697066;
-  font-size:11px;
-  font-weight:500;
+  min-width:0;
+  line-height:1.55;
 }
 .phase3-row-actions {
   gap:4px;
@@ -9586,12 +9580,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .phase3-row-actions button {
   min-width:44px;
   padding:0 8px;
-}
-.phase3-drag-handle {
-  cursor:grab;
-}
-.phase3-drag-handle:active {
-  cursor:grabbing;
 }
 .phase3-undo {
   min-height:44px;

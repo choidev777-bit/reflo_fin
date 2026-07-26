@@ -76,6 +76,8 @@
 - 가설 tab은 출처를 tab 단위로 한 번 설정하고 질문 전체를 수집 대상으로 선택한다.
 - 질문 선택 상태는 `이 질문으로 자료 수집`, `자료 수집 안 함`으로 결과를 말한다.
 - 질문은 두 자리 연속 번호를 사용하고 추가·삭제 후 다시 정렬한다.
+- STEP 03 질문 목록은 질문 본문만 표시한다. 기간·비교 기준·지표 metadata는 후속 조사 입력으로 유지하되 사용자 화면에는 반복 노출하지 않는다.
+- STEP 03 질문 행의 사용자 action은 `수정`, `삭제`만 제공하며 수동 순서 변경 control은 표시하지 않는다.
 - 각 질문과 Excel 항목은 top-right 44px X action으로 개별 제거한다.
 - question card는 content 높이만큼 확장하며 내부 scroll을 만들지 않는다.
 - tablet·desktop question card는 right padding 26px, mobile은 12px을 사용한다.

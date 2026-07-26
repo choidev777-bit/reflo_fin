@@ -399,6 +399,8 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
     page.getByRole("heading", { name: "현재 의견을 반영한 가설 질문" }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.locator(".phase3-question-row")).toHaveCount(3);
+  await expect(page.locator(".phase3-question-copy small")).toHaveCount(0);
+  await expect(page.locator(".phase3-row-actions button")).toHaveCount(6);
 
   await page.getByRole("button", { name: "수정" }).first().click();
   const editor = page.getByLabel("01번 질문 수정");
@@ -426,12 +428,8 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
     editedQuestion,
   );
 
-  await page.getByRole("button", { name: "01번 질문 아래로 이동" }).click();
-  await expect(page.locator(".phase3-question-row").nth(1)).toContainText(
-    editedQuestion,
-  );
   await page.reload();
-  await expect(page.locator(".phase3-question-row").nth(1)).toContainText(
+  await expect(page.locator(".phase3-question-row").first()).toContainText(
     editedQuestion,
   );
 
