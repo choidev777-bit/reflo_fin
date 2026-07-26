@@ -339,6 +339,11 @@ test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀
   await expect(page.getByText("시트·수식·편집 셀·모델 구조")).toBeVisible();
   await page.getByRole("tab", { name: "PDF·데이터 연결" }).click();
   await expect(page.getByText("PDF 구성과 데이터 원본 연결")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "PDF 블록" }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Excel 후보" }).first()).toBeVisible();
+  await expect(page.locator(".phase2-mapping-comparison").first()).toBeVisible();
+  await expect(page.getByText(/경계 좌표/).first()).toBeVisible();
+  await expect(page.getByText(/구조 지문|계열 미리보기/).first()).toBeVisible();
   await expect(page.getByText(/KRX 기준일 종가/).first()).toBeVisible();
   await expect(page.locator("option", { hasText: "KRX 기준일 종가" })).toHaveCount(1);
   await expect(page.getByText("투자의견", { exact: true })).toHaveCount(0);
@@ -375,9 +380,9 @@ test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀
     ).toHaveText("2개");
     await expect(page.getByText("v2", { exact: true })).toBeVisible();
     test.info().annotations.push({
-      type: "known-phase-2-gap",
+      type: "source-data-blocker",
       description:
-        "figure_2_chart와 figure_3_chart는 Phase 2 분석·매핑 구현 전까지 후보가 없어 차단됩니다.",
+        "figure_2_chart와 figure_3_chart는 원본 Workbook에 기간별 주가·밴드 계열이 없어 오연결하지 않고 차단합니다.",
     });
     return;
   }

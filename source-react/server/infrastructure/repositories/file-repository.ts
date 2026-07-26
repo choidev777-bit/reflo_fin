@@ -966,6 +966,180 @@ function fileSummary(row: FileSummaryRow | undefined) {
   };
 }
 
+type PdfBlockPreview = {
+  pageNumber: number;
+  pageLabel: string | null;
+  pageBox: [number, number, number, number] | null;
+  blockId: string;
+  role: string;
+  bbox: [number, number, number, number] | null;
+  classification: string | null;
+  geometryFingerprint: string | null;
+  analysisConfidence: number | null;
+  reasonCodes: string[];
+  styleTemplateRef: string | null;
+};
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) => {
+        const record = recordValue(item);
+        return record ? [record] : [];
+      })
+    : [];
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function bboxValue(
+  value: unknown,
+): [number, number, number, number] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 4 ||
+    !value.every((item) => typeof item === "number" && Number.isFinite(item))
+  ) {
+    return null;
+  }
+  return value as [number, number, number, number];
+}
+
+export function buildPdfBlockPreview(
+  templateIr: unknown,
+  slotId: string,
+): PdfBlockPreview | null {
+  const template = recordValue(templateIr);
+  for (const page of recordArray(template?.pages)) {
+    const slot = recordArray(page.slots).find(
+      (item) => stringValue(item.slotId) === slotId,
+    );
+    const blockId = stringValue(slot?.blockId);
+    if (!slot || !blockId) continue;
+    const block = recordArray(page.blocks).find(
+      (item) => stringValue(item.blockId) === blockId,
+    );
+    if (!block) continue;
+    const pageBoxes = recordValue(page.boxes);
+    return {
+      pageNumber: numberValue(page.pageNumber) ?? 0,
+      pageLabel: stringValue(page.pageLabel),
+      pageBox: bboxValue(pageBoxes?.cropBox),
+      blockId,
+      role: stringValue(block.role) ?? "unknown",
+      bbox: bboxValue(block.bbox),
+      classification: stringValue(block.classification),
+      geometryFingerprint: stringValue(block.geometryFingerprint),
+      analysisConfidence: numberValue(block.analysisConfidence),
+      reasonCodes: stringArrayValue(block.reasonCodes),
+      styleTemplateRef:
+        stringValue(block.styleTemplateRef) ?? stringValue(slot.styleRef),
+    };
+  }
+  return null;
+}
+
+export function buildWorkbookCandidatePreview(input: {
+  workbookAnalysis: unknown;
+  sourceType: "cell" | "range" | "chart" | "market_data";
+  sheetId: string;
+  address: string;
+  source: Record<string, unknown>;
+  chartDefinition: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const workbook = recordValue(input.workbookAnalysis);
+  const sourceFingerprint =
+    stringValue(input.source.structureFingerprint) ?? null;
+
+  if (input.sourceType === "cell") {
+    const cell = recordArray(workbook?.candidateCells).find(
+      (item) =>
+        stringValue(item.sheetId) === input.sheetId &&
+        stringValue(item.address)?.toUpperCase() === input.address.toUpperCase(),
+    );
+    return {
+      kind: "cell",
+      displayValue: stringValue(cell?.displayValue),
+      numberFormat: stringValue(cell?.numberFormat),
+      formula: stringValue(cell?.formula),
+      styleFingerprint: stringValue(cell?.styleFingerprint),
+      structureFingerprint:
+        stringValue(cell?.structureFingerprint) ?? sourceFingerprint,
+    };
+  }
+
+  if (input.sourceType === "range") {
+    const range = recordArray(workbook?.candidateRanges).find(
+      (item) =>
+        stringValue(item.sheetId) === input.sheetId &&
+        stringValue(item.range)?.toUpperCase() === input.address.toUpperCase(),
+    );
+    return {
+      kind: "range",
+      rowCount: numberValue(range?.rowCount),
+      columnCount: numberValue(range?.columnCount),
+      headerValues: stringArrayValue(range?.headerValues),
+      periodLabels: recordArray(range?.periodColumns).flatMap((item) => {
+        const label = stringValue(item.label);
+        return label ? [label] : [];
+      }),
+      rowKeys: recordArray(range?.rowKeyColumns).flatMap((item) => {
+        const label = stringValue(item.label);
+        return label ? [label] : [];
+      }),
+      mergedRanges: stringArrayValue(range?.mergedRanges),
+      columnDimensions: recordArray(range?.columnDimensions),
+      rowDimensions: recordArray(range?.rowDimensions),
+      presentationTruncated: range?.presentationTruncated === true,
+      styleFingerprint: stringValue(range?.styleFingerprint),
+      structureFingerprint:
+        stringValue(range?.structureFingerprint) ?? sourceFingerprint,
+    };
+  }
+
+  if (input.sourceType === "chart") {
+    const definition = input.chartDefinition ?? {};
+    const categories = recordValue(definition.categories);
+    const series = recordArray(definition.series).map((item) => {
+      const seriesSource = recordValue(item.source);
+      return {
+        label: stringValue(item.label),
+        axis: stringValue(item.axis),
+        chartType: stringValue(item.chartType),
+        categoryRange: stringValue(categories?.range),
+        valueRange: stringValue(seriesSource?.range),
+      };
+    });
+    return {
+      kind: "chart",
+      chartTypes: stringArrayValue(definition.chartTypes),
+      series,
+      structureFingerprint:
+        stringValue(categories?.structureFingerprint) ?? sourceFingerprint,
+    };
+  }
+
+  return {
+    kind: "market_data",
+    provider: stringValue(input.source.provider),
+    tradingDate: stringValue(input.source.tradingDate),
+    closePrice: numberValue(input.source.closePrice),
+    currency: stringValue(input.source.currency),
+    structureFingerprint: sourceFingerprint,
+  };
+}
+
 async function inspectionProjection(
   client: TransactionClient,
   projectId: string,
@@ -1016,6 +1190,8 @@ async function inspectionProjection(
     mapping_required_slot_count: number | null;
     mapping_confirmed_binding_count: number | null;
     mapping_unmapped_required_count: number | null;
+    template_ir_json: unknown;
+    workbook_analysis_json: unknown;
   }>(
     `SELECT fi.inspection_id, fi.job_id, wj.operation_status,
        wj.validity_status, wj.current_phase, wj.progress_percent,
@@ -1046,7 +1222,9 @@ async function inspectionProjection(
        msv.binding_count AS mapping_binding_count,
        msv.required_slot_count AS mapping_required_slot_count,
        msv.confirmed_binding_count AS mapping_confirmed_binding_count,
-       msv.unmapped_required_count AS mapping_unmapped_required_count
+       msv.unmapped_required_count AS mapping_unmapped_required_count,
+       tiv.template_ir_json,
+       wv.analysis_json AS workbook_analysis_json
      FROM file_inspection fi
      JOIN workflow_job wj ON wj.job_id = fi.job_id
      LEFT JOIN template_ir_version tiv
@@ -1111,6 +1289,7 @@ async function inspectionProjection(
       status: "suggested" | "confirmed" | "unmapped" | "invalid";
       confidence: number | null;
       source: unknown;
+      pdfBlock: PdfBlockPreview | null;
       selectedCandidateId: string | null;
       candidates: Array<{
         candidateId: string;
@@ -1123,6 +1302,8 @@ async function inspectionProjection(
         reasonCodes: string[];
         source: unknown;
         chartDefinition: Record<string, unknown> | null;
+        bindingDefinition: Record<string, unknown> | null;
+        preview: Record<string, unknown>;
         selected: boolean;
       }>;
     }
@@ -1140,6 +1321,7 @@ async function inspectionProjection(
         status: item.mapping_status,
         confidence: item.confidence == null ? null : Number(item.confidence),
         source: item.source_json,
+        pdfBlock: buildPdfBlockPreview(row.template_ir_json, item.slot_id),
         selectedCandidateId: item.selected_candidate_id,
         candidates: [],
       };
@@ -1167,6 +1349,15 @@ async function inspectionProjection(
         reasonCodes: item.reason_codes ?? [],
         source: storedSource.source,
         chartDefinition: storedSource.chartDefinition,
+        bindingDefinition: storedSource.bindingDefinition,
+        preview: buildWorkbookCandidatePreview({
+          workbookAnalysis: row.workbook_analysis_json,
+          sourceType: item.source_type,
+          sheetId: item.sheet_id,
+          address: item.address,
+          source: storedSource.source,
+          chartDefinition: storedSource.chartDefinition,
+        }),
         selected: item.mapping_candidate_id === item.selected_candidate_id,
       });
     }
@@ -1919,6 +2110,7 @@ export type MappingRevisionEntry = {
     reasonCodes: string[];
     source: Record<string, unknown>;
     chartDefinition: Record<string, unknown> | null;
+    bindingDefinition?: Record<string, unknown> | null;
   }>;
 };
 
@@ -1931,23 +2123,29 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 export function deserializeMappingCandidateSource(value: unknown): {
   source: Record<string, unknown>;
   chartDefinition: Record<string, unknown> | null;
+  bindingDefinition: Record<string, unknown> | null;
 } {
   const stored = recordValue(value) ?? {};
-  const { chartDefinition, ...source } = stored;
+  const { chartDefinition, bindingDefinition, ...source } = stored;
   return {
     source,
     chartDefinition: recordValue(chartDefinition),
+    bindingDefinition: recordValue(bindingDefinition),
   };
 }
 
 export function serializeMappingCandidateSource(input: {
   source: Record<string, unknown>;
   chartDefinition?: unknown;
+  bindingDefinition?: unknown;
 }): Record<string, unknown> {
   const chartDefinition = recordValue(input.chartDefinition);
-  return chartDefinition
-    ? { ...input.source, chartDefinition }
-    : input.source;
+  const bindingDefinition = recordValue(input.bindingDefinition);
+  return {
+    ...input.source,
+    ...(chartDefinition ? { chartDefinition } : {}),
+    ...(bindingDefinition ? { bindingDefinition } : {}),
+  };
 }
 
 function mappingBindingSource(
@@ -2038,6 +2236,35 @@ export function buildMappingRevisionBinding(
   const detectionConfidence = Number.isFinite(candidate.score)
     ? Math.max(0, Math.min(1, candidate.score))
     : 0;
+  const storedBinding = candidate.bindingDefinition;
+  const semanticSource = recordValue(storedBinding?.semanticKey);
+  const semanticKey = {
+    metric:
+      typeof semanticSource?.metric === "string"
+        ? semanticSource.metric.slice(0, 200)
+        : entry.metric,
+    ...(typeof semanticSource?.period === "string"
+      ? { period: semanticSource.period.slice(0, 100) }
+      : {}),
+    ...(typeof semanticSource?.unit === "string"
+      ? { unit: semanticSource.unit.slice(0, 100) }
+      : {}),
+    ...(typeof semanticSource?.scope === "string"
+      ? { scope: semanticSource.scope.slice(0, 100) }
+      : {}),
+  };
+  const styleTemplateRef =
+    typeof storedBinding?.styleTemplateRef === "string"
+      ? storedBinding.styleTemplateRef
+      : null;
+  const estimateType = [
+    "actual",
+    "forecast",
+    "mixed",
+    "not_applicable",
+  ].includes(String(storedBinding?.estimateType))
+    ? String(storedBinding?.estimateType)
+    : "not_applicable";
   const review = {
     status: "approved",
     reasonCodes,
@@ -2111,16 +2338,37 @@ export function buildMappingRevisionBinding(
         "선택한 차트 후보의 범주·계열 정의를 다시 확인해 주세요.",
       );
     }
+    const composite =
+      storedBinding?.kind === "composite_chart" &&
+      series.length >= 2 &&
+      Boolean(styleTemplateRef);
+    if (composite) {
+      return {
+        bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
+        slotId: entry.slotId,
+        kind: "composite_chart",
+        categories,
+        series,
+        styleTemplateRef,
+        status: "confirmed",
+        purpose: "report_output",
+        semanticKey,
+        detectionConfidence,
+        reasonCodes,
+        review,
+      };
+    }
     return {
       bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
       slotId: entry.slotId,
       kind: "chart",
       categories,
       series,
+      ...(styleTemplateRef ? { styleTemplateRef } : {}),
       status: "confirmed",
       purpose: "report_output",
-      semanticKey: { metric: entry.metric },
-      estimateType: "mixed",
+      semanticKey,
+      estimateType: estimateType === "not_applicable" ? "mixed" : estimateType,
       detectionConfidence,
       reasonCodes,
       review,
@@ -2128,39 +2376,81 @@ export function buildMappingRevisionBinding(
   }
   if (entry.kind === "table") {
     const dimensions = mappingRangeDimensions(candidate.address);
+    const rowKeyColumn =
+      typeof storedBinding?.rowKeyColumn === "string" &&
+      /^[A-Z]{1,3}$/i.test(storedBinding.rowKeyColumn)
+        ? storedBinding.rowKeyColumn.toUpperCase()
+        : dimensions.firstColumn;
+    const columnHeaderRow =
+      Number.isInteger(storedBinding?.columnHeaderRow) &&
+      Number(storedBinding?.columnHeaderRow) > 0
+        ? Number(storedBinding?.columnHeaderRow)
+        : dimensions.firstRow;
+    const expectedRows =
+      Number.isInteger(storedBinding?.expectedRows) &&
+      Number(storedBinding?.expectedRows) > 0
+        ? Number(storedBinding?.expectedRows)
+        : dimensions.rows;
+    const expectedColumns =
+      Number.isInteger(storedBinding?.expectedColumns) &&
+      Number(storedBinding?.expectedColumns) > 0
+        ? Number(storedBinding?.expectedColumns)
+        : dimensions.columns;
+    const integerRows = (value: unknown) =>
+      Array.isArray(value)
+        ? [
+            ...new Set(
+              value.filter(
+                (item): item is number =>
+                  Number.isInteger(item) && Number(item) > 0,
+              ),
+            ),
+          ]
+        : [];
     return {
       bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
       slotId: entry.slotId,
       kind: "table",
       source: candidate.source,
-      rowKeyColumn: dimensions.firstColumn,
-      columnHeaderRow: dimensions.firstRow,
-      expectedRows: dimensions.rows,
-      expectedColumns: dimensions.columns,
-      subtotalRows: [],
-      unitRows: [],
-      display: {},
+      rowKeyColumn,
+      columnHeaderRow,
+      expectedRows,
+      expectedColumns,
+      subtotalRows: integerRows(storedBinding?.subtotalRows),
+      unitRows: integerRows(storedBinding?.unitRows),
+      display: recordValue(storedBinding?.display) ?? {},
+      ...(styleTemplateRef ? { styleTemplateRef } : {}),
       status: "confirmed",
       purpose: "report_output",
-      semanticKey: { metric: entry.metric },
-      estimateType: "mixed",
+      semanticKey,
+      estimateType: estimateType === "not_applicable" ? "mixed" : estimateType,
       detectionConfidence,
       reasonCodes,
       review,
     };
   }
+  const verificationSources = Array.isArray(storedBinding?.verificationSources)
+    ? storedBinding.verificationSources.flatMap((value) => {
+        const source = recordValue(value);
+        return source ? [source] : [];
+      })
+    : [];
   return {
     bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
     slotId: entry.slotId,
     kind: "scalar",
-    valueType: entry.valueType,
+    valueType:
+      typeof storedBinding?.valueType === "string"
+        ? storedBinding.valueType
+        : entry.valueType,
     source: candidate.source,
-    verificationSources: [],
-    display: {},
+    verificationSources,
+    display: recordValue(storedBinding?.display) ?? {},
+    ...(styleTemplateRef ? { styleTemplateRef } : {}),
     status: "confirmed",
     purpose: "report_output",
-    semanticKey: { metric: entry.metric },
-    estimateType: "not_applicable",
+    semanticKey,
+    estimateType,
     detectionConfidence,
     reasonCodes,
     review,
@@ -2311,6 +2601,7 @@ export async function createMappingRevision(input: {
           reasonCodes: row.reason_codes ?? [],
           source: storedSource.source,
           chartDefinition: storedSource.chartDefinition,
+          bindingDefinition: storedSource.bindingDefinition,
         });
       }
     }
@@ -2365,6 +2656,9 @@ export async function createMappingRevision(input: {
       source: candidate.source,
       ...(candidate.sourceType === "chart" && candidate.chartDefinition
         ? { chartDefinition: candidate.chartDefinition }
+        : {}),
+      ...(candidate.bindingDefinition
+        ? { bindingDefinition: candidate.bindingDefinition }
         : {}),
       label: candidate.label ?? `${candidate.sheetName}!${candidate.address}`,
       score: candidate.score,
@@ -2555,6 +2849,7 @@ export async function createMappingRevision(input: {
               serializeMappingCandidateSource({
                 source: candidate.source,
                 chartDefinition: candidate.chartDefinition,
+                bindingDefinition: candidate.bindingDefinition,
               }),
             ),
             index + 1,
@@ -3066,6 +3361,7 @@ export type InspectionResultPayload = {
           series: Array<Record<string, unknown>>;
           chartTypes?: string[];
         };
+        bindingDefinition?: Record<string, unknown>;
         label?: string;
         score: number;
         reasonCodes: string[];
@@ -3493,6 +3789,7 @@ export async function commitInspectionResult(
                 serializeMappingCandidateSource({
                   source: candidate.source,
                   chartDefinition: candidate.chartDefinition,
+                  bindingDefinition: candidate.bindingDefinition,
                 }),
               ),
               index + 1,

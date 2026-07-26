@@ -14,6 +14,9 @@
     "workbookVersionId",
     "workbookFileHash",
     "workbookStructureHash",
+    "analysisPipelineVersion",
+    "semanticAliasVersion",
+    "scoringRuleVersion",
     "status",
     "bindings",
     "candidates",
@@ -44,6 +47,18 @@
     },
     "workbookStructureHash": {
       "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "analysisPipelineVersion": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+    },
+    "semanticAliasVersion": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+    },
+    "scoringRuleVersion": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
     },
     "status": {
       "type": "string",
@@ -125,6 +140,9 @@
         },
         "chartDefinition": {
           "$ref": "#/$defs/ChartCandidateDefinition"
+        },
+        "bindingDefinition": {
+          "$ref": "#/$defs/Binding"
         },
         "label": {
           "type": "string",
@@ -1035,6 +1053,9 @@
         "purpose",
         "semanticKey",
         "source",
+        "estimateType",
+        "detectionConfidence",
+        "reasonCodes",
         "status",
         "review"
       ],
@@ -1059,6 +1080,20 @@
         },
         "styleTemplateRef": {
           "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "display": {
+          "$ref": "#/$defs/DisplayRule"
+        },
+        "estimateType": {
+          "$ref": "#/$defs/EstimateType"
+        },
+        "detectionConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reasonCodes": {
+          "$ref": "#/$defs/ReasonCodes"
         },
         "status": {
           "type": "string",

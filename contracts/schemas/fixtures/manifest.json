@@ -70,6 +70,16 @@
     "valid": false
   },
   {
+    "data": "valid/generated-range-binding.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/GeneratedRangeBinding",
+    "valid": true
+  },
+  {
+    "data": "invalid/generated-range-binding-no-evidence.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/GeneratedRangeBinding",
+    "valid": false
+  },
+  {
     "data": "valid/scalar-style-template.json",
     "schema": "../v1/template-ir.schema.json#/$defs/ScalarStyleTemplate",
     "valid": true

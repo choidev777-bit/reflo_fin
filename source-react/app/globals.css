@@ -12273,7 +12273,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 .phase2-result-dialog {
-  width: min(860px, 100%);
+  width: min(1120px, 100%);
   max-height: min(760px, calc(100vh - 48px));
   overflow: auto;
   border: 1px solid #e4e8e1;
@@ -12401,17 +12401,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .phase2-mapping-editor {
   display: grid;
-  gap: 10px;
+  gap: 14px;
   margin-top: 18px;
 }
 
 .phase2-mapping-editor > label {
   display: grid;
-  grid-template-columns: minmax(150px, .7fr) minmax(260px, 1.3fr);
-  gap: 14px;
-  align-items: center;
-  min-height: 64px;
-  padding: 10px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
   border: 1px solid #e4e8e1;
   border-radius: 10px;
   background: #fff;
@@ -12421,19 +12418,117 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-color: #c47d70;
 }
 
-.phase2-mapping-editor > label > span {
+.phase2-mapping-side {
   display: grid;
-  gap: 4px;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
 }
 
-.phase2-mapping-editor > label b {
+.phase2-mapping-side + .phase2-mapping-side {
+  border-left: 1px solid #e4e8e1;
+}
+
+.phase2-mapping-side > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.phase2-mapping-side h4 {
+  margin: 0 0 5px;
+  color: #697066;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.phase2-mapping-side header b {
   color: #111410;
   font-size: 13px;
 }
 
-.phase2-mapping-editor > label small {
+.phase2-mapping-side small {
   color: #697066;
   font-size: 10px;
+}
+
+.phase2-mapping-side [data-confidence] {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d8ded4;
+  border-radius: 999px;
+  color: #596056;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.phase2-mapping-side [data-confidence="high"] {
+  border-color: #b7d77b;
+  background: #f4fae9;
+  color: #436400;
+}
+
+.phase2-mapping-side [data-confidence="low"] {
+  border-color: #d8a49b;
+  background: #fff7f5;
+  color: #8f332b;
+}
+
+.phase2-pdf-boundary {
+  position: relative;
+  width: min(100%, 190px);
+  aspect-ratio: 1.414 / 1;
+  overflow: hidden;
+  border: 1px solid #c8cec4;
+  background:
+    linear-gradient(#eef1ec 1px, transparent 1px),
+    linear-gradient(90deg, #eef1ec 1px, transparent 1px),
+    #fff;
+  background-size: 12px 12px;
+}
+
+.phase2-pdf-boundary > i {
+  position: absolute;
+  min-width: 8px;
+  min-height: 8px;
+  border: 2px solid #75a900;
+  background: rgb(200 255 61 / 20%);
+}
+
+.phase2-pdf-boundary > small {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  padding: 2px 4px;
+  background: rgb(255 255 255 / 88%);
+}
+
+.phase2-mapping-side dl,
+.phase2-candidate-preview dl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  border-radius: 6px;
+}
+
+.phase2-mapping-side dl > div,
+.phase2-candidate-preview dl > div {
+  min-width: 0;
+  padding: 9px;
+}
+
+.phase2-mapping-side dd,
+.phase2-candidate-preview dd {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .phase2-mapping-editor select {
@@ -12446,6 +12541,67 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: #111410;
   font: inherit;
   font-size: 12px;
+}
+
+.phase2-candidate-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.phase2-candidate-confidence {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.phase2-candidate-confidence small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase2-candidate-preview > p,
+.phase2-series-preview {
+  margin: 0;
+  color: #596056;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phase2-series-preview {
+  display: grid;
+  gap: 5px;
+}
+
+.phase2-series-preview ul,
+.phase2-analysis-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phase2-series-preview li,
+.phase2-analysis-reasons li {
+  padding: 3px 6px;
+  border: 1px solid #e4e8e1;
+  border-radius: 4px;
+  background: #fafbf9;
+  color: #596056;
+  font-size: 9px;
+}
+
+.phase2-candidate-empty {
+  min-height: 72px;
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed #c8cec4;
+  color: #697066;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .phase2-mapping-save {
@@ -12562,6 +12718,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
   .phase2-mapping-editor > label {
     grid-template-columns: 1fr;
+  }
+
+  .phase2-mapping-side + .phase2-mapping-side {
+    border-top: 1px solid #e4e8e1;
+    border-left: 0;
   }
 
   .phase2-mapping-save {

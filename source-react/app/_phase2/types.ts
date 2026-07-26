@@ -55,6 +55,19 @@ export type InspectionProjection = {
       status: "suggested" | "confirmed" | "unmapped" | "invalid";
       confidence: number | null;
       source: unknown;
+      pdfBlock: {
+        pageNumber: number;
+        pageLabel: string | null;
+        pageBox: [number, number, number, number] | null;
+        blockId: string;
+        role: string;
+        bbox: [number, number, number, number] | null;
+        classification: string | null;
+        geometryFingerprint: string | null;
+        analysisConfidence: number | null;
+        reasonCodes: string[];
+        styleTemplateRef: string | null;
+      } | null;
       selectedCandidateId: string | null;
       candidates: Array<{
         candidateId: string;
@@ -66,6 +79,35 @@ export type InspectionProjection = {
         score: number;
         reasonCodes: string[];
         source: unknown;
+        chartDefinition: Record<string, unknown> | null;
+        bindingDefinition: Record<string, unknown> | null;
+        preview: {
+          kind: "cell" | "range" | "chart" | "market_data";
+          structureFingerprint?: string | null;
+          styleFingerprint?: string | null;
+          displayValue?: string | null;
+          numberFormat?: string | null;
+          formula?: string | null;
+          rowCount?: number | null;
+          columnCount?: number | null;
+          headerValues?: string[];
+          periodLabels?: string[];
+          rowKeys?: string[];
+          mergedRanges?: string[];
+          presentationTruncated?: boolean;
+          chartTypes?: string[];
+          series?: Array<{
+            label: string | null;
+            axis: string | null;
+            chartType: string | null;
+            categoryRange: string | null;
+            valueRange: string | null;
+          }>;
+          provider?: string | null;
+          tradingDate?: string | null;
+          closePrice?: number | null;
+          currency?: string | null;
+        };
         selected: boolean;
       }>;
     }>;

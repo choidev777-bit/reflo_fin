@@ -164,6 +164,7 @@ export type TemplateSlot = {
     scope?: string;
   };
   required: boolean;
+  styleRef?: string;
 };
 
 export type TemplateIr = {
@@ -174,7 +175,16 @@ export type TemplateIr = {
   pages: Array<{
     pageId: string;
     pageNumber: number;
-    blocks: Array<{ blockId: string; role: string }>;
+    blocks: Array<{
+      blockId: string;
+      role: string;
+      bbox?: [number, number, number, number];
+      classification?: "scalar" | "table" | "chart" | "composite_chart" | "fixed_visual";
+      geometryFingerprint?: string;
+      analysisConfidence?: number;
+      reasonCodes?: string[];
+      styleTemplateRef?: string;
+    }>;
     slots: TemplateSlot[];
     objects: Array<{ objectId: string; type: string }>;
   }>;
@@ -242,6 +252,19 @@ export type WorkbookCandidateRange = {
   }>;
   unitHints?: string[];
   subtotalRows?: number[];
+  styleFingerprint?: string;
+  mergedRanges?: string[];
+  columnDimensions?: Array<{
+    index: number;
+    column: string;
+    widthPx: number;
+  }>;
+  rowDimensions?: Array<{
+    index: number;
+    row: number;
+    heightPx: number;
+  }>;
+  presentationTruncated?: boolean;
 };
 
 export type WorkbookChartCachedValue = {

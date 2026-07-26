@@ -1,0 +1,33 @@
+{
+  "bindingId": "binding_bridge_band_01",
+  "slotId": "slot_figure_2",
+  "kind": "generated_range",
+  "purpose": "report_output",
+  "semanticKey": {
+    "metric": "figure_2_chart",
+    "period": "2021-01/2026-01",
+    "scope": "12MF P/E Band"
+  },
+  "source": {
+    "sheetId": "_REFLO_BRIDGE",
+    "sheet": "_REFLO_BRIDGE",
+    "range": "A1:G25",
+    "authority": "authoritative",
+    "structureFingerprint": "abababababababababababababababababababababababababababababababab",
+    "generatorId": "bridge_generator_v1",
+    "sourceEvidenceIds": [
+      "evidence_price_series_01",
+      "evidence_eps_series_01"
+    ]
+  },
+  "styleTemplateRef": "style_figure_2",
+  "estimateType": "mixed",
+  "detectionConfidence": 1,
+  "reasonCodes": [
+    "GENERATED_FROM_APPROVED_EVIDENCE"
+  ],
+  "status": "confirmed",
+  "review": {
+    "status": "approved"
+  }
+}

@@ -8,6 +8,7 @@ import os
 import re
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -29,6 +30,18 @@ NOTO_CJK_BOLD = os.environ.get(
 MAX_PAGES = 100
 PARSER_NAME = "PyMuPDF"
 PARSER_VERSION = pymupdf.version[0]
+ANALYSIS_PROFILE = json.loads(
+    (Path(__file__).resolve().parent / "analysis_profile.json").read_text(
+        encoding="utf-8"
+    )
+)
+ANALYSIS_PIPELINE_VERSION = str(ANALYSIS_PROFILE["pipelineVersion"])
+CLASSIFICATION_RULE_VERSION = str(ANALYSIS_PROFILE["profileVersion"])
+STYLE_EXTRACTOR_VERSION = str(ANALYSIS_PROFILE["styleExtractorVersion"])
+GEOMETRY_FINGERPRINT_VERSION = str(
+    ANALYSIS_PROFILE["geometryFingerprintVersion"]
+)
+OCR_MINIMUM_CONFIDENCE = float(ANALYSIS_PROFILE["ocrMinimumConfidence"])
 
 SCALAR_METRICS: tuple[tuple[str, tuple[str, ...], str, bool], ...] = (
     ("target_price", ("목표주가", "target price"), "money", True),
@@ -42,8 +55,10 @@ SCALAR_METRICS: tuple[tuple[str, tuple[str, ...], str, bool], ...] = (
 )
 
 TABLE_FALLBACKS = {
-    2: ("quarterly_performance_table", "분기 실적 표"),
-    3: ("financial_statements_table", "재무제표 표"),
+    int(page_number): (str(value["metric"]), str(value["label"]))
+    for page_number, value in ANALYSIS_PROFILE[
+        "legacyPageTableFallbacks"
+    ].items()
 }
 
 DATA_REGION_HEADINGS: tuple[
@@ -86,18 +101,8 @@ DATA_CHART_TITLE_PATTERNS = (
     re.compile(r"\bversus\b", re.IGNORECASE),
     re.compile(r"추이"),
 )
-FIXED_VISUAL_TITLE_TERMS = (
-    "사업개요",
-    "시너지 효과",
-    "시너지효과",
-    "조직도",
-    "프로세스",
-    "개념도",
-    "구조도",
-    "business overview",
-    "synergy",
-    "organization chart",
-    "process diagram",
+FIXED_VISUAL_TITLE_TERMS = tuple(
+    str(value) for value in ANALYSIS_PROFILE["fixedVisualTitleTerms"]
 )
 FINANCIAL_TABLE_HEADINGS: tuple[
     tuple[str, tuple[str, ...], str], ...
@@ -820,6 +825,167 @@ def extract_text_and_styles(
     return objects, span_records, "\n".join(page_text_parts)
 
 
+def extract_ocr_text_and_styles(
+    page: pymupdf.Page,
+    page_id: str,
+    fallback: dict[str, Any],
+    resources: dict[str, Any],
+    stream_ref: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    confidence = float(fallback.get("confidence") or 0)
+    words = fallback.get("words")
+    if not isinstance(words, list) or len(words) > 20_000:
+        raise ValueError("OCR fallback words must be a bounded list")
+    font_ref = opaque("font", "ocr-fallback")
+    if not any(
+        item["resourceId"] == font_ref for item in resources["fonts"]
+    ):
+        resources["fonts"].append(
+            {
+                "resourceId": font_ref,
+                "resourceName": "OCRFallback",
+                "objectRef": pdf_object_ref(page.xref),
+                "baseFont": "OCRFallback",
+                "fullName": "OCR fallback geometry",
+                "subtype": "Type0",
+                "encoding": "Unicode",
+                "toUnicodePresent": True,
+                "embedded": False,
+                "subset": False,
+                "glyphIds": [],
+                "licenseStatus": "substitution_required",
+            }
+        )
+    style_source = {
+        "font": "OCRFallback",
+        "size": 8.0,
+        "flags": 0,
+        "color": 0,
+        "alpha": 255,
+        "ocr": True,
+    }
+    style_hash = digest(
+        json.dumps(style_source, ensure_ascii=False, sort_keys=True)
+    )
+    style_id = opaque("style", style_hash)
+    if not any(
+        item["resourceId"] == style_id for item in resources["styles"]
+    ):
+        resources["styles"].append(
+            {
+                "resourceId": style_id,
+                "propertiesHash": style_hash,
+                "properties": style_source,
+            }
+        )
+    objects: list[dict[str, Any]] = []
+    spans: list[dict[str, Any]] = []
+    text_parts: list[str] = []
+    page_box = bbox(page.rect)
+    for index, item in enumerate(words):
+        if not isinstance(item, dict):
+            raise ValueError("OCR fallback word must be an object")
+        text = str(item.get("text") or "").strip()
+        word_box = bbox(item.get("bbox"))
+        if not text:
+            continue
+        if (
+            word_box[0] < page_box[0]
+            or word_box[1] < page_box[1]
+            or word_box[2] > page_box[2]
+            or word_box[3] > page_box[3]
+            or word_box[2] <= word_box[0]
+            or word_box[3] <= word_box[1]
+        ):
+            raise ValueError("OCR fallback word bbox is outside the page")
+        font_size = max(
+            1.0,
+            min(
+                72.0,
+                float(item.get("fontSize") or word_box[3] - word_box[1]),
+            ),
+        )
+        object_id = opaque(
+            "obj",
+            f"{page_id}:ocr:{index}:{text}:{word_box}:{confidence}",
+        )
+        token_hash = digest(
+            json.dumps(
+                {
+                    "text": text,
+                    "bbox": word_box,
+                    "confidence": confidence,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        metric = infer_metric(text)
+        text_run = {
+            "text": text[:20000],
+            "glyphs": [],
+            "glyphSequenceHash": digest(text),
+            "textMatrix": [1, 0, 0, 1, word_box[0], word_box[3]],
+            "baseline": [
+                [word_box[0], word_box[3]],
+                [word_box[2], word_box[3]],
+            ],
+            "fontRef": font_ref,
+            "fontSize": round(font_size, 4),
+            "writingMode": "horizontal",
+            "characterSpacing": 0,
+            "wordSpacing": 0,
+            "horizontalScaling": 100,
+            "textRise": 0,
+            "renderingMode": 0,
+            "fillColor": rgb_color(0),
+            "opacity": 1,
+            "blendMode": "Normal",
+            "lineHeight": round(word_box[3] - word_box[1], 4),
+            "alignment": "unknown",
+            "actualTextPresent": False,
+        }
+        objects.append(
+            {
+                "objectId": object_id,
+                "type": "text_run",
+                "role": "dynamic_value"
+                if metric and any(character.isdigit() for character in text)
+                else "fixed_design",
+                "bbox": word_box,
+                "zOrder": index,
+                "ctm": [1, 0, 0, 1, 0, 0],
+                "sourceLocator": {
+                    "pageObjectRef": pdf_object_ref(page.xref),
+                    "containerPath": ["page", page.number, "ocr", index],
+                    "streamObjectRef": stream_ref,
+                    "operatorStart": index,
+                    "operatorEnd": index + 1,
+                    "tokenHash": token_hash,
+                    "sharedXObject": False,
+                    "cloneOnWriteRequired": False,
+                },
+                "styleRef": style_id,
+                "clipStack": [],
+                "resourceRefs": [font_ref],
+                "textRun": text_run,
+            }
+        )
+        spans.append(
+            {
+                "objectId": object_id,
+                "styleId": style_id,
+                "bbox": word_box,
+                "text": text,
+                "fontSize": font_size,
+                "metric": metric,
+                "ocrConfidence": confidence,
+            }
+        )
+        text_parts.append(text)
+    return objects, spans, "\n".join(text_parts)
+
+
 def extract_paths(
     page: pymupdf.Page,
     page_id: str,
@@ -862,6 +1028,610 @@ def extract_paths(
             }
         )
     return objects
+
+
+def style_color(value: Any, fallback: str = "#111410") -> str:
+    components: Any = value
+    if isinstance(value, dict):
+        components = value.get("components")
+    if isinstance(components, (list, tuple)) and len(components) >= 3:
+        try:
+            channels = [
+                max(0, min(255, round(float(component) * 255)))
+                for component in components[:3]
+            ]
+            return "#" + "".join(f"{channel:02X}" for channel in channels)
+        except (TypeError, ValueError):
+            return fallback
+    return fallback
+
+
+def objects_in_box(
+    page_objects: list[dict[str, Any]],
+    region_box: list[float],
+    object_type: str | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in page_objects
+        if (object_type is None or item.get("type") == object_type)
+        and boxes_intersect(
+            list(item.get("bbox") or [0, 0, 0, 0]),
+            region_box,
+        )
+    ]
+
+
+def text_style_basis(
+    page_objects: list[dict[str, Any]],
+    region_box: list[float],
+    resources: dict[str, Any],
+) -> dict[str, Any]:
+    text_objects = objects_in_box(page_objects, region_box, "text_run")
+    selected = max(
+        text_objects,
+        key=lambda item: float(
+            (item.get("textRun") or {}).get("fontSize") or 0
+        ),
+        default=None,
+    )
+    font_ref = (
+        str((selected.get("textRun") or {}).get("fontRef"))
+        if selected
+        else next(
+            (
+                str(resource["resourceId"])
+                for resource in resources["fonts"]
+            ),
+            opaque("font", "fallback"),
+        )
+    )
+    font_size = max(
+        1.0,
+        float((selected.get("textRun") or {}).get("fontSize") or 8.0)
+        if selected
+        else 8.0,
+    )
+    color = (
+        style_color((selected.get("textRun") or {}).get("fillColor"))
+        if selected
+        else "#111410"
+    )
+    style_by_id = {
+        str(item["resourceId"]): item for item in resources["styles"]
+    }
+    properties = (
+        style_by_id.get(str(selected.get("styleRef")), {}).get(
+            "properties", {}
+        )
+        if selected
+        else {}
+    )
+    flags = int(properties.get("flags") or 0)
+    weight = 700 if flags & 16 else 400
+    return {
+        "fontRef": font_ref,
+        "fontSizePt": round(font_size, 4),
+        "color": color,
+        "weight": weight,
+        "alignment": "left",
+        "lineHeightPt": max(
+            1.0,
+            round(
+                float((selected.get("textRun") or {}).get("lineHeight") or 0)
+                if selected
+                else font_size * 1.25,
+                4,
+            ),
+        ),
+    }
+
+
+def path_palette(
+    page_objects: list[dict[str, Any]],
+    region_box: list[float],
+) -> list[str]:
+    colors: list[str] = []
+    for item in objects_in_box(page_objects, region_box, "path"):
+        try:
+            path = json.loads(str(item.get("pathData") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        for key in ("color", "fill"):
+            value = path.get(key)
+            if value is None:
+                continue
+            color = style_color(value)
+            if color not in colors:
+                colors.append(color)
+    return colors[:8]
+
+
+def clustered_positions(values: list[float], tolerance: float = 2.0) -> list[float]:
+    positions: list[float] = []
+    for value in sorted(values):
+        if not positions or abs(value - positions[-1]) > tolerance:
+            positions.append(value)
+        else:
+            positions[-1] = round((positions[-1] + value) / 2, 4)
+    return positions
+
+
+def table_dimensions_from_geometry(
+    page_objects: list[dict[str, Any]],
+    region_box: list[float],
+) -> tuple[list[float], list[float]]:
+    path_objects = objects_in_box(page_objects, region_box, "path")
+    vertical = [region_box[0], region_box[2]]
+    horizontal = [region_box[1], region_box[3]]
+    for item in path_objects:
+        item_box = list(item.get("bbox") or [0, 0, 0, 0])
+        if abs(item_box[2] - item_box[0]) <= 2 and (
+            item_box[3] - item_box[1]
+        ) >= 4:
+            vertical.append((item_box[0] + item_box[2]) / 2)
+        if abs(item_box[3] - item_box[1]) <= 2 and (
+            item_box[2] - item_box[0]
+        ) >= 4:
+            horizontal.append((item_box[1] + item_box[3]) / 2)
+    x_positions = clustered_positions(vertical)
+    y_positions = clustered_positions(horizontal)
+    column_widths = [
+        round(right - left, 4)
+        for left, right in zip(x_positions, x_positions[1:])
+        if right - left > 0.5
+    ][:24]
+    row_heights = [
+        round(bottom - top, 4)
+        for top, bottom in zip(y_positions, y_positions[1:])
+        if bottom - top > 0.5
+    ][:100]
+    return (
+        column_widths or [max(1.0, round(region_box[2] - region_box[0], 4))],
+        row_heights or [max(1.0, round(region_box[3] - region_box[1], 4))],
+    )
+
+
+def placement(region_box: list[float], location: str) -> dict[str, Any]:
+    if location == "top":
+        box = [
+            region_box[0],
+            region_box[1],
+            region_box[2],
+            min(region_box[3], region_box[1] + 14),
+        ]
+    else:
+        box = [
+            region_box[0],
+            max(region_box[1], region_box[3] - 14),
+            region_box[2],
+            region_box[3],
+        ]
+    return {"bbox": [round(value, 4) for value in box], "alignment": "left"}
+
+
+def scalar_style_template(
+    block: dict[str, Any],
+    page_objects: list[dict[str, Any]],
+    resources: dict[str, Any],
+) -> dict[str, Any]:
+    region_box = list(block["bbox"])
+    typography = text_style_basis(page_objects, region_box, resources)
+    return {
+        "templateType": "scalar",
+        "fontRef": typography["fontRef"],
+        "fontSizePt": typography["fontSizePt"],
+        "color": typography["color"],
+        "weight": typography["weight"],
+        "alignment": "right",
+        "baseline": "alphabetic",
+        "prefix": "",
+        "suffix": "",
+        "numberFormat": "#,##0.##",
+        "bbox": region_box,
+        "overflowPolicy": "shrink_to_fit",
+    }
+
+
+def table_style_template(
+    block: dict[str, Any],
+    page_objects: list[dict[str, Any]],
+    resources: dict[str, Any],
+) -> dict[str, Any]:
+    region_box = list(block["bbox"])
+    typography = text_style_basis(page_objects, region_box, resources)
+    column_widths, row_heights = table_dimensions_from_geometry(
+        page_objects,
+        region_box,
+    )
+    palette = path_palette(page_objects, region_box)
+    base_typography = {
+        "fontRef": typography["fontRef"],
+        "fontSizePt": typography["fontSizePt"],
+        "color": typography["color"],
+        "weight": typography["weight"],
+        "alignment": "right",
+        "lineHeightPt": typography["lineHeightPt"],
+    }
+    return {
+        "templateType": "table",
+        "columnWidthsPt": column_widths,
+        "rowHeightsPt": row_heights,
+        "headerTypography": {**base_typography, "weight": 700},
+        "bodyTypography": base_typography,
+        "subtotalTypography": {**base_typography, "weight": 700},
+        "borders": [
+            {
+                "side": "inside_horizontal",
+                "widthPt": 0.5,
+                "color": palette[0] if palette else "#D9DED6",
+                "style": "solid",
+            }
+        ],
+        "fills": palette[:4],
+        "alignment": "mixed",
+        "mergedCells": [],
+        "unitPlacement": placement(region_box, "top"),
+        "captionPlacement": placement(region_box, "top"),
+        "sourcePlacement": placement(region_box, "bottom"),
+        "forecastStyle": {
+            "fontStyle": "italic",
+            "fill": "#FFFFFF",
+            "strokeDash": [3, 2],
+        },
+    }
+
+
+def chart_style_template(
+    block: dict[str, Any],
+    page_objects: list[dict[str, Any]],
+    resources: dict[str, Any],
+) -> dict[str, Any]:
+    region_box = list(block["bbox"])
+    typography = text_style_basis(page_objects, region_box, resources)
+    text_objects = objects_in_box(page_objects, region_box, "text_run")
+    title_object = min(
+        text_objects,
+        key=lambda item: (
+            float((item.get("bbox") or region_box)[1]),
+            float((item.get("bbox") or region_box)[0]),
+        ),
+        default=None,
+    )
+    source_object = next(
+        (
+            item
+            for item in text_objects
+            if is_source_caption(
+                str((item.get("textRun") or {}).get("text") or "")
+            )
+        ),
+        None,
+    )
+    title_box = list(title_object.get("bbox")) if title_object else placement(
+        region_box, "top"
+    )["bbox"]
+    caption_box = (
+        list(source_object.get("bbox"))
+        if source_object
+        else placement(region_box, "bottom")["bbox"]
+    )
+    plot_box = [
+        region_box[0],
+        min(region_box[3], max(region_box[1], title_box[3] + 2)),
+        region_box[2],
+        max(region_box[1], min(region_box[3], caption_box[1] - 2)),
+    ]
+    if plot_box[3] <= plot_box[1]:
+        plot_box = region_box
+    legend_candidates = [
+        item
+        for item in text_objects
+        if item is not title_object
+        and item is not source_object
+        and len(str((item.get("textRun") or {}).get("text") or "")) <= 40
+    ]
+    legend_box = union_bbox(
+        [list(item["bbox"]) for item in legend_candidates],
+        placement(region_box, "bottom")["bbox"],
+    )
+    palette = path_palette(page_objects, region_box)
+    if not palette:
+        palette = [typography["color"], "#75A900"]
+    if block["classification"] == "composite_chart" and len(palette) < 2:
+        palette.append("#75A900")
+    series_count = 2 if block["classification"] == "composite_chart" else 1
+    series_styles = [
+        {
+            "role": f"series_{index + 1}",
+            "stroke": palette[index % len(palette)],
+            "fill": palette[index % len(palette)],
+            "dash": [],
+            "marker": "none",
+        }
+        for index in range(series_count)
+    ]
+    font_refs = sorted(
+        {
+            str((item.get("textRun") or {}).get("fontRef"))
+            for item in text_objects
+            if (item.get("textRun") or {}).get("fontRef")
+        }
+    ) or [typography["fontRef"]]
+    axes = [
+        {
+            "role": "category",
+            "position": "bottom",
+            "scale": "linear",
+            "tick": "outside",
+            "numberFormat": "",
+        },
+        {
+            "role": "primary",
+            "position": "left",
+            "scale": "linear",
+            "tick": "outside",
+            "numberFormat": "#,##0.##",
+        },
+    ]
+    if block["classification"] == "composite_chart":
+        axes.append(
+            {
+                "role": "secondary",
+                "position": "right",
+                "scale": "linear",
+                "tick": "outside",
+                "numberFormat": "#,##0.##",
+            }
+        )
+    generation_rule = normalize_text(str(block.get("generationRule") or ""))
+    chart_family = (
+        "combo"
+        if block["classification"] == "composite_chart"
+        else "line_band"
+        if "band" in generation_rule or "밴드" in generation_rule
+        else "line"
+    )
+    return {
+        "templateType": "chart",
+        "chartFamily": chart_family,
+        "plotBbox": [round(value, 4) for value in plot_box],
+        "titleBbox": [round(value, 4) for value in title_box],
+        "captionBbox": [round(value, 4) for value in caption_box],
+        "legendBbox": [round(value, 4) for value in legend_box],
+        "palette": palette,
+        "seriesStyles": series_styles,
+        "barLayout": {
+            "stacking": "none",
+            "gapPercent": 100,
+            "widthPercent": 70,
+        },
+        "axes": axes,
+        "gridLines": {
+            "visible": True,
+            "color": "#E4E8E1",
+            "widthPt": 0.5,
+        },
+        "fonts": font_refs,
+        "legendLayout": "horizontal" if legend_candidates else "hidden",
+        "forecastStyle": {
+            "fontStyle": "normal",
+            "fill": "#FFFFFF",
+            "strokeDash": [3, 2],
+        },
+        "approvedAlternativeTypes": ["line", "bar"],
+    }
+
+
+def append_typed_style(
+    block: dict[str, Any],
+    typed_template: dict[str, Any],
+    resources: dict[str, Any],
+) -> str:
+    canonical = json.dumps(
+        typed_template,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    properties_hash = digest(canonical)
+    style_id = opaque(
+        "style",
+        f"{STYLE_EXTRACTOR_VERSION}:{block['blockId']}:{properties_hash}",
+    )
+    if not any(
+        item["resourceId"] == style_id for item in resources["styles"]
+    ):
+        resources["styles"].append(
+            {
+                "resourceId": style_id,
+                "propertiesHash": properties_hash,
+                "properties": {
+                    "extractorVersion": STYLE_EXTRACTOR_VERSION,
+                    "sourceObjectIds": block["objectIds"],
+                },
+                "typedTemplate": typed_template,
+            }
+        )
+    return style_id
+
+
+def annotate_blocks_and_styles(
+    blocks: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    page_objects: list[dict[str, Any]],
+    resources: dict[str, Any],
+) -> None:
+    slot_by_block = {
+        str(slot["blockId"]): slot for slot in slots
+    }
+    token_by_object = {
+        str(item["objectId"]): str(
+            (item.get("sourceLocator") or {}).get("tokenHash") or ""
+        )
+        for item in page_objects
+    }
+    for block in blocks:
+        role = str(block["role"])
+        generation_rule = normalize_text(
+            str(block.get("generationRule") or "")
+        )
+        if role == "fixed_design":
+            classification = "fixed_visual"
+            confidence = 0.98
+            reason_codes = ["FIXED_VISUAL_TITLE_CLUSTER"]
+        elif role == "scalar_group":
+            classification = "scalar"
+            confidence = 0.93
+            reason_codes = ["SCALAR_LABEL_VALUE_PAIR"]
+        elif role == "table":
+            classification = "table"
+            confidence = (
+                0.97
+                if "계산서" in generation_rule
+                or "대조표" in generation_rule
+                or "투자지표" in generation_rule
+                else 0.9
+            )
+            reason_codes = ["TABLE_PATH_TEXT_CLUSTER"]
+        else:
+            composite = bool(
+                re.search(r"\bvs\.?\b|\bversus\b", generation_rule)
+                or (
+                    "영업이익" in generation_rule
+                    and "시가총액" in generation_rule
+                )
+            )
+            classification = "composite_chart" if composite else "chart"
+            confidence = 0.96
+            reason_codes = [
+                "CHART_PATH_TEXT_CLUSTER",
+                "LEGEND_AXIS_PLOT_CLUSTER",
+                *(
+                    ["COMPOSITE_TITLE_CLUSTER"]
+                    if composite
+                    else []
+                ),
+            ]
+        block["classification"] = classification
+        block["analysisConfidence"] = confidence
+        block["reasonCodes"] = reason_codes
+        fingerprint_source = {
+            "version": GEOMETRY_FINGERPRINT_VERSION,
+            "classification": classification,
+            "bbox": block["bbox"],
+            "objectTokens": sorted(
+                token_by_object.get(str(object_id), "")
+                for object_id in block["objectIds"]
+            ),
+        }
+        block["geometryFingerprint"] = digest(
+            json.dumps(
+                fingerprint_source,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        typed_template: dict[str, Any] | None = None
+        if classification == "scalar":
+            typed_template = scalar_style_template(
+                block, page_objects, resources
+            )
+        elif classification == "table":
+            typed_template = table_style_template(
+                block, page_objects, resources
+            )
+        elif classification in {"chart", "composite_chart"}:
+            typed_template = chart_style_template(
+                block, page_objects, resources
+            )
+        if typed_template is not None:
+            style_ref = append_typed_style(
+                block,
+                typed_template,
+                resources,
+            )
+            block["styleTemplateRef"] = style_ref
+            slot = slot_by_block.get(str(block["blockId"]))
+            if slot is not None:
+                slot["styleRef"] = style_ref
+
+
+def intersection_area(
+    left: list[float],
+    right: list[float],
+) -> float:
+    width = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+    height = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+    return width * height
+
+
+def validate_block_geometry(
+    page_number: int,
+    page_box: list[float],
+    blocks: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for block in blocks:
+        box = list(block["bbox"])
+        if (
+            box[0] < page_box[0] - 0.5
+            or box[1] < page_box[1] - 0.5
+            or box[2] > page_box[2] + 0.5
+            or box[3] > page_box[3] + 0.5
+            or box[2] <= box[0]
+            or box[3] <= box[1]
+        ):
+            issues.append(
+                {
+                    "code": "PDF_BLOCK_OUT_OF_BOUNDS",
+                    "severity": "blocking",
+                    "message": (
+                        f"{page_number}페이지의 분석 블록이 페이지 경계를 "
+                        "벗어났습니다."
+                    ),
+                }
+            )
+    dynamic = [
+        block
+        for block in blocks
+        if block.get("classification") != "fixed_visual"
+        and block.get("slotIds")
+    ]
+    for index, left in enumerate(dynamic):
+        left_box = list(left["bbox"])
+        left_area = max(
+            1.0,
+            (left_box[2] - left_box[0]) * (left_box[3] - left_box[1]),
+        )
+        for right in dynamic[index + 1 :]:
+            right_box = list(right["bbox"])
+            overlap = intersection_area(left_box, right_box)
+            right_area = max(
+                1.0,
+                (right_box[2] - right_box[0])
+                * (right_box[3] - right_box[1]),
+            )
+            if overlap / min(left_area, right_area) < 0.2:
+                continue
+            left["intersections"].append(
+                {"objectId": right["blockId"], "risk": "overlap"}
+            )
+            right["intersections"].append(
+                {"objectId": left["blockId"], "risk": "overlap"}
+            )
+            issues.append(
+                {
+                    "code": "PDF_DYNAMIC_BLOCK_OVERLAP",
+                    "severity": "blocking",
+                    "message": (
+                        f"{page_number}페이지의 동적 블록 경계가 겹쳐 "
+                        "자동 매핑을 중단했습니다."
+                    ),
+                }
+            )
+    return issues
 
 
 def build_blocks_and_slots(
@@ -1244,8 +2014,36 @@ def build_blocks_and_slots(
     return blocks, slots, masks
 
 
-def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
+def inspect_pdf_bytes(
+    payload: bytes,
+    ocr_fallback: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
+    ocr_items = ocr_fallback or []
+    if not isinstance(ocr_items, list) or len(ocr_items) > MAX_PAGES:
+        raise ValueError("ocr_fallback must be a bounded page list")
+    ocr_by_page: dict[int, dict[str, Any]] = {}
+    for item in ocr_items:
+        if not isinstance(item, dict):
+            raise ValueError("ocr_fallback page must be an object")
+        page_number = int(item.get("pageNumber") or 0)
+        if page_number < 1 or page_number > MAX_PAGES:
+            raise ValueError("ocr_fallback pageNumber is invalid")
+        if page_number in ocr_by_page:
+            raise ValueError("ocr_fallback pageNumber must be unique")
+        ocr_by_page[page_number] = item
+    ocr_input_hash = (
+        digest(
+            json.dumps(
+                ocr_items,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        if ocr_fallback is not None
+        else None
+    )
     if len(payload) > MAX_PDF_BYTES:
         return {
             "pageCount": 0,
@@ -1314,6 +2112,7 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
         text_page_count = 0
         document_metrics: set[str] = set()
         document_period: str | None = None
+        pages_without_text_or_ocr: list[int] = []
         for page_index in range(min(page_count, MAX_PAGES)):
             page = doc.load_page(page_index)
             page_number = page_index + 1
@@ -1325,8 +2124,54 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
             text_objects, spans, page_text = extract_text_and_styles(
                 page, page_id, raw_text, resources, font_map, stream_ref
             )
+            ocr_page = ocr_by_page.get(page_number)
+            if not page_text.strip() and ocr_page is not None:
+                confidence = float(ocr_page.get("confidence") or 0)
+                if confidence < OCR_MINIMUM_CONFIDENCE:
+                    issues.append(
+                        {
+                            "code": "PDF_OCR_LOW_CONFIDENCE",
+                            "severity": "blocking",
+                            "message": (
+                                f"{page_number}페이지 OCR 신뢰도 "
+                                f"{confidence:.0%}가 기준 "
+                                f"{OCR_MINIMUM_CONFIDENCE:.0%}보다 낮습니다."
+                            ),
+                        }
+                    )
+                else:
+                    text_objects, spans, page_text = (
+                        extract_ocr_text_and_styles(
+                            page,
+                            page_id,
+                            ocr_page,
+                            resources,
+                            stream_ref,
+                        )
+                    )
+                    issues.append(
+                        {
+                            "code": "PDF_OCR_FALLBACK_USED"
+                            if page_text.strip()
+                            else "PDF_OCR_EMPTY",
+                            "severity": "warning"
+                            if page_text.strip()
+                            else "blocking",
+                            "message": (
+                                f"{page_number}페이지는 제공된 OCR 좌표와 "
+                                "신뢰도로 분석했습니다."
+                                if page_text.strip()
+                                else (
+                                    f"{page_number}페이지 OCR 결과에 분석 "
+                                    "가능한 텍스트가 없습니다."
+                                )
+                            ),
+                        }
+                    )
             if page_text.strip():
                 text_page_count += 1
+            elif ocr_page is None:
+                pages_without_text_or_ocr.append(page_number)
             if document_period is None:
                 period_match = re.search(
                     r"\b([1-4])Q\s*(\d{2})\b", page_text, re.IGNORECASE
@@ -1359,6 +2204,15 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
                 objects,
                 document_metrics,
                 document_period,
+            )
+            annotate_blocks_and_styles(
+                blocks,
+                slots,
+                objects,
+                resources,
+            )
+            issues.extend(
+                validate_block_geometry(page_number, page_box, blocks)
             )
             links = []
             for link in page.get_links():
@@ -1430,7 +2284,7 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
             )
 
         text_layer = page_count > 0 and text_page_count == page_count
-        if not text_layer:
+        if not text_layer and pages_without_text_or_ocr:
             issues.append(
                 {
                     "code": "PDF_TEXT_LAYER_REQUIRED",
@@ -1459,6 +2313,21 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
                 "parser": {"name": PARSER_NAME, "version": PARSER_VERSION},
                 "taggedPdf": b"/MarkInfo" in payload,
                 "linearized": b"/Linearized" in payload[:2048],
+            },
+            "analysisMetadata": {
+                "pipelineVersion": ANALYSIS_PIPELINE_VERSION,
+                "classificationRuleVersion": CLASSIFICATION_RULE_VERSION,
+                "styleExtractorVersion": STYLE_EXTRACTOR_VERSION,
+                "geometryFingerprintVersion": GEOMETRY_FINGERPRINT_VERSION,
+                "ocrMode": "provided"
+                if ocr_fallback is not None
+                else "disabled",
+                "ocrMinimumConfidence": OCR_MINIMUM_CONFIDENCE,
+                **(
+                    {"ocrInputHash": ocr_input_hash}
+                    if ocr_input_hash
+                    else {}
+                ),
             },
             "pages": pages,
             "resources": resources,
@@ -1506,10 +2375,13 @@ def inspect_pdf_bytes(payload: bytes) -> dict[str, Any]:
         doc.close()
 
 
-def inspect_pdf(download_url: str) -> dict[str, Any]:
+def inspect_pdf(
+    download_url: str,
+    ocr_fallback: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     with urllib.request.urlopen(download_url, timeout=120) as response:
         payload = response.read(MAX_PDF_BYTES + 1)
-    return inspect_pdf_bytes(payload)
+    return inspect_pdf_bytes(payload, ocr_fallback=ocr_fallback)
 
 
 def download_pdf(download_url: str) -> bytes:
@@ -1951,7 +2823,10 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 raise ValueError("downloadUrl is required")
             result = (
-                inspect_pdf(download_url)
+                inspect_pdf(
+                    download_url,
+                    ocr_fallback=request.get("ocrFallback"),
+                )
                 if self.path == "/inspect"
                 else render_pdf(
                     download_url,

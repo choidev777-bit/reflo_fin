@@ -722,7 +722,12 @@
         "label",
         "rowCount",
         "columnCount",
-        "structureFingerprint"
+        "structureFingerprint",
+        "styleFingerprint",
+        "mergedRanges",
+        "columnDimensions",
+        "rowDimensions",
+        "presentationTruncated"
       ],
       "properties": {
         "candidateId": {
@@ -756,6 +761,32 @@
         },
         "structureFingerprint": {
           "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "styleFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "mergedRanges": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+          }
+        },
+        "columnDimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RangeColumnDimension"
+          }
+        },
+        "rowDimensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RangeRowDimension"
+          }
+        },
+        "presentationTruncated": {
+          "type": "boolean"
         },
         "kind": {
           "description": "How this tabular range candidate was discovered.",
@@ -809,6 +840,54 @@
             "type": "integer",
             "minimum": 1
           }
+        }
+      }
+    },
+    "RangeColumnDimension": {
+      "title": "RangeColumnDimension",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "column",
+        "widthPx"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{1,3}$"
+        },
+        "widthPx": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "RangeRowDimension": {
+      "title": "RangeRowDimension",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "row",
+        "heightPx"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "heightPx": {
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       }
     },

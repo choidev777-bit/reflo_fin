@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiJson, ClientApiError, googleLoginUrl } from "../_phase1/api";
 import { useSession } from "../_phase1/useSession";
+import {
+  analysisConfidenceCopy,
+  analysisReasonCopy,
+} from "./analysis-copy";
 import type {
   FileRole,
   FilesBootstrap,
@@ -235,6 +239,154 @@ function UploadCard({
 
 type MappingEntry = NonNullable<InspectionProjection["mappingSet"]>["entries"][number];
 
+type MappingCandidate = MappingEntry["candidates"][number];
+
+function shortFingerprint(value: string | null | undefined): string {
+  if (!value) return "미확인";
+  return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
+}
+
+function bboxLabel(value: [number, number, number, number] | null): string {
+  return value ? value.map((item) => item.toFixed(1)).join(", ") : "미확인";
+}
+
+function PdfBlockPreview({ entry }: { entry: MappingEntry }) {
+  const block = entry.pdfBlock;
+  const confidence = analysisConfidenceCopy(block?.analysisConfidence ?? null);
+  const blockStyle = (() => {
+    if (!block?.bbox || !block.pageBox) return undefined;
+    const [pageX1, pageY1, pageX2, pageY2] = block.pageBox;
+    const [blockX1, blockY1, blockX2, blockY2] = block.bbox;
+    const width = Math.max(1, pageX2 - pageX1);
+    const height = Math.max(1, pageY2 - pageY1);
+    return {
+      left: `${Math.max(0, ((blockX1 - pageX1) / width) * 100)}%`,
+      top: `${Math.max(0, ((pageY2 - blockY2) / height) * 100)}%`,
+      width: `${Math.min(100, ((blockX2 - blockX1) / width) * 100)}%`,
+      height: `${Math.min(100, ((blockY2 - blockY1) / height) * 100)}%`,
+    };
+  })();
+
+  return (
+    <section className="phase2-mapping-side phase2-pdf-block">
+      <header>
+        <div>
+          <h4>PDF 블록</h4>
+          <b>{metricLabels[entry.metric] ?? entry.metric}</b>
+        </div>
+        <span data-confidence={confidence.level}>{confidence.label}</span>
+      </header>
+      <div className="phase2-pdf-boundary" aria-label="PDF 페이지 블록 위치">
+        <i style={blockStyle} />
+        <small>{block ? `${block.pageNumber}페이지` : "페이지 미확인"}</small>
+      </div>
+      <dl>
+        <div>
+          <dt>분류</dt>
+          <dd>{block?.classification ?? block?.role ?? entry.kind}</dd>
+        </div>
+        <div>
+          <dt>경계 좌표</dt>
+          <dd>{bboxLabel(block?.bbox ?? null)}</dd>
+        </div>
+        <div>
+          <dt>형상 지문</dt>
+          <dd>{shortFingerprint(block?.geometryFingerprint)}</dd>
+        </div>
+      </dl>
+      {(block?.reasonCodes.length ?? 0) > 0 && (
+        <ul className="phase2-analysis-reasons" aria-label="PDF 감지 근거">
+          {block?.reasonCodes.slice(0, 3).map((code) => (
+            <li key={code}>{analysisReasonCopy(code)}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function CandidatePreview({ candidate }: { candidate: MappingCandidate | undefined }) {
+  if (!candidate) {
+    return (
+      <p className="phase2-candidate-empty">
+        후보를 선택하면 값·구조·서식 정보를 비교할 수 있습니다.
+      </p>
+    );
+  }
+  const { preview } = candidate;
+  const confidence = analysisConfidenceCopy(candidate.score);
+  return (
+    <div className="phase2-candidate-preview">
+      <div className="phase2-candidate-confidence">
+        <span data-confidence={confidence.level}>{confidence.label}</span>
+        <small>
+          구조 지문 {shortFingerprint(preview.structureFingerprint)}
+        </small>
+      </div>
+      {preview.kind === "cell" && (
+        <dl>
+          <div>
+            <dt>표시 값</dt>
+            <dd>{preview.displayValue || "빈 값"}</dd>
+          </div>
+          <div>
+            <dt>숫자 서식</dt>
+            <dd>{preview.numberFormat || "일반"}</dd>
+          </div>
+        </dl>
+      )}
+      {preview.kind === "range" && (
+        <>
+          <dl>
+            <div>
+              <dt>범위 크기</dt>
+              <dd>{preview.rowCount ?? 0}행 × {preview.columnCount ?? 0}열</dd>
+            </div>
+            <div>
+              <dt>병합 셀</dt>
+              <dd>{preview.mergedRanges?.length ?? 0}개</dd>
+            </div>
+          </dl>
+          <p>
+            헤더 미리보기 ·{" "}
+            {preview.headerValues?.slice(0, 5).join(" · ") || "감지되지 않음"}
+          </p>
+        </>
+      )}
+      {preview.kind === "chart" && (
+        <div className="phase2-series-preview">
+          <b>계열 미리보기</b>
+          <ul>
+            {preview.series?.slice(0, 4).map((series, index) => (
+              <li key={`${series.valueRange}-${index}`}>
+                {series.label || `계열 ${index + 1}`} · {series.chartType || "chart"} ·{" "}
+                {series.axis === "secondary" ? "보조축" : "주축"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {preview.kind === "market_data" && (
+        <dl>
+          <div>
+            <dt>공급자</dt>
+            <dd>{preview.provider ?? "KRX"}</dd>
+          </div>
+          <div>
+            <dt>거래일</dt>
+            <dd>{preview.tradingDate ?? "기준일"}</dd>
+          </div>
+        </dl>
+      )}
+      <ul className="phase2-analysis-reasons" aria-label="Excel 후보 근거">
+        {candidate.reasonCodes.slice(0, 3).map((code) => (
+          <li key={code}>{analysisReasonCopy(code)}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function MappingEditor({
   entries,
   versionId,
@@ -263,40 +415,52 @@ function MappingEditor({
           entry.metric === "current_price" && krxCandidate
             ? [krxCandidate]
             : entry.candidates;
+        const selectedCandidate = displayedCandidates.find(
+          (candidate) => candidate.candidateId === selections[entry.entryId],
+        );
         return (
           <label
             key={entry.entryId}
-            className={entry.required && !selections[entry.entryId] ? "needs-selection" : ""}
+            className={`phase2-mapping-comparison${
+              entry.required && !selections[entry.entryId] ? " needs-selection" : ""
+            }`}
           >
-            <span>
-              <b>{metricLabels[entry.metric] ?? entry.metric}</b>
-              <small>
-                {entry.required ? "필수" : "선택"} ·{" "}
-                {krxCandidate ? "KRX 기준일 종가" : entry.kind}
-              </small>
-            </span>
-            <select
-              value={selections[entry.entryId] ?? ""}
-              disabled={Boolean(krxCandidate)}
-              onChange={(event) =>
-                setSelections((current) => ({
-                  ...current,
-                  [entry.entryId]: event.target.value,
-                }))
-              }
-            >
-              <option value="">원본을 선택하세요</option>
-              {displayedCandidates.map((candidate) => (
-                <option key={candidate.candidateId} value={candidate.candidateId}>
-                  {candidate.sourceType === "market_data"
-                    ? candidate.label
-                    : `${candidate.sheetName}!${candidate.address}${
-                        candidate.label ? ` · ${candidate.label}` : ""
-                      }`}
-                  {` · ${Math.round(candidate.score * 100)}%`}
-                </option>
-              ))}
-            </select>
+            <PdfBlockPreview entry={entry} />
+            <section className="phase2-mapping-side phase2-excel-candidate">
+              <header>
+                <div>
+                  <h4>Excel 후보</h4>
+                  <small>
+                    {entry.required ? "필수" : "선택"} ·{" "}
+                    {krxCandidate ? "KRX 기준일 종가" : entry.kind}
+                  </small>
+                </div>
+              </header>
+              <select
+                aria-label={`${metricLabels[entry.metric] ?? entry.metric} Excel 후보`}
+                value={selections[entry.entryId] ?? ""}
+                disabled={Boolean(krxCandidate)}
+                onChange={(event) =>
+                  setSelections((current) => ({
+                    ...current,
+                    [entry.entryId]: event.target.value,
+                  }))
+                }
+              >
+                <option value="">원본을 선택하세요</option>
+                {displayedCandidates.map((candidate) => (
+                  <option key={candidate.candidateId} value={candidate.candidateId}>
+                    {candidate.sourceType === "market_data"
+                      ? candidate.label
+                      : `${candidate.sheetName}!${candidate.address}${
+                          candidate.label ? ` · ${candidate.label}` : ""
+                        }`}
+                    {` · ${Math.round(candidate.score * 100)}%`}
+                  </option>
+                ))}
+              </select>
+              <CandidatePreview candidate={selectedCandidate} />
+            </section>
           </label>
         );
       })}

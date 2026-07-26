@@ -14,6 +14,9 @@ const long MaxWorkbookCells = 2_000_000;
 const int MaxCandidateCells = 50_000;
 const int MaxTableCandidates = 1_000;
 const int MaxChartCachedPoints = 20_000;
+const int MaxRangePresentationColumns = 128;
+const int MaxRangePresentationRows = 512;
+const int MaxRangeStyleCells = 5_000;
 const string EngineName = "ClosedXML";
 const string EngineVersion = "0.105.0";
 
@@ -227,7 +230,10 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                     rangeColumns,
                     ShaText($"{sheetId}:{range}:table:{table.Name}"),
                     "excel_table",
-                    InferTableTopology(worksheet, table.RangeAddress)));
+                    InferTableTopology(worksheet, table.RangeAddress),
+                    AnalyzeCandidateRangePresentation(
+                        worksheet,
+                        worksheet.Range(table.RangeAddress))));
             }
             if (used is not null)
             {
@@ -241,7 +247,10 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                     used.ColumnCount(),
                     ShaText($"{sheetId}:{usedRange}:{string.Join("|", structureParts)}"),
                     "used_range",
-                    InferTableTopology(worksheet, used.RangeAddress)));
+                    InferTableTopology(worksheet, used.RangeAddress),
+                    AnalyzeCandidateRangePresentation(
+                        worksheet,
+                        used)));
                 foreach (var denseRange in FindDenseTableRanges(worksheet, used))
                 {
                     if (candidateRanges.Count >= MaxTableCandidates) break;
@@ -266,7 +275,10 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                             denseRange,
                             zip.SheetsByPosition.Values),
                         "dense_region",
-                        InferTableTopology(worksheet, denseRange.RangeAddress)));
+                        InferTableTopology(worksheet, denseRange.RangeAddress),
+                        AnalyzeCandidateRangePresentation(
+                            worksheet,
+                            denseRange)));
                 }
             }
 
@@ -1474,6 +1486,83 @@ static string CellStyleFingerprint(IXLCell cell)
         style.Border.LeftBorder));
 }
 
+static CandidateRangePresentation AnalyzeCandidateRangePresentation(
+    IXLWorksheet worksheet,
+    IXLRange range)
+{
+    var first = range.RangeAddress.FirstAddress;
+    var last = range.RangeAddress.LastAddress;
+    var columnCount = last.ColumnNumber - first.ColumnNumber + 1;
+    var rowCount = last.RowNumber - first.RowNumber + 1;
+    var columnLimit = Math.Min(columnCount, MaxRangePresentationColumns);
+    var rowLimit = Math.Min(rowCount, MaxRangePresentationRows);
+    var columnDimensions = Enumerable.Range(0, columnLimit)
+        .Select(index =>
+        {
+            var columnNumber = first.ColumnNumber + index;
+            return new RangeColumnDimension(
+                index,
+                ColumnName(columnNumber),
+                Math.Round(
+                    ColumnWidthPixels(worksheet.Column(columnNumber).Width),
+                    4));
+        })
+        .ToArray();
+    var rowDimensions = Enumerable.Range(0, rowLimit)
+        .Select(index =>
+        {
+            var rowNumber = first.RowNumber + index;
+            return new RangeRowDimension(
+                index,
+                rowNumber,
+                Math.Round(
+                    RowHeightPixels(worksheet.Row(rowNumber).Height),
+                    4));
+        })
+        .ToArray();
+    var mergedRanges = worksheet.MergedRanges
+        .Where(merged => RangeAddressesIntersect(
+            range.RangeAddress,
+            merged.RangeAddress))
+        .Select(RelativeAddress)
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(value => value, StringComparer.Ordinal)
+        .ToArray();
+    var styleSamples = range
+        .CellsUsed(XLCellsUsedOptions.All)
+        .Take(MaxRangeStyleCells + 1)
+        .Select(CellStyleFingerprint)
+        .ToArray();
+    var presentationTruncated =
+        columnCount > MaxRangePresentationColumns ||
+        rowCount > MaxRangePresentationRows ||
+        styleSamples.Length > MaxRangeStyleCells;
+    var styleFingerprint = ShaText(string.Join("|",
+        RelativeAddress(range),
+        string.Join(",", styleSamples.Take(MaxRangeStyleCells)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)),
+        string.Join(",", mergedRanges),
+        string.Join(",", columnDimensions.Select(item =>
+            $"{item.Column}:{item.WidthPx.ToString(CultureInfo.InvariantCulture)}")),
+        string.Join(",", rowDimensions.Select(item =>
+            $"{item.Row}:{item.HeightPx.ToString(CultureInfo.InvariantCulture)}"))));
+    return new CandidateRangePresentation(
+        styleFingerprint,
+        mergedRanges,
+        columnDimensions,
+        rowDimensions,
+        presentationTruncated);
+}
+
+static bool RangeAddressesIntersect(
+    IXLRangeAddress left,
+    IXLRangeAddress right) =>
+    left.FirstAddress.ColumnNumber <= right.LastAddress.ColumnNumber &&
+    left.LastAddress.ColumnNumber >= right.FirstAddress.ColumnNumber &&
+    left.FirstAddress.RowNumber <= right.LastAddress.RowNumber &&
+    left.LastAddress.RowNumber >= right.FirstAddress.RowNumber;
+
 static string ValueType(IXLCell cell) => cell.Value.Type switch
 {
     XLDataType.Number => "decimal",
@@ -2604,6 +2693,11 @@ public sealed record CandidateRange(
     int RowCount,
     int ColumnCount,
     string StructureFingerprint,
+    string StyleFingerprint,
+    IReadOnlyList<string> MergedRanges,
+    IReadOnlyList<RangeColumnDimension> ColumnDimensions,
+    IReadOnlyList<RangeRowDimension> RowDimensions,
+    bool PresentationTruncated,
     string Kind,
     IReadOnlyList<int> HeaderRows,
     IReadOnlyList<string> HeaderValues,
@@ -2622,7 +2716,8 @@ public sealed record CandidateRange(
         int columnCount,
         string structureFingerprint,
         string kind,
-        TableTopology topology)
+        TableTopology topology,
+        CandidateRangePresentation presentation)
         : this(
             candidateId,
             sheetId,
@@ -2632,6 +2727,11 @@ public sealed record CandidateRange(
             rowCount,
             columnCount,
             structureFingerprint,
+            presentation.StyleFingerprint,
+            presentation.MergedRanges,
+            presentation.ColumnDimensions,
+            presentation.RowDimensions,
+            presentation.PresentationTruncated,
             kind,
             topology.HeaderRows,
             topology.HeaderValues,
@@ -2642,6 +2742,20 @@ public sealed record CandidateRange(
     {
     }
 }
+public sealed record CandidateRangePresentation(
+    string StyleFingerprint,
+    IReadOnlyList<string> MergedRanges,
+    IReadOnlyList<RangeColumnDimension> ColumnDimensions,
+    IReadOnlyList<RangeRowDimension> RowDimensions,
+    bool PresentationTruncated);
+public sealed record RangeColumnDimension(
+    int Index,
+    string Column,
+    double WidthPx);
+public sealed record RangeRowDimension(
+    int Index,
+    int Row,
+    double HeightPx);
 public sealed record TableTopology(
     IReadOnlyList<int> HeaderRows,
     IReadOnlyList<string> HeaderValues,

@@ -1,6 +1,6 @@
 # Implementation Plan: REFLO 종단간 리서치·Excel·보고서 자동화 완성
 
-**상태:** 승인됨 · Phase 1 완료 · Phase 2 미착수<br>
+**상태:** 승인됨 · Phase 1·2 완료 · Phase 3 미착수<br>
 **작성일:** 2026-07-26  
 **최종 수정일:** 2026-07-26  
 **예상 구현:** 7개 독립 Phase, 집중 개발 28시간 내외  
@@ -8,7 +8,7 @@
 **기준 Fixture:** `fixtures/ISC_095340_4Q25_Valuation_하나증권_12.xlsx`와 대응 ISC PDF  
 
 > 이 문서는 기존의 부분 계획을 종단간 관점에서 통합한 **승인된 완성 실행 계획**이다.<br>
-> 2026-07-26에는 사용자 지시에 따라 Phase 1만 완료했으며 Phase 2 이후 범위는 미착수 상태로 보존한다.
+> 2026-07-26에는 사용자 지시에 따라 Phase 1과 Phase 2를 순서대로 완료했으며 Phase 3 이후 범위는 미착수 상태로 보존한다.
 
 관련 부분 계획:
 
@@ -619,61 +619,98 @@ Windows host에는 .NET runtime만 있고 SDK가 없어 공통 명령의 `dotnet
 
 **목표:** 업로드 직후 모든 변경 대상 block과 이전 분기 스타일을 한 번만 분석하고, 안전한 매핑을 확정한다.  
 **예상:** 4시간  
-**상태:** 대기  
+**실제:** 2시간<br>
+**상태:** 완료<br>
 **의존성:** Phase 1
 
 ### RED — 테스트 먼저
 
-- [ ] `workers/pdf/test_app.py`에 다음 fixture 테스트 추가
+- [x] `workers/pdf/test_app.py`에 다음 fixture 테스트 추가
   - scalar/table/chart/composite/fixed visual 분류
   - 도표 6은 fixed visual
   - 재무표 4개 독립 bbox
   - style template과 geometry fingerprint
   - 겹친 bbox·OCR 저신뢰 차단
-- [ ] `source-react/tests/phase2-mapping.test.ts` 확장
+- [x] `source-react/tests/phase2-mapping.test.ts` 확장
   - scalar definition round-trip
   - composite chart와 secondary axis
   - sheet rename 후 stable ID 유지
   - 모호한 후보 false auto-match 0
-- [ ] Files 화면 Playwright 테스트
+- [x] Files 화면 Playwright 테스트
   - PDF block과 Excel 후보 side-by-side
   - ambiguous 항목 수동 선택
 
 ### GREEN — 최소 구현
 
-- [ ] PDF worker를 detect-once/versioned IR로 전환
-- [ ] GET 시 chart 재탐지·fixture 기반 합성 제거
-- [ ] chart/table/scalar style extractor 구현
-- [ ] PDF path·text·legend·axis·plot clustering 보강
-- [ ] OCR fallback은 confidence와 함께 별도 지원 경로로 구현
-- [ ] Excel worker에 필요한 bound range·style·merged/dimension metadata 추가
-- [ ] MappingSet adapter가 scalar binding을 실제 definition으로 복원하도록 수정
-- [ ] composite chart binding과 axis 보존
-- [ ] `_REFLO_BRIDGE` generated range schema 추가
-- [ ] Files UI에 block 경계·후보 range·구조·series preview 제공
-- [ ] 필수 동적 slot이 전부 confirmed일 때만 Files 완료
+- [x] PDF worker를 detect-once/versioned IR로 전환
+- [x] GET 시 chart 재탐지·fixture 기반 합성 제거
+- [x] chart/table/scalar style extractor 구현
+- [x] PDF path·text·legend·axis·plot clustering 보강
+- [x] OCR fallback은 confidence와 함께 별도 지원 경로로 구현
+- [x] Excel worker에 필요한 bound range·style·merged/dimension metadata 추가
+- [x] MappingSet adapter가 scalar binding을 실제 definition으로 복원하도록 수정
+- [x] composite chart binding과 axis 보존
+- [x] `_REFLO_BRIDGE` generated range schema 추가
+- [x] Files UI에 block 경계·후보 range·구조·series preview 제공
+- [x] 필수 동적 slot이 전부 confirmed일 때만 Files 완료
 
 ### REFACTOR
 
-- [ ] ISC 고정 힌트를 fixture/configuration으로 격리
-- [ ] semantic alias와 scoring rule version 관리
-- [ ] 분석 confidence와 reason code를 사용자 copy로 변환하는 adapter 분리
+- [x] ISC 고정 힌트를 fixture/configuration으로 격리
+- [x] semantic alias와 scoring rule version 관리
+- [x] 분석 confidence와 reason code를 사용자 copy로 변환하는 adapter 분리
 
 ### 품질 게이트
 
-- [ ] required dynamic slot 자동 오연결 0
-- [ ] fixed visual이 required mapping count에 포함되지 않음
-- [ ] PDF block bbox가 page 영역을 벗어나거나 서로 위험하게 겹치지 않음
-- [ ] ISC 본문 차트 2·3·7·8·9·10 개별 검출
-- [ ] 재무표 4개 독립 검출
-- [ ] 도표 6 편집 slot 없음
-- [ ] 공통 검증 명령 통과
+- [x] required dynamic slot 자동 오연결 0
+- [x] fixed visual이 required mapping count에 포함되지 않음
+- [x] PDF block bbox가 page 영역을 벗어나거나 서로 위험하게 겹치지 않음
+- [x] ISC 본문 차트 2·3·7·8·9·10 개별 검출
+- [x] 재무표 4개 독립 검출
+- [x] 도표 6 편집 slot 없음
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
 - 새 Template IR과 MappingSet revision만 생성한다.
 - 기존 IR/MappingSet을 삭제하지 않는다.
 - 프로젝트별로 이전 analysis pipeline version을 다시 선택할 수 있다.
+
+### Phase 2 완료 기록 — 2026-07-26
+
+**RED**
+
+- PDF fixture 확장 직후 style/classification metadata, 위험 bbox 겹침 차단, OCR fallback 경계가 없어 4 failed, 5 passed를 재현했다.
+- MappingSet 테스트 확장 직후 scalar definition 보존, composite binding, rule version이 없어 3 failed, 10 passed를 재현했다.
+- 실제 ISC 업로드 Playwright는 좌우 비교의 `PDF 블록` heading이 없어 먼저 실패했다.
+
+**GREEN**
+
+- PDF 분석 결과에 pipeline/classification/style/geometry version과 입력 hash를 고정하고, scalar/table/chart/composite/fixed visual 분류·typed style·형상 지문·bbox 검증을 한 번의 분석에서 생성해 불변 Template IR로 저장했다.
+- OCR은 명시적 fallback 입력에서만 실행하고 저신뢰 결과를 blocking issue로 처리했다.
+- Excel candidate range에 style fingerprint, merged range, column width, row height와 truncation 상태를 추가했다.
+- scalar/table/chart 후보의 전체 binding definition을 revision에 보존하고, mixed chart type과 secondary axis는 `composite_chart`로 복원했다.
+- `_REFLO_BRIDGE` generated range는 승인 Evidence ID가 하나 이상 있을 때만 유효하도록 양·음 계약 fixture로 고정했다.
+- Files GET은 저장된 Template IR·Workbook Analysis를 compact preview로 투영할 뿐 재탐지하지 않으며, UI는 PDF 경계와 Excel 값·범위·구조·계열을 좌우 비교한다.
+
+**REFACTOR**
+
+- ISC exact-address 힌트를 versioned compatibility profile로, semantic alias와 threshold를 versioned mapping rule module로 분리했다.
+- PDF 분석 profile을 worker configuration으로 격리하고 confidence/reason code의 한국어 표시는 별도 copy adapter로 분리했다.
+- 후보가 동률이거나 재현 가능한 category·series가 없으면 점수와 무관하게 자동 선택하지 않도록 공통 선택 규칙을 적용했다.
+
+| 검증 | 완료 결과 |
+|---|---|
+| Contract | 16 schemas, 29 valid·invalid fixtures, 21 result types, TS/Python/C# codegen drift 0 |
+| PDF worker | 9/9 pass; 실제 ISC 차트 2·3·7·8·9·10, 재무표 4개, fixed 도표 6 검출 |
+| Mapping unit | 13/13 pass; scalar round-trip, composite/secondary axis, stable sheet ID, ambiguous auto-match 0 |
+| Excel worker | 공식 .NET 9 SDK Docker build 0 warnings/errors; 실제 range style/merged/dimension 저장 확인 |
+| Source tests | 90 total, 78 pass, 9 DB-env skip, 3 intentional future-phase TODO, 0 fail |
+| Next | lint 0 errors(기존 warning 22), typecheck·production build 통과 |
+| Browser | Playwright 10/10; 실제 ISC 업로드·좌우 비교·수동 보정·필수 매핑 차단 통과 |
+| Diff | `git diff --check` 통과 |
+
+기준 ISC Workbook의 도표 2·3 시트는 원본 설명 자체가 기간별 수정주가 시계열을 옮기지 않았다고 명시한다. 따라서 배수 표를 밴드 차트로 오연결하지 않고 2개 필수 매핑을 차단한다. 이는 분석 누락이 아니라 source-data blocker이며, 이후 승인 Evidence로 정상 `_REFLO_BRIDGE` range가 생성되기 전에는 Files 완료를 허용하지 않는다.
 
 ---
 
@@ -1219,13 +1256,13 @@ ISC 6페이지 fixture 기준:
 | Phase | 상태 | 예상 | 실제 |
 |---|---|---:|---:|
 | Phase 1 계약·버전 계보 | 완료 | 4h | 1h 30m |
-| Phase 2 분석·매핑·스타일 | 대기 | 4h | - |
+| Phase 2 분석·매핑·스타일 | 완료 | 4h | 2h |
 | Phase 3 Evidence→Workbook | 대기 | 4h | - |
 | Phase 4 typed materialization | 대기 | 4h | - |
 | Phase 5 공용 renderer·UI | 대기 | 4h | - |
 | Phase 6 PDF·검증·export | 대기 | 4h | - |
 | Phase 7 migration·E2E·출시 | 대기 | 4h | - |
-| **합계** | **1/7** | **28h** | **1h 30m** |
+| **합계** | **2/7** | **28h** | **3h 30m** |
 
 PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 개발 시간에 포함하지 않는다.
 
@@ -1261,6 +1298,14 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - generated contract는 생성만 하지 않고 실제 서버 parser와 Python/C# 경계에서 소비해야 drift 검사가 의미가 있다.
 - 기준 ISC Workbook의 `figure_2_chart`, `figure_3_chart`는 현재 후보가 없으며 Phase 2가 해결하기 전에는 진행을 허용하지 않는 것이 올바른 기준선이다.
 - 중단된 Next dev 산출물을 재사용하면 route/type 생성물이 손상될 수 있어 E2E dist를 사용자 dev 서버와 분리하고 실행 전에 정리해야 한다.
+
+### Phase 2 학습
+
+- PDF 제목만 찾는 방식으로는 안전하지 않으며 path·text·legend·axis·plot을 함께 묶고 bbox 경계를 검증해야 editable block으로 승격할 수 있다.
+- chart candidate를 revision에서 source range만 보존하면 axis·series role·chart type이 사라지므로 전체 binding definition을 함께 저장해야 한다.
+- Workbook에 밴드 배수만 있고 기간별 주가·기초지표 series가 없으면 높은 문맥 점수도 재현 가능한 차트 원천이 아니다.
+- 저장 IR에서 만든 compact preview만 GET에 노출하면 detect-once 원칙을 지키면서도 사용자가 형상 지문과 후보 topology를 검토할 수 있다.
+- `_REFLO_BRIDGE`는 빈 placeholder나 추정값을 허용하지 않고 승인 Evidence provenance가 있을 때만 authoritative generated range가 된다.
 
 ---
 
@@ -1298,10 +1343,10 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 ## 18. 다음 행동
 
-1. Phase 1 완료 결과와 알려진 Phase 2 blocker 2건을 검토한다.
-2. 사용자 지시가 있을 때만 Phase 2의 RED부터 시작한다.
+1. Phase 2 완료 결과와 ISC source-data blocker 2건을 검토한다.
+2. 사용자 지시가 있을 때만 Phase 3의 RED부터 시작한다.
 3. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
 
-**Plan Status:** 승인됨 · Phase 1 완료 · Phase 2 미착수<br>
-**Next Action:** 사용자 지시 후 Phase 2 RED 시작<br>
+**Plan Status:** 승인됨 · Phase 1·2 완료 · Phase 3 미착수<br>
+**Next Action:** 사용자 지시 후 Phase 3 RED 시작<br>
 **Blocked By:** 없음

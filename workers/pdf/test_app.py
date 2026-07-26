@@ -1,4 +1,5 @@
 import base64
+import re
 import unittest
 from pathlib import Path
 
@@ -60,12 +61,58 @@ def broker_layout_pdf(side: str = "left") -> bytes:
     return result
 
 
+def overlapping_chart_pdf() -> bytes:
+    document = pymupdf.open()
+    page = document.new_page(width=595.32, height=841.92)
+    page.insert_text(
+        (48, 100),
+        "Figure 21. Revenue trend",
+        fontname="helv",
+        fontsize=8,
+    )
+    page.insert_text(
+        (48, 122),
+        "Figure 22. Margin trend",
+        fontname="helv",
+        fontsize=8,
+    )
+    page.insert_text(
+        (48, 170),
+        "Source: REFLO test fixture",
+        fontname="helv",
+        fontsize=6,
+    )
+    result = document.tobytes()
+    document.close()
+    return result
+
+
+def image_only_pdf() -> bytes:
+    document = pymupdf.open()
+    page = document.new_page(width=300, height=400)
+    page.draw_rect(
+        pymupdf.Rect(30, 30, 270, 370),
+        color=(0.2, 0.2, 0.2),
+        fill=(0.95, 0.95, 0.95),
+    )
+    result = document.tobytes()
+    document.close()
+    return result
+
+
 class PdfWorkerRenderTest(unittest.TestCase):
     def test_inspection_still_builds_template_ir(self) -> None:
-        result = inspect_pdf_bytes(fixture_pdf())
+        payload = fixture_pdf()
+        result = inspect_pdf_bytes(payload)
         self.assertTrue(result["compatible"])
         self.assertEqual(1, result["pageCount"])
         self.assertEqual(1, len(result["templateIr"]["pages"]))
+        self.assertEqual(
+            "pdf-analysis/2.0",
+            result["templateIr"]["analysisMetadata"]["pipelineVersion"],
+        )
+        repeated = inspect_pdf_bytes(payload)
+        self.assertEqual(result["templateIr"], repeated["templateIr"])
 
     def test_render_replaces_only_the_target_region(self) -> None:
         result = render_pdf_bytes(
@@ -207,8 +254,13 @@ class PdfWorkerRenderTest(unittest.TestCase):
             self.skipTest("ISC PDF fixture is not available in this test package.")
 
         result = inspect_pdf_bytes(fixture.read_bytes())
+        self.assertTrue(result["compatible"], result["issues"])
         pages = {
             page["pageNumber"]: page for page in result["templateIr"]["pages"]
+        }
+        styles = {
+            style["resourceId"]: style
+            for style in result["templateIr"]["resources"]["styles"]
         }
         chart_slots = {
             slot["semanticKey"]["metric"]: slot
@@ -228,6 +280,16 @@ class PdfWorkerRenderTest(unittest.TestCase):
         for metric, scope in expected_chart_scopes.items():
             self.assertTrue(chart_slots[metric]["required"])
             self.assertEqual(scope, chart_slots[metric]["semanticKey"]["scope"])
+            style = styles[chart_slots[metric]["styleRef"]]["typedTemplate"]
+            self.assertEqual("chart", style["templateType"])
+
+        figure_seven = next(
+            block
+            for page in pages.values()
+            for block in page["blocks"]
+            if str(block.get("generationRule") or "").startswith("도표 7.")
+        )
+        self.assertEqual("composite_chart", figure_seven["classification"])
 
         page_four = pages[4]
         fixed_visuals = [
@@ -238,6 +300,7 @@ class PdfWorkerRenderTest(unittest.TestCase):
         ]
         self.assertEqual(1, len(fixed_visuals))
         self.assertEqual([], fixed_visuals[0]["slotIds"])
+        self.assertEqual("fixed_visual", fixed_visuals[0]["classification"])
         self.assertNotIn("figure_6_chart", chart_slots)
 
         expected_table_metrics = {
@@ -273,6 +336,82 @@ class PdfWorkerRenderTest(unittest.TestCase):
         ]
         self.assertEqual(4, len(page_five_blocks))
         self.assertEqual(4, len({tuple(block["bbox"]) for block in page_five_blocks}))
+        self.assertTrue(
+            all(block["classification"] == "table" for block in page_five_blocks)
+        )
+
+        dynamic_blocks = [
+            block
+            for page in pages.values()
+            for block in page["blocks"]
+            if block["role"] in {"scalar_group", "table", "chart"}
+        ]
+        self.assertGreater(len(dynamic_blocks), 0)
+        for block in dynamic_blocks:
+            self.assertRegex(block["geometryFingerprint"], r"^[0-9a-f]{64}$")
+            self.assertGreaterEqual(block["analysisConfidence"], 0.85)
+            self.assertTrue(block["reasonCodes"])
+            typed_style = styles[block["styleTemplateRef"]]["typedTemplate"]
+            expected_type = (
+                "scalar" if block["role"] == "scalar_group" else block["role"]
+            )
+            self.assertEqual(expected_type, typed_style["templateType"])
+
+        for page in pages.values():
+            crop_box = page["boxes"]["cropBox"]
+            for block in page["blocks"]:
+                block_box = block["bbox"]
+                self.assertGreaterEqual(block_box[0], crop_box[0])
+                self.assertGreaterEqual(block_box[1], crop_box[1])
+                self.assertLessEqual(block_box[2], crop_box[2])
+                self.assertLessEqual(block_box[3], crop_box[3])
+                self.assertFalse(
+                    any(
+                        intersection["risk"] == "overlap"
+                        for intersection in block["intersections"]
+                    ),
+                    block,
+                )
+
+    def test_blocks_dangerously_overlapping_dynamic_regions(self) -> None:
+        result = inspect_pdf_bytes(overlapping_chart_pdf())
+        self.assertFalse(result["compatible"])
+        self.assertIn(
+            "PDF_DYNAMIC_BLOCK_OVERLAP",
+            [issue["code"] for issue in result["issues"]],
+        )
+
+    def test_ocr_fallback_is_separate_and_blocks_low_confidence(self) -> None:
+        result = inspect_pdf_bytes(
+            image_only_pdf(),
+            ocr_fallback=[
+                {
+                    "pageNumber": 1,
+                    "confidence": 0.72,
+                    "words": [
+                        {
+                            "text": "Target Price 120,000",
+                            "bbox": [40, 50, 180, 70],
+                        }
+                    ],
+                }
+            ],
+        )
+        self.assertFalse(result["compatible"])
+        self.assertIn(
+            "PDF_OCR_LOW_CONFIDENCE",
+            [issue["code"] for issue in result["issues"]],
+        )
+        self.assertNotIn(
+            "PDF_TEXT_LAYER_REQUIRED",
+            [issue["code"] for issue in result["issues"]],
+        )
+        self.assertTrue(
+            re.fullmatch(
+                r"[0-9a-f]{64}",
+                result["templateIr"]["analysisMetadata"]["ocrInputHash"],
+            )
+        )
 
 
 if __name__ == "__main__":

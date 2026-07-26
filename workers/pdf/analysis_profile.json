@@ -1,0 +1,30 @@
+{
+  "profileVersion": "pdf-classification/2.0",
+  "pipelineVersion": "pdf-analysis/2.0",
+  "styleExtractorVersion": "pdf-style/2.0",
+  "geometryFingerprintVersion": "pdf-geometry/1.0",
+  "ocrMinimumConfidence": 0.85,
+  "legacyPageTableFallbacks": {
+    "2": {
+      "metric": "quarterly_performance_table",
+      "label": "분기 실적 표"
+    },
+    "3": {
+      "metric": "financial_statements_table",
+      "label": "재무제표 표"
+    }
+  },
+  "fixedVisualTitleTerms": [
+    "사업개요",
+    "시너지 효과",
+    "시너지효과",
+    "조직도",
+    "프로세스",
+    "개념도",
+    "구조도",
+    "business overview",
+    "synergy",
+    "organization chart",
+    "process diagram"
+  ]
+}

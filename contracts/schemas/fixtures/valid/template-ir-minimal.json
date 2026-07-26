@@ -12,6 +12,14 @@
     "taggedPdf": false,
     "linearized": false
   },
+  "analysisMetadata": {
+    "pipelineVersion": "pdf-analysis/2.0",
+    "classificationRuleVersion": "pdf-classification/2.0",
+    "styleExtractorVersion": "pdf-style/2.0",
+    "geometryFingerprintVersion": "pdf-geometry/1.0",
+    "ocrMode": "disabled",
+    "ocrMinimumConfidence": 0.85
+  },
   "pages": [
     {
       "pageId": "page_01",

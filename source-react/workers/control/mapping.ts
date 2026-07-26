@@ -9,6 +9,12 @@ import type {
   WorkbookChartDataReference,
 } from "./types";
 import type { MarketPriceSnapshot } from "../../server/infrastructure/market-data/krx";
+import {
+  IGNORED_RANGE_CONTEXT,
+  LEGACY_ISC_WORKBOOK_PROFILE,
+  MAPPING_RULES,
+  METRIC_ALIASES,
+} from "./mapping-rules";
 
 export type MappingSource = {
   sheetId: string;
@@ -53,6 +59,7 @@ export type MappingCandidate = {
   kind: "cell" | "range" | "chart" | "market_data";
   source: MappingSource;
   chartDefinition?: MappingChartDefinition;
+  bindingDefinition?: MappingBinding;
   label: string;
   score: number;
   reasonCodes: string[];
@@ -67,6 +74,7 @@ type ScalarMappingBinding = {
   source: MappingSource;
   verificationSources?: MappingSource[];
   display?: Record<string, unknown>;
+  styleTemplateRef?: string;
   status: "suggested" | "confirmed" | "invalid";
   purpose: "workbook_input" | "report_output";
   semanticKey: TemplateSlot["semanticKey"];
@@ -91,6 +99,7 @@ type TableMappingBinding = {
   subtotalRows?: number[];
   unitRows?: number[];
   display?: Record<string, unknown>;
+  styleTemplateRef?: string;
   status: "suggested" | "confirmed" | "invalid";
   purpose: "workbook_input" | "report_output";
   semanticKey: TemplateSlot["semanticKey"];
@@ -109,10 +118,29 @@ type ChartMappingBinding = {
   kind: "chart";
   categories: MappingSource;
   series: MappingChartSeries[];
+  styleTemplateRef?: string;
   status: "suggested" | "confirmed" | "invalid";
   purpose: "workbook_input" | "report_output";
   semanticKey: TemplateSlot["semanticKey"];
   estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
+  detectionConfidence: number;
+  reasonCodes: string[];
+  review: {
+    status: "unreviewed" | "approved" | "rejected" | "needs_review";
+    reasonCodes: string[];
+  };
+};
+
+type CompositeChartMappingBinding = {
+  bindingId: string;
+  slotId: string;
+  kind: "composite_chart";
+  categories: MappingSource;
+  series: MappingChartSeries[];
+  styleTemplateRef: string;
+  status: "suggested" | "confirmed" | "invalid";
+  purpose: "workbook_input" | "report_output";
+  semanticKey: TemplateSlot["semanticKey"];
   detectionConfidence: number;
   reasonCodes: string[];
   review: {
@@ -140,6 +168,7 @@ export type MappingBinding =
   | ScalarMappingBinding
   | TableMappingBinding
   | ChartMappingBinding
+  | CompositeChartMappingBinding
   | MarketDataMappingBinding;
 
 export type MappingSet = {
@@ -151,6 +180,9 @@ export type MappingSet = {
   workbookVersionId: string;
   workbookFileHash: string;
   workbookStructureHash: string;
+  analysisPipelineVersion: string;
+  semanticAliasVersion: string;
+  scoringRuleVersion: string;
   status: "suggested" | "confirmed" | "revalidation_required" | "invalid";
   bindings: MappingBinding[];
   candidates: MappingCandidate[];
@@ -166,80 +198,6 @@ export type MappingSummary = {
   confirmedBindingCount: number;
   unmappedRequiredCount: number;
 };
-
-const metricAliases: Record<string, string[]> = {
-  target_price: ["목표주가", "target price", "적정주가"],
-  current_price: ["현재주가", "current price", "종가"],
-  revenue: ["매출액", "매출", "revenue", "sales"],
-  operating_profit: ["영업이익", "operating profit", "op"],
-  net_income: ["지배주주순이익", "순이익", "net income"],
-  eps: ["forward eps", "fwd eps", "eps"],
-  per: ["target per", "적용 per", "per"],
-  investment_opinion: ["투자의견", "investment opinion", "rating"],
-  quarterly_performance_table: ["분기실적", "quarterly performance", "분기"],
-  segment_revenue_table: ["부문매출", "부문별", "segment revenue", "segment"],
-  target_price_history_table: ["목표주가추이", "target price history", "목표주가"],
-  valuation_bridge_table: ["valuation bridge", "밸류에이션", "valuation"],
-  income_statement_table: ["손익계산서", "income statement", "profit and loss"],
-  financial_income_statement_table: [
-    "손익계산서",
-    "income statement",
-    "profit and loss",
-  ],
-  balance_sheet_table: ["대차대조표", "재무상태표", "balance sheet"],
-  financial_balance_sheet_table: [
-    "대차대조표",
-    "재무상태표",
-    "balance sheet",
-  ],
-  investment_indicators_table: [
-    "투자지표",
-    "investment indicators",
-    "valuation metrics",
-  ],
-  financial_investment_indicators_table: [
-    "투자지표",
-    "investment indicators",
-    "valuation metrics",
-  ],
-  cash_flow_statement_table: ["현금흐름표", "cash flow statement", "cash flow"],
-  financial_cash_flow_table: ["현금흐름표", "cash flow statement", "cash flow"],
-  stock_price: ["주가추이", "stock price", "price trend"],
-};
-
-const fixedCellHints: Record<string, Array<[string, string]>> = {
-  target_price: [["09_Target_PER", "B15"]],
-  current_price: [["09_Target_PER", "B16"]],
-  eps: [
-    ["09_Target_PER", "B7"],
-    ["08_Forward_EPS", "D36"],
-  ],
-  per: [["09_Target_PER", "B14"]],
-};
-
-const fixedRangeHints: Record<string, Array<[string, string]>> = {
-  quarterly_performance_table: [["01_실적추이", "A5:L25"]],
-  segment_revenue_table: [["01_실적추이", "A5:L13"]],
-  target_price_history_table: [["03_목표주가", "A5:F20"]],
-  valuation_bridge_table: [["09_Target_PER", "A5:I26"]],
-  income_statement_table: [["15_p5_손익계산서", "A4:G35"]],
-  financial_income_statement_table: [["15_p5_손익계산서", "A4:G35"]],
-  balance_sheet_table: [["16_p5_대차대조표", "A4:G37"]],
-  financial_balance_sheet_table: [["16_p5_대차대조표", "A4:G37"]],
-  investment_indicators_table: [["17_p5_투자지표", "A4:G25"]],
-  financial_investment_indicators_table: [["17_p5_투자지표", "A4:G25"]],
-  cash_flow_statement_table: [["18_p5_현금흐름표", "A4:G25"]],
-  financial_cash_flow_table: [["18_p5_현금흐름표", "A4:G25"]],
-};
-
-const ignoredRangeContext = [
-  "정합성체크",
-  "출처",
-  "감사",
-  "audit",
-  "source",
-  "reference",
-];
 
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -338,7 +296,7 @@ function containsRange(outer: string, inner: string): boolean {
 }
 
 function aliases(metric: string): string[] {
-  const values = metricAliases[metric] ?? [metric];
+  const values = METRIC_ALIASES[metric] ?? [metric];
   return [...new Set([metric, ...values].map(normalize).filter(Boolean))];
 }
 
@@ -388,7 +346,9 @@ function meaningfulTokens(value: string): string[] {
 
 function ignoredContext(value: string): boolean {
   const normalized = normalize(value);
-  return ignoredRangeContext.some((token) => normalized.includes(normalize(token)));
+  return IGNORED_RANGE_CONTEXT.some((token) =>
+    normalized.includes(normalize(token)),
+  );
 }
 
 function cellSource(cell: WorkbookCandidateCell): MappingSource {
@@ -484,7 +444,8 @@ function fixedCellCandidates(
   slot: TemplateSlot,
   workbook: WorkbookAnalysis,
 ): MappingCandidate[] {
-  const hints = fixedCellHints[slot.semanticKey.metric] ?? [];
+  const hints =
+    LEGACY_ISC_WORKBOOK_PROFILE.cellHints[slot.semanticKey.metric] ?? [];
   return hints.flatMap(([sheetName, address]) => {
     const cell = workbook.candidateCells.find(
       (candidate) =>
@@ -519,7 +480,7 @@ function scalarCandidates(
   );
   const ranked = workbook.candidateCells
     .map((cell) => ({ cell, ...candidateScore(slot, cell) }))
-    .filter(({ score }) => score >= 0.36)
+    .filter(({ score }) => score >= MAPPING_RULES.scalar.candidateMinimum)
     .sort(
       (left, right) =>
         right.score - left.score ||
@@ -549,10 +510,12 @@ function scalarCandidates(
   const unambiguous =
     top &&
     (top.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
-      (top.score >= 0.8 &&
+      (top.score >= MAPPING_RULES.scalar.modelPeriodMinimum &&
         top.reasonCodes.includes("MODEL_SHEET") &&
         top.reasonCodes.includes("PERIOD_MATCH")) ||
-      (top.score >= 0.92 && (!next || top.score - next.score >= 0.12)));
+      (top.score >= MAPPING_RULES.scalar.automaticMinimum &&
+        (!next ||
+          top.score - next.score >= MAPPING_RULES.scalar.automaticMargin)));
   return candidates.map((candidate, index) => ({
     ...candidate,
     selected: Boolean(unambiguous && index === 0),
@@ -675,7 +638,9 @@ function tableCandidates(
   slot: TemplateSlot,
   workbook: WorkbookAnalysis,
 ): MappingCandidate[] {
-  const fixed = (fixedRangeHints[slot.semanticKey.metric] ?? [])
+  const fixed = (
+    LEGACY_ISC_WORKBOOK_PROFILE.rangeHints[slot.semanticKey.metric] ?? []
+  )
     .map(([sheet, range]) => synthesizeRange(workbook, sheet, range))
     .filter((value): value is WorkbookCandidateRange => Boolean(value))
     .map((range) => ({
@@ -695,7 +660,7 @@ function tableCandidates(
   );
   const ranked = workbook.candidateRanges
     .map((range) => ({ range, ...rangeMatch(slot, range) }))
-    .filter(({ score }) => score >= 0.36)
+    .filter(({ score }) => score >= MAPPING_RULES.table.candidateMinimum)
     .filter(
       ({ range }) =>
         !fixedIds.has(
@@ -728,7 +693,9 @@ function tableCandidates(
   const unambiguous =
     top &&
     (top.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
-      (top.score >= 0.88 && (!next || top.score - next.score >= 0.1)));
+      (top.score >= MAPPING_RULES.table.automaticMinimum &&
+        (!next ||
+          top.score - next.score >= MAPPING_RULES.table.automaticMargin)));
   return candidates.map((candidate, index) => ({
     ...candidate,
     selected: Boolean(unambiguous && index === 0),
@@ -886,8 +853,8 @@ function selectChartCandidate(
   const next = ordered[1];
   const unambiguous =
     top &&
-    top.score >= 0.62 &&
-    (!next || top.score - next.score >= 0.08);
+    top.score >= MAPPING_RULES.chart.automaticMinimum &&
+    (!next || top.score - next.score >= MAPPING_RULES.chart.automaticMargin);
   return ordered.map((candidate, index) => ({
     ...candidate,
     selected: Boolean(unambiguous && index === 0),
@@ -905,7 +872,7 @@ function explicitChartCandidates(
       " ",
     )} ${chart.series.map((series) => series.name).join(" ")}`;
     const scored = chartContextScore(slot, context, true);
-    if (scored.score < 0.42) return [];
+    if (scored.score < MAPPING_RULES.chart.candidateMinimum) return [];
     return [
       {
         candidateId: opaque("mapcand", `${slot.slotId}:${chart.chartId}`),
@@ -1178,7 +1145,7 @@ function denseChartCandidates(
       " ",
     )}`;
     const scored = chartContextScore(slot, context, false);
-    if (scored.score < 0.42) return [];
+    if (scored.score < MAPPING_RULES.chart.candidateMinimum) return [];
     return [
       {
         candidateId: opaque("mapcand", `${slot.slotId}:${range.candidateId}`),
@@ -1238,12 +1205,42 @@ function bindingFor(
     ) {
       throw new Error(`Chart candidate ${candidate.candidateId} has no definition.`);
     }
+    const series = candidate.chartDefinition.series.map((item) => ({
+      ...item,
+    }));
+    const composite =
+      Boolean(slot.styleRef) &&
+      series.length >= 2 &&
+      (series.some((item) => item.axis === "secondary") ||
+        new Set(series.map((item) => item.chartType)).size > 1);
+    if (composite) {
+      return {
+        bindingId: opaque("binding", `${slot.slotId}:${candidate.candidateId}`),
+        slotId: slot.slotId,
+        kind: "composite_chart",
+        categories: candidate.chartDefinition.categories,
+        series,
+        styleTemplateRef: slot.styleRef!,
+        status: "confirmed",
+        purpose: "report_output",
+        semanticKey: slot.semanticKey,
+        detectionConfidence: candidate.score,
+        reasonCodes: [
+          ...new Set([...candidate.reasonCodes, "COMPOSITE_AXIS_MATCH"]),
+        ],
+        review: {
+          status: "unreviewed",
+          reasonCodes: candidate.reasonCodes,
+        },
+      };
+    }
     return {
       bindingId: opaque("binding", `${slot.slotId}:${candidate.candidateId}`),
       slotId: slot.slotId,
       kind: "chart",
       categories: candidate.chartDefinition.categories,
-      series: candidate.chartDefinition.series.map((series) => ({ ...series })),
+      series,
+      ...(slot.styleRef ? { styleTemplateRef: slot.styleRef } : {}),
       status: "confirmed",
       purpose: "report_output",
       semanticKey: slot.semanticKey,
@@ -1279,6 +1276,7 @@ function bindingFor(
       subtotalRows: topology?.subtotalRows ?? [],
       unitRows: [],
       display: {},
+      ...(slot.styleRef ? { styleTemplateRef: slot.styleRef } : {}),
       status: "confirmed",
       purpose: "report_output",
       semanticKey: slot.semanticKey,
@@ -1299,6 +1297,7 @@ function bindingFor(
     source: candidate.source,
     verificationSources: [],
     display: {},
+    ...(slot.styleRef ? { styleTemplateRef: slot.styleRef } : {}),
     status: "confirmed",
     purpose: "report_output",
     semanticKey: slot.semanticKey,
@@ -1318,7 +1317,7 @@ export function buildMappingSet(
   marketPrice?: MarketPriceSnapshot,
 ): { mappingSet: MappingSet; summary: MappingSummary } {
   const slots = template.pages.flatMap((page) => page.slots);
-  const candidates = slots.flatMap((slot) => {
+  const candidateSeeds = slots.flatMap((slot) => {
     if (slot.valueType === "table") return tableCandidates(slot, workbook);
     if (slot.valueType === "chart") return chartCandidates(slot, workbook);
     const workbookCandidates = scalarCandidates(slot, workbook);
@@ -1339,12 +1338,23 @@ export function buildMappingSet(
         ]
       : workbookCandidates;
   });
+  const slotById = new Map(slots.map((slot) => [slot.slotId, slot]));
+  const candidates = candidateSeeds.map((candidate) => {
+    const slot = slotById.get(candidate.slotId);
+    if (!slot) return candidate;
+    return {
+      ...candidate,
+      bindingDefinition: bindingFor(slot, candidate, workbook),
+    };
+  });
   const bindings = slots.flatMap((slot) => {
     const selected = candidates.find(
       (candidate) => candidate.slotId === slot.slotId && candidate.selected,
     );
     if (!selected) return [];
-    return [bindingFor(slot, selected, workbook)];
+    return [
+      selected.bindingDefinition ?? bindingFor(slot, selected, workbook),
+    ];
   });
   const boundSlotIds = new Set(bindings.map((binding) => binding.slotId));
   const unmappedRequiredSlots = slots
@@ -1383,6 +1393,9 @@ export function buildMappingSet(
     workbookVersionId: workbook.workbookVersionId,
     workbookFileHash: workbook.fileHash,
     workbookStructureHash: workbook.structureHash,
+    analysisPipelineVersion: MAPPING_RULES.analysisPipelineVersion,
+    semanticAliasVersion: MAPPING_RULES.semanticAliasVersion,
+    scoringRuleVersion: MAPPING_RULES.scoringRuleVersion,
     status,
     bindings,
     candidates,

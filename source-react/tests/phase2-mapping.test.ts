@@ -36,6 +36,12 @@ const validateChartBinding = contractAjv.getSchema(
 if (!validateChartBinding) {
   throw new Error("ChartBinding contract schema unavailable.");
 }
+const validateCompositeChartBinding = contractAjv.getSchema(
+  "https://schemas.reflo.dev/worker/v1/mapping-set.schema.json#/$defs/CompositeChartBinding",
+);
+if (!validateCompositeChartBinding) {
+  throw new Error("CompositeChartBinding contract schema unavailable.");
+}
 
 function cell(
   sheetId: string,
@@ -141,11 +147,12 @@ function workbook(candidateCells: WorkbookCandidateCell[]): WorkbookAnalysis {
 function sourceAddresses(
   result: ReturnType<typeof buildMappingSet>,
 ): Array<string | undefined> {
-  return result.mappingSet.bindings.map((binding) =>
-    binding.kind === "chart"
-      ? binding.categories.range
-      : binding.source.address ?? binding.source.range,
-  );
+  return result.mappingSet.bindings.map((binding) => {
+    if (binding.kind === "chart" || binding.kind === "composite_chart") {
+      return binding.categories.range;
+    }
+    return binding.source.address ?? binding.source.range;
+  });
 }
 
 function chartTemplate(
@@ -839,5 +846,270 @@ test("round-trips each chart candidate definition through mapping revision stora
     validateChartBinding(binding),
     true,
     JSON.stringify(validateChartBinding.errors),
+  );
+});
+
+test("round-trips the complete scalar definition through mapping revision storage", () => {
+  const source = {
+    sheetId: "sheet_2",
+    sheet: "09_Target_PER",
+    address: "B15",
+    readMode: "calculated_value",
+    authority: "authoritative",
+    numberFormat: "#,##0원",
+    structureFingerprint: "a".repeat(64),
+  };
+  const bindingDefinition = {
+    bindingId: "binding_scalar_original",
+    slotId: "slot_target",
+    kind: "scalar",
+    valueType: "money",
+    source,
+    verificationSources: [],
+    display: {
+      unit: "KRW",
+      scale: "1",
+      roundingIncrement: "100",
+      roundingMode: "half_up",
+      pattern: "#,##0",
+      suffix: "원",
+    },
+    status: "suggested",
+    purpose: "report_output",
+    semanticKey: {
+      metric: "target_price",
+      period: "2Q26",
+      unit: "KRW",
+      scope: "consolidated",
+    },
+    estimateType: "forecast",
+    styleTemplateRef: "style_scalar_target",
+    detectionConfidence: 0.94,
+    reasonCodes: ["STABLE_CELL_MATCH"],
+    review: {
+      status: "unreviewed",
+      reasonCodes: ["STABLE_CELL_MATCH"],
+    },
+  };
+  const stored = (
+    serializeMappingCandidateSource as unknown as (
+      input: Record<string, unknown>,
+    ) => Record<string, unknown>
+  )({
+    source,
+    bindingDefinition,
+  });
+  const restored = deserializeMappingCandidateSource(stored) as ReturnType<
+    typeof deserializeMappingCandidateSource
+  > & {
+    bindingDefinition: Record<string, unknown> | null;
+  };
+  const entry = {
+    entryId: "11111111-1111-4111-8111-111111111111",
+    slotId: "slot_target",
+    metric: "target_price",
+    kind: "scalar",
+    valueType: "money",
+    required: true,
+    selectedCandidateId: "22222222-2222-4222-8222-222222222222",
+    candidates: [
+      {
+        candidateId: "22222222-2222-4222-8222-222222222222",
+        sourceType: "cell",
+        sheetId: "sheet_2",
+        sheetName: "09_Target_PER",
+        address: "B15",
+        label: "목표주가",
+        score: 0.94,
+        reasonCodes: ["STABLE_CELL_MATCH"],
+        source: restored.source,
+        chartDefinition: null,
+        bindingDefinition: restored.bindingDefinition,
+      },
+    ],
+  } as unknown as MappingRevisionEntry;
+
+  const binding = buildMappingRevisionBinding(entry, entry.candidates[0]) as {
+    kind: string;
+    semanticKey: Record<string, string>;
+    display: Record<string, string>;
+    styleTemplateRef: string;
+    estimateType: string;
+    source: Record<string, unknown>;
+  };
+
+  assert.deepEqual(restored.bindingDefinition, bindingDefinition);
+  assert.equal(binding.kind, "scalar");
+  assert.deepEqual(binding.semanticKey, bindingDefinition.semanticKey);
+  assert.deepEqual(binding.display, bindingDefinition.display);
+  assert.equal(binding.styleTemplateRef, "style_scalar_target");
+  assert.equal(binding.estimateType, "forecast");
+  assert.deepEqual(binding.source, source);
+});
+
+test("materializes mixed chart types and a secondary axis as a composite binding", () => {
+  const value = workbook([]);
+  value.sheets.push({
+    sheetId: "sheet_combo",
+    name: "11_도표7_영업이익_시가총액",
+    index: 2,
+    visibility: "visible",
+    usedRange: "A1:G20",
+    structureHash: "6".repeat(64),
+    formulaCount: 0,
+    mergedRangeCount: 0,
+    chartCount: 1,
+    tableCount: 0,
+  });
+  const categories = chartReference(
+    "sheet_combo",
+    "11_도표7_영업이익_시가총액",
+    "B4:G4",
+    6,
+  );
+  value.charts = [
+    {
+      chartId: "chart_combo",
+      sheetId: "sheet_combo",
+      sheetName: "11_도표7_영업이익_시가총액",
+      partPath: "xl/charts/chart_combo.xml",
+      title: "도표 7 분기 영업이익 vs 시가총액 추이",
+      anchor: { kind: "two_cell", fromCell: "A2", toCell: "H20" },
+      chartTypes: ["bar", "line"],
+      category: categories,
+      series: [
+        {
+          seriesId: "series_profit",
+          index: 0,
+          name: "영업이익",
+          nameFormula: null,
+          chartType: "bar",
+          axis: "primary",
+          category: categories,
+          values: chartReference(
+            "sheet_combo",
+            "11_도표7_영업이익_시가총액",
+            "B5:G5",
+            6,
+          ),
+        },
+        {
+          seriesId: "series_market_cap",
+          index: 1,
+          name: "시가총액",
+          nameFormula: null,
+          chartType: "line",
+          axis: "secondary",
+          category: categories,
+          values: chartReference(
+            "sheet_combo",
+            "11_도표7_영업이익_시가총액",
+            "B6:G6",
+            6,
+          ),
+        },
+      ],
+      axes: [
+        {
+          axisId: "axis_primary",
+          type: "value",
+          position: "left",
+          title: "영업이익",
+          numberFormat: "#,##0",
+          crossAxisId: "axis_category",
+          secondary: false,
+        },
+        {
+          axisId: "axis_secondary",
+          type: "value",
+          position: "right",
+          title: "시가총액",
+          numberFormat: "#,##0",
+          crossAxisId: "axis_category",
+          secondary: true,
+        },
+      ],
+      structureFingerprint: "7".repeat(64),
+    },
+  ];
+  const reportTemplate = chartTemplate(
+    "figure_7_chart",
+    "분기 영업이익 vs 시가총액 추이",
+  );
+  Object.assign(reportTemplate.pages[0].slots[0], {
+    styleRef: "style_chart_figure_7",
+  });
+
+  const result = buildMappingSet(reportTemplate, value);
+  const binding = result.mappingSet.bindings[0] as unknown as {
+    kind: string;
+    styleTemplateRef: string;
+    series: Array<{ axis: string; chartType: string }>;
+  };
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.equal(binding.kind, "composite_chart");
+  assert.equal(binding.styleTemplateRef, "style_chart_figure_7");
+  assert.deepEqual(
+    binding.series.map((series) => [series.chartType, series.axis]),
+    [
+      ["bar", "primary"],
+      ["line", "secondary"],
+    ],
+  );
+  assert.equal(
+    validateCompositeChartBinding(binding),
+    true,
+    JSON.stringify(validateCompositeChartBinding.errors),
+  );
+});
+
+test("keeps a stable sheet ID and candidate identity after a sheet rename", () => {
+  const reportTemplate = template();
+  reportTemplate.pages[0].slots = [reportTemplate.pages[0].slots[1]];
+  const before = workbook([
+    cell("sheet_ooxml_9", "01_실적추이", "F6", "매출액 · 1Q26P"),
+  ]);
+  before.sheets = [
+    {
+      ...before.sheets[0],
+      sheetId: "sheet_ooxml_9",
+      ooxmlSheetId: "9",
+      name: "01_실적추이",
+    },
+  ];
+  const after = structuredClone(before);
+  after.sheets[0].name = "01_실적_업데이트";
+  after.candidateCells[0].sheetName = "01_실적_업데이트";
+
+  const beforeResult = buildMappingSet(reportTemplate, before);
+  const afterResult = buildMappingSet(reportTemplate, after);
+
+  assert.equal(beforeResult.summary.status, "confirmed");
+  assert.equal(afterResult.summary.status, "confirmed");
+  assert.equal(beforeResult.mappingSet.candidates[0].candidateId, afterResult.mappingSet.candidates[0].candidateId);
+  assert.equal(afterResult.mappingSet.candidates[0].source.sheetId, "sheet_ooxml_9");
+  assert.equal(afterResult.mappingSet.candidates[0].source.sheet, "01_실적_업데이트");
+});
+
+test("versions semantic aliases and never auto-selects equally scored required candidates", () => {
+  const value = template();
+  value.pages[0].slots = [value.pages[0].slots[1]];
+  const result = buildMappingSet(
+    value,
+    workbook([
+      cell("sheet_candidate_a", "Candidate A", "F6", "매출액 · 1Q26P"),
+      cell("sheet_candidate_b", "Candidate B", "F6", "매출액 · 1Q26P"),
+    ]),
+  );
+  const mappingMetadata = result.mappingSet as unknown as Record<string, unknown>;
+
+  assert.equal(mappingMetadata.semanticAliasVersion, "mapping-alias/2.0");
+  assert.equal(mappingMetadata.scoringRuleVersion, "mapping-score/2.0");
+  assert.equal(result.summary.status, "blocked");
+  assert.equal(result.mappingSet.bindings.length, 0);
+  assert.equal(
+    result.mappingSet.candidates.filter((candidate) => candidate.selected).length,
+    0,
   );
 });

@@ -2210,6 +2210,9 @@
       "workbookVersionId",
       "workbookFileHash",
       "workbookStructureHash",
+      "analysisPipelineVersion",
+      "semanticAliasVersion",
+      "scoringRuleVersion",
       "status",
       "bindings",
       "candidates",
@@ -2240,6 +2243,18 @@
       },
       "workbookStructureHash": {
         "$ref": "common.schema.json#/$defs/Sha256"
+      },
+      "analysisPipelineVersion": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+      },
+      "semanticAliasVersion": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+      },
+      "scoringRuleVersion": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
       },
       "status": {
         "type": "string",
@@ -2321,6 +2336,9 @@
           },
           "chartDefinition": {
             "$ref": "#/$defs/ChartCandidateDefinition"
+          },
+          "bindingDefinition": {
+            "$ref": "#/$defs/Binding"
           },
           "label": {
             "type": "string",
@@ -3231,6 +3249,9 @@
           "purpose",
           "semanticKey",
           "source",
+          "estimateType",
+          "detectionConfidence",
+          "reasonCodes",
           "status",
           "review"
         ],
@@ -3255,6 +3276,20 @@
           },
           "styleTemplateRef": {
             "$ref": "common.schema.json#/$defs/OpaqueId"
+          },
+          "display": {
+            "$ref": "#/$defs/DisplayRule"
+          },
+          "estimateType": {
+            "$ref": "#/$defs/EstimateType"
+          },
+          "detectionConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reasonCodes": {
+            "$ref": "#/$defs/ReasonCodes"
           },
           "status": {
             "type": "string",
@@ -6818,6 +6853,7 @@
       "templateId",
       "templateVersion",
       "source",
+      "analysisMetadata",
       "pages",
       "resources",
       "validationProfile",
@@ -6835,6 +6871,9 @@
       },
       "source": {
         "$ref": "#/$defs/TemplateSource"
+      },
+      "analysisMetadata": {
+        "$ref": "#/$defs/AnalysisMetadata"
       },
       "pages": {
         "type": "array",
@@ -6857,6 +6896,52 @@
       }
     },
     "$defs": {
+      "AnalysisMetadata": {
+        "title": "TemplateAnalysisMetadata",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pipelineVersion",
+          "classificationRuleVersion",
+          "styleExtractorVersion",
+          "geometryFingerprintVersion",
+          "ocrMode",
+          "ocrMinimumConfidence"
+        ],
+        "properties": {
+          "pipelineVersion": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+          },
+          "classificationRuleVersion": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+          },
+          "styleExtractorVersion": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+          },
+          "geometryFingerprintVersion": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]+/[0-9]+\\.[0-9]+$"
+          },
+          "ocrMode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "provided"
+            ]
+          },
+          "ocrMinimumConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "ocrInputHash": {
+            "$ref": "common.schema.json#/$defs/Sha256"
+          }
+        }
+      },
       "TemplateSource": {
         "title": "TemplateSource",
         "type": "object",
@@ -7510,7 +7595,11 @@
           "fallbackStrategies",
           "overflow",
           "validationMaskIds",
-          "intersections"
+          "intersections",
+          "classification",
+          "geometryFingerprint",
+          "analysisConfidence",
+          "reasonCodes"
         ],
         "properties": {
           "blockId": {
@@ -7581,6 +7670,36 @@
             "items": {
               "$ref": "#/$defs/ObjectIntersection"
             }
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "scalar",
+              "table",
+              "chart",
+              "composite_chart",
+              "fixed_visual"
+            ]
+          },
+          "geometryFingerprint": {
+            "$ref": "common.schema.json#/$defs/Sha256"
+          },
+          "analysisConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "reasonCodes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{2,99}$"
+            }
+          },
+          "styleTemplateRef": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
           },
           "generationRule": {
             "type": "string",
@@ -9841,7 +9960,12 @@
           "label",
           "rowCount",
           "columnCount",
-          "structureFingerprint"
+          "structureFingerprint",
+          "styleFingerprint",
+          "mergedRanges",
+          "columnDimensions",
+          "rowDimensions",
+          "presentationTruncated"
         ],
         "properties": {
           "candidateId": {
@@ -9875,6 +9999,32 @@
           },
           "structureFingerprint": {
             "$ref": "common.schema.json#/$defs/Sha256"
+          },
+          "styleFingerprint": {
+            "$ref": "common.schema.json#/$defs/Sha256"
+          },
+          "mergedRanges": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+            }
+          },
+          "columnDimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/RangeColumnDimension"
+            }
+          },
+          "rowDimensions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/RangeRowDimension"
+            }
+          },
+          "presentationTruncated": {
+            "type": "boolean"
           },
           "kind": {
             "description": "How this tabular range candidate was discovered.",
@@ -9928,6 +10078,54 @@
               "type": "integer",
               "minimum": 1
             }
+          }
+        }
+      },
+      "RangeColumnDimension": {
+        "title": "RangeColumnDimension",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "column",
+          "widthPx"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "column": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{1,3}$"
+          },
+          "widthPx": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "RangeRowDimension": {
+        "title": "RangeRowDimension",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "row",
+          "heightPx"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "heightPx": {
+            "type": "number",
+            "exclusiveMinimum": 0
           }
         }
       },
