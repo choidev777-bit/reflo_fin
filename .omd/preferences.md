@@ -30,3 +30,53 @@ pending_count: 0
   applied_to:
     - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
     - `../source-react/app/_phase3/HypothesisScreen.tsx`
+- id: `2026-07-27-phase4-question-materials`
+  status: applied
+  correction: STEP 04의 공통 사용자 제공 원문 영역을 제거하고, 각 질문의 출처 조정 dialog에서 기업 IR은 공식 PDF를, 사용자 자료는 PDF 또는 공개 URL을 질문별로 연결한다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/server/domain/research-validation.ts`
+- id: `2026-07-27-phase4-global-materials-restored`
+  status: applied
+  correction: 이전 질문별 자료 연결 변경을 취소한다. 기업 IR과 사용자 자료는 STEP 04 하단의 공통 사용자 제공 원문 영역에서 PDF 업로드 또는 공개 URL로 등록한다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/server/domain/research-validation.ts`
+- id: `2026-07-27-phase4-sidebar-colors`
+  status: applied
+  correction: STEP 04 이후 workflow sidebar는 이전 단계와 동일한 near-black 배경, muted text, lime active marker를 사용한다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ProcessShell.tsx`
+    - `../source-react/app/globals.css`
+- id: `2026-07-27-phase4-report-targets`
+  status: applied
+  correction: STEP 04 Excel tab은 출처별 목록이 아니라 PDF–Excel 연동 리포트 입력 대상을 기준으로 표시하고, 각 대상의 Excel 연결·기간별 유지/수집/후속 처리·출처 정책을 함께 보여준다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/server/domain/research-report-targets.ts`
+    - `../source-react/app/globals.css`
+- id: `2026-07-27-phase4-remove-blocker-panel`
+  status: applied
+  correction: STEP 04 본문 아래의 별도 계획 차단 항목 경고 panel은 표시하지 않고 필요한 상태와 조치는 해당 질문·리포트 입력 대상 안에서 보여준다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/app/globals.css`
+- id: `2026-07-27-phase4-hide-period-diagnostics`
+  status: applied
+  correction: STEP 04 리포트 입력 대상 card에서 필요 기간 누락·이전 기간 잔존·실적/전망 구분 불일치 같은 내부 기간 진단 footer는 표시하지 않는다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/app/globals.css`
+- id: `2026-07-27-phase4-hide-empty-filters`
+  status: applied
+  correction: STEP 04 리포트 입력 대상 상태 필터는 해당 대상이 1개 이상일 때만 표시하고 0건 필터는 숨긴다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/app/globals.css`

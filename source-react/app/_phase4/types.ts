@@ -75,6 +75,55 @@ export type ExcelTarget = {
   excludedReason: string | null;
 };
 
+export type ReportTarget = {
+  targetId: string;
+  slotId: string;
+  metric: string;
+  title: string;
+  kind: "scalar" | "table" | "chart";
+  required: boolean;
+  pageNumber: number | null;
+  pageLabel: string | null;
+  status:
+    | "collection_required"
+    | "carry_forward"
+    | "later_stage"
+    | "connection_required";
+  readinessState:
+    | "ready"
+    | "period_refresh_required"
+    | "source_collection_required"
+    | "user_input_required"
+    | "source_and_input_required"
+    | "valuation_required"
+    | "later_stage"
+    | "review_required";
+  reasons: string[];
+  workbook: {
+    sourceType: "cell" | "range" | "chart" | "market_data";
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    label: string | null;
+  } | null;
+  destinationLabel: string | null;
+  detectedPeriods: string[];
+  periods: Array<{
+    label: string;
+    action: "keep" | "collect" | "later_stage" | "connect";
+    note: string;
+    sourcePolicy: Array<{
+      sourceType: SourceType;
+      role: "authority" | "verification" | "comparison";
+    }>;
+  }>;
+  sourcePolicy: Array<{
+    sourceType: SourceType;
+    role: "authority" | "verification" | "comparison";
+  }>;
+  executableTargetIds: string[];
+};
+
 export type PlanValidationIssue = {
   code: string;
   targetId: string | null;
@@ -142,6 +191,7 @@ export type ResearchPlanWorkspace = {
     status: "draft" | "approved" | "revalidation_required";
     questions: PlanQuestion[];
     excelTargets: ExcelTarget[];
+    reportTargets: ReportTarget[];
     userUrls: string[];
     sourceReferences: ResearchSourceReference[];
     validationSummary: {

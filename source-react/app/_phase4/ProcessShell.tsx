@@ -62,7 +62,9 @@ export function ProcessShell({
                 <button
                   key={stage.stageKey}
                   type="button"
-                  className={active ? "active" : ""}
+                  className={`${active ? "active" : ""} ${
+                    stage.status === "completed" ? "done" : ""
+                  }`}
                   disabled={!accessible}
                   aria-current={active ? "step" : undefined}
                   onClick={() => {

@@ -78,13 +78,20 @@
 - 질문은 두 자리 연속 번호를 사용하고 추가·삭제 후 다시 정렬한다.
 - STEP 03 질문 목록은 질문 본문만 표시한다. 기간·비교 기준·지표 metadata는 후속 조사 입력으로 유지하되 사용자 화면에는 반복 노출하지 않는다.
 - STEP 03 질문 행의 사용자 action은 `수정`, `삭제`만 제공하며 수동 순서 변경 control은 표시하지 않는다.
-- 각 질문과 Excel 항목은 top-right 44px X action으로 개별 제거한다.
+- 각 질문은 top-right 44px X action으로 개별 제거한다. 리포트 입력 대상은 PDF–Excel mapping에서 파생되므로 이 화면에서 제거하지 않는다.
 - question card는 content 높이만큼 확장하며 내부 scroll을 만들지 않는다.
 - tablet·desktop question card는 right padding 26px, mobile은 12px을 사용한다.
 - content shell은 tab 아래 side·bottom hairline만 사용한다. question card hover는 layout shift 없는 1px `#75a900` inner outline을 사용한다.
-- Excel 항목은 가설 card 구조를 공유한다. 자동 출처는 DART를 기본으로 하고 제품·사업부 항목만 기업 IR을 더한다.
+- Excel tab은 출처가 아니라 PDF와 연결된 리포트 입력 대상을 기준으로 나열한다. 각 대상은 PDF page·요소 종류·필수 여부, Excel sheet·range, 기간별 처리 계획과 출처 정책을 함께 표시한다.
+- 기간별 처리는 `기존값 유지`, `자료 수집`, `후속 단계`, `연결 확인`으로 구분한다. 연간 재무표는 과거 실제값을 유지하고 최신 확정 연도는 DART로 교체하며 미래 전망값은 후속 Excel·밸류에이션 단계에서 확정한다.
+- 출처는 metric 정책에서 파생한다. 재무제표는 DART, 주가는 KRX, 수주잔고는 기업 IR, consensus는 FnGuide를 권위 출처로 사용하고 필요한 경우 검증 출처를 함께 표시한다.
+- 목표주가·Valuation처럼 계산 결과인 항목은 자료 수집 대상으로 만들지 않고 `후속 단계`에 둔다. 현재 자동 연결을 지원하지 않는 FnGuide 항목은 `연결 확인`에 둔다.
+- 리포트 입력 대상 상태 필터는 해당 대상이 1개 이상일 때만 표시한다. 0건 필터와 빈 결과 화면은 노출하지 않는다.
+- STEP 04 본문 아래에 별도 `계획 차단 항목` 경고 영역을 두지 않는다. 필요한 상태와 조치는 각 질문·리포트 입력 대상 안에서 직접 표시하되, `필요 기간 누락`·`이전 기간 잔존`·`실적·전망 구분 불일치` 같은 내부 기간 진단 footer는 노출하지 않는다.
 - source dialog는 desktop 2열, mobile 1열이다. icon, title, helper, checkbox를 사용하고 recommendation label은 생략한다.
+- 기업 IR과 사용자 자료는 STEP 04 하단의 `사용자 제공 원문` 영역에서 공통 등록한다. 두 자료 유형 모두 PDF 업로드 또는 공개 원문 URL 등록을 지원한다.
 - shared source surface는 quiet neutral, white source chip과 lime action을 사용한다.
+- STEP 04 이후 workflow sidebar는 이전 단계와 동일한 near-black 배경, muted text, lime active marker를 사용한다.
 
 ## 7. 조사 결과 검증
 

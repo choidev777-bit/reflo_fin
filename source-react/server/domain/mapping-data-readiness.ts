@@ -52,6 +52,23 @@ const USER_INPUT_METRIC = /(?:figure_[67]_chart)/;
 const VALUATION_METRIC =
   /^(?:target_price|target_per|per|forward_eps|eps|valuation_bridge_table|figure_1_chart)$/;
 
+export type MappingPeriodKind =
+  | "annual_full"
+  | "annual_compact"
+  | "quarterly"
+  | "none";
+
+export function mappingPeriodKind(metric: string): MappingPeriodKind {
+  if (FULL_ANNUAL_PERIOD_METRICS.has(metric)) return "annual_full";
+  if (COMPACT_ANNUAL_PERIOD_METRICS.has(metric)) return "annual_compact";
+  if (QUARTERLY_PERIOD_METRICS.has(metric)) return "quarterly";
+  return "none";
+}
+
+export function isValuationMappingMetric(metric: string): boolean {
+  return VALUATION_METRIC.test(metric);
+}
+
 function formatPeriods(
   periods: Array<{ label: string }>,
 ): string {
@@ -63,16 +80,17 @@ function evaluateMetricPeriodCoverage(
   labels: string[],
   plan: ReportPeriodPlan,
 ): PeriodCoverage | null {
-  if (FULL_ANNUAL_PERIOD_METRICS.has(metric)) {
+  const periodKind = mappingPeriodKind(metric);
+  if (periodKind === "annual_full") {
     return evaluatePeriodCoverage(labels, plan);
   }
-  if (COMPACT_ANNUAL_PERIOD_METRICS.has(metric)) {
+  if (periodKind === "annual_compact") {
     return evaluatePeriodWindowCoverage(
       labels,
       buildCompactAnnualPeriodWindow(plan),
     );
   }
-  if (QUARTERLY_PERIOD_METRICS.has(metric)) {
+  if (periodKind === "quarterly") {
     return evaluatePeriodWindowCoverage(
       labels,
       buildQuarterlyReportPeriodWindow(plan, {
@@ -147,7 +165,7 @@ export function evaluateMappingDataReadiness(input: {
       periodCoverage,
     };
   }
-  if (VALUATION_METRIC.test(input.metric)) {
+  if (isValuationMappingMetric(input.metric)) {
     return {
       state: "valuation_required",
       reasons: ["밸류에이션 단계의 계산 결과로 확정합니다."],

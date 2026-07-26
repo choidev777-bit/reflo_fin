@@ -13,6 +13,7 @@ import { useSession } from "../_phase1/useSession";
 import { ProcessShell } from "./ProcessShell";
 import type {
   PlanQuestion,
+  ReportTarget,
   ResearchJob,
   ResearchPlanWorkspace,
   ResearchSourceReference,
@@ -20,6 +21,7 @@ import type {
 } from "./types";
 
 type Purpose = "hypothesis" | "excel";
+type ReportTargetFilter = "all" | ReportTarget["status"];
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ManualMaterialType = Exclude<
   ResearchSourceReference["sourceType"],
@@ -63,6 +65,47 @@ function jobPhaseLabel(phase: string | null): string {
   return phase ? labels[phase] ?? phase : "작업 준비";
 }
 
+const reportStatusLabels: Record<ReportTarget["status"], string> = {
+  collection_required: "수집 필요",
+  carry_forward: "기존값 유지",
+  later_stage: "후속 단계",
+  connection_required: "연결 확인",
+};
+
+const reportActionLabels: Record<
+  ReportTarget["periods"][number]["action"],
+  string
+> = {
+  keep: "기존값 유지",
+  collect: "자료 수집",
+  later_stage: "후속 단계",
+  connect: "연결 확인",
+};
+
+const reportKindLabels: Record<ReportTarget["kind"], string> = {
+  scalar: "값",
+  table: "표",
+  chart: "차트",
+};
+
+const sourceFallbackLabels: Partial<Record<SourceType, string>> = {
+  DART: "DART 공시",
+  COMPANY_IR: "기업 IR",
+  NEWS: "뉴스",
+  KRX: "KRX",
+  ECOS: "한국은행 ECOS",
+  FNGUIDE_CONSENSUS: "FnGuide 컨센서스",
+  USER_MATERIAL: "사용자 자료",
+};
+
+function sourceRoleLabel(
+  role: "authority" | "verification" | "comparison",
+): string {
+  if (role === "authority") return "권위";
+  if (role === "verification") return "검증";
+  return "비교";
+}
+
 export function ResearchPlanScreen({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { session } = useSession();
@@ -70,6 +113,8 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     null,
   );
   const [purpose, setPurpose] = useState<Purpose>("hypothesis");
+  const [reportTargetFilter, setReportTargetFilter] =
+    useState<ReportTargetFilter>("collection_required");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [pageError, setPageError] = useState("");
   const [sourceTarget, setSourceTarget] = useState<
@@ -78,9 +123,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
   const [sourceDraft, setSourceDraft] = useState<SourceType[]>([]);
   const [materialType, setMaterialType] =
     useState<ManualMaterialType>("COMPANY_IR");
-  const [materialMethod, setMaterialMethod] = useState<"user_upload" | "user_url">(
-    "user_upload",
-  );
+  const [materialMethod, setMaterialMethod] = useState<
+    "user_upload" | "user_url"
+  >("user_upload");
   const [materialTitle, setMaterialTitle] = useState("");
   const [materialPublishedAt, setMaterialPublishedAt] = useState("");
   const [materialUrl, setMaterialUrl] = useState("");
@@ -493,6 +538,32 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     );
   }
 
+  const reportTargetCounts = workspace.plan.reportTargets.reduce(
+    (counts, target) => ({
+      ...counts,
+      all: counts.all + 1,
+      [target.status]: counts[target.status] + 1,
+    }),
+    {
+      all: 0,
+      collection_required: 0,
+      carry_forward: 0,
+      later_stage: 0,
+      connection_required: 0,
+    } satisfies Record<ReportTargetFilter, number>,
+  );
+  const effectiveReportTargetFilter =
+    reportTargetFilter === "all" ||
+    reportTargetCounts[reportTargetFilter] > 0
+      ? reportTargetFilter
+      : "all";
+  const visibleReportTargets =
+    effectiveReportTargetFilter === "all"
+      ? workspace.plan.reportTargets
+      : workspace.plan.reportTargets.filter(
+          (target) => target.status === effectiveReportTargetFilter,
+        );
+
   return (
     <ProcessShell
       projectName={workspace.project.name}
@@ -552,8 +623,8 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
             <p>STEP 04</p>
             <h1>자료 수집 및 계획</h1>
             <span>
-              승인된 가설 질문과 Excel 실제값 입력 대상을 확인하고, 수집할
-              출처와 방법을 확정합니다.
+              승인된 가설 질문과 리포트에 연결된 Excel 갱신 대상을 확인하고,
+              수집할 출처와 방법을 확정합니다.
             </span>
           </div>
         </div>
@@ -861,9 +932,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                       name="material-method"
                       value="user_upload"
                       checked={materialMethod === "user_upload"}
-                      disabled={
-                        activeJob || materialSaving
-                      }
+                      disabled={activeJob || materialSaving}
                       onChange={() => {
                         setMaterialMethod("user_upload");
                         setSaveState("idle");
@@ -948,7 +1017,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                       <button
                         type="button"
                         disabled={activeJob || materialSaving}
-                        onClick={() => void removeMaterial(reference.referenceId)}
+                        onClick={() =>
+                          void removeMaterial(reference.referenceId)
+                        }
                       >
                         제거
                       </button>
@@ -966,89 +1037,142 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
           >
             <div className="phase4-plan-guide">
               <p>
-                실제값 입력 대상의 기간·단위·연결/별도 기준과 출처를
-                확인하세요. 미래 추정치는 자동 수집하지 않습니다.
+                PDF와 연결된 Excel 표·차트별로 이번 보고서에서 유지·수집·후속
+                계산할 값을 확인합니다.
               </p>
             </div>
-            <div className="phase4-excel-list">
-              {workspace.plan.excelTargets.length === 0 ? (
+            <nav
+              className="phase4-report-filters"
+              aria-label="리포트 입력 대상 상태"
+            >
+              {(
+                [
+                  ["collection_required", "수집 필요"],
+                  ["carry_forward", "기존값 유지"],
+                  ["later_stage", "후속 단계"],
+                  ["connection_required", "연결 확인"],
+                  ["all", "전체"],
+                ] as const
+              )
+                .filter(
+                  ([filter]) =>
+                    filter === "all" || reportTargetCounts[filter] > 0,
+                )
+                .map(([filter, label]) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={
+                      effectiveReportTargetFilter === filter ? "active" : ""
+                    }
+                    aria-pressed={effectiveReportTargetFilter === filter}
+                    onClick={() => setReportTargetFilter(filter)}
+                  >
+                    <span>{label}</span>
+                    <strong>{reportTargetCounts[filter]}</strong>
+                  </button>
+                ))}
+            </nav>
+            <div className="phase4-report-target-list">
+              {workspace.plan.reportTargets.length === 0 ? (
                 <div className="phase4-empty">
-                  공식 자료로 채울 Excel 실제값 대상이 없습니다.
+                  PDF와 Excel이 연결된 입력 대상이 없습니다. STEP 02에서
+                  mapping을 다시 확인해주세요.
+                </div>
+              ) : visibleReportTargets.length === 0 ? (
+                <div className="phase4-empty">
+                  이 상태에 해당하는 리포트 입력 대상이 없습니다.
                 </div>
               ) : (
-                workspace.plan.excelTargets.map((target) => (
-                  <article key={target.targetId}>
+                visibleReportTargets.map((target) => (
+                  <article
+                    key={target.targetId}
+                    className={`phase4-report-target ${target.status}`}
+                  >
                     <header>
-                      <span>
-                        {target.sheetName}!{target.address}
-                      </span>
-                      <strong>{target.metric}</strong>
-                      <em>{target.required ? "필수 수집" : "선택 수집"}</em>
-                    </header>
-                    <dl>
                       <div>
-                        <dt>기간</dt>
-                        <dd>{target.period}</dd>
+                        <span>
+                          {target.pageNumber
+                            ? `PDF P.${target.pageNumber}`
+                            : "PDF 위치 확인"}{" "}
+                          · {reportKindLabels[target.kind]}
+                          {target.required ? " · 필수" : " · 선택"}
+                        </span>
+                        <strong>{target.title}</strong>
                       </div>
+                      <em>{reportStatusLabels[target.status]}</em>
+                    </header>
+                    <dl className="phase4-report-connection">
                       <div>
-                        <dt>단위 · 기준</dt>
+                        <dt>리포트 요소</dt>
                         <dd>
-                          {target.unit} · {target.scope}
+                          {target.pageNumber
+                            ? `P.${target.pageNumber} ${target.title}`
+                            : target.title}
                         </dd>
                       </div>
                       <div>
-                        <dt>출처 정책</dt>
+                        <dt>Excel 연결</dt>
                         <dd>
-                          {target.sourcePolicy
-                            .map(
-                              (policy) =>
-                                `${sourceLabels.get(policy.sourceType)} · ${
-                                  policy.role === "authority"
-                                    ? "권위"
-                                    : policy.role === "verification"
-                                      ? "검증"
-                                      : "비교"
-                                }`,
-                            )
-                            .join(", ")}
+                          {target.workbook ? (
+                            <code>
+                              {target.workbook.sheetName}!
+                              {target.workbook.address}
+                            </code>
+                          ) : (
+                            target.destinationLabel ?? "연결 위치 확인 필요"
+                          )}
                         </dd>
                       </div>
                     </dl>
-                    {!target.required && (
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={target.included}
-                          disabled={activeJob}
-                          onChange={(event) =>
-                            void saveChanges([
-                              {
-                                op: "set_excel_target_included",
-                                targetId: target.targetId,
-                                included: event.target.checked,
-                              },
-                            ]).catch(() => undefined)
-                          }
-                        />
-                        이 실제값 수집
-                      </label>
-                    )}
+                    <div
+                      className="phase4-report-periods"
+                      role="table"
+                      aria-label={`${target.title} 갱신 계획`}
+                    >
+                      <div role="row" className="heading">
+                        <span role="columnheader">기간</span>
+                        <span role="columnheader">처리</span>
+                        <span role="columnheader">반영 계획</span>
+                        <span role="columnheader">출처</span>
+                      </div>
+                      {target.periods.map((period, index) => (
+                        <div
+                          role="row"
+                          key={`${target.targetId}:${period.label}:${index}`}
+                        >
+                          <strong role="cell">{period.label}</strong>
+                          <span
+                            role="cell"
+                            className={`action ${period.action}`}
+                          >
+                            {reportActionLabels[period.action]}
+                          </span>
+                          <span role="cell">{period.note}</span>
+                          <span role="cell" className="sources">
+                            {period.sourcePolicy.length > 0
+                              ? period.sourcePolicy.map((policy) => (
+                                  <small
+                                    key={`${policy.sourceType}:${policy.role}`}
+                                  >
+                                    {sourceLabels.get(policy.sourceType) ??
+                                      sourceFallbackLabels[
+                                        policy.sourceType
+                                      ] ??
+                                      policy.sourceType}
+                                    {" · "}
+                                    {sourceRoleLabel(policy.role)}
+                                  </small>
+                                ))
+                              : "—"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </article>
                 ))
               )}
             </div>
-          </section>
-        )}
-        {!workspace.plan.validationSummary.valid && (
-          <section className="phase4-blockers" role="alert">
-            <strong>계획 차단 항목</strong>
-            <ul>
-              {workspace.plan.validationSummary.issues.map((issue, index) => (
-                <li key={`${issue.code}-${issue.targetId}-${index}`}>
-                  {issue.message}
-                </li>
-              ))}
-            </ul>
           </section>
         )}
       </div>
@@ -1094,7 +1218,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                       setSourceDraft((current) =>
                         event.target.checked
                           ? [...current, option.sourceType]
-                          : current.filter((item) => item !== option.sourceType),
+                          : current.filter(
+                              (item) => item !== option.sourceType,
+                            ),
                       )
                     }
                   />
@@ -1145,8 +1271,8 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
               </button>
             </header>
             <p>
-              현재 질문·Excel 대상·출처와 입력 version을 불변 snapshot으로
-              승인하고 자료 수집을 시작합니다.
+              현재 질문·리포트 입력 대상·출처와 입력 version을 불변
+              snapshot으로 승인하고 자료 수집을 시작합니다.
             </p>
             <dl>
               <div>
@@ -1154,11 +1280,12 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                 <dd>{includedCount}개</dd>
               </div>
               <div>
-                <dt>Excel 실제값</dt>
+                <dt>리포트 수집 대상</dt>
                 <dd>
                   {
-                    workspace.plan.excelTargets.filter((target) => target.included)
-                      .length
+                    workspace.plan.reportTargets.filter(
+                      (target) => target.status === "collection_required",
+                    ).length
                   }
                   개
                 </dd>
