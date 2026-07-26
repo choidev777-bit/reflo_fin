@@ -53,7 +53,7 @@ test("every report version records the approved outline dependency", () => {
   assert.match(recorder, /outline_to_report/);
 
   for (const creator of [
-    "createReport",
+    "commitReportMaterialization",
     "patchReportVersion",
     "restoreReportVersion",
   ]) {

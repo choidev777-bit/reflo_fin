@@ -62,6 +62,17 @@ async function run(): Promise<void> {
       validateAndPublishResearch: activities.validateAndPublishResearch,
     },
   });
+  const reportMaterializationWorker = await Worker.create({
+    connection,
+    namespace,
+    taskQueue: "report-materialization",
+    activities: {
+      materializeAndPublishReport:
+        activities.materializeAndPublishReport,
+      reportReportMaterializationFailure:
+        activities.reportReportMaterializationFailure,
+    },
+  });
 
   let reconciliationRunning = false;
   const reconciliationTimer = setInterval(() => {
@@ -85,6 +96,7 @@ async function run(): Promise<void> {
     llmWorker.shutdown();
     researchNetworkWorker.shutdown();
     evidenceValidationWorker.shutdown();
+    reportMaterializationWorker.shutdown();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -97,6 +109,7 @@ async function run(): Promise<void> {
       llmWorker.run(),
       researchNetworkWorker.run(),
       evidenceValidationWorker.run(),
+      reportMaterializationWorker.run(),
     ]);
   } finally {
     clearInterval(reconciliationTimer);

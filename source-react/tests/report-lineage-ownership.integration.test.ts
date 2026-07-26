@@ -28,6 +28,8 @@ type ReportFixture = {
   renderSnapshotId: string;
   renderFingerprint: string;
   materializationRunId: string;
+  materializationJobId: string;
+  materializationResourceVersionId: string;
 };
 
 async function createUserAndProject(client: PoolClient) {
@@ -90,10 +92,15 @@ async function createReportFixture(
   client: PoolClient,
 ): Promise<ReportFixture> {
   const { userId, projectId } = await createUserAndProject(client);
-  const company = await client.query<{ company_master_id: string }>(
-    `SELECT company_master_id FROM company_master ORDER BY company_master_id LIMIT 1`,
+  const companyMasterId = randomUUID();
+  const ticker = userId.replace(/-/g, "").slice(0, 12).toUpperCase();
+  await client.query(
+    `INSERT INTO company_master (
+       company_master_id, company_name, ticker, exchange_code,
+       industry_name, mvp_eligible
+     ) VALUES ($1, 'Lineage Test Company', $2, 'KOSDAQ', '테스트', true)`,
+    [companyMasterId, ticker],
   );
-  assert.ok(company.rows[0], "company seed is required");
 
   const pdfFile = await createResource(client, {
     projectId,
@@ -282,7 +289,7 @@ async function createReportFixture(
        $1, $2, '000000', 'KOSPI', CURRENT_DATE, CURRENT_DATE, 1,
        'KRX_OPEN_API', 'test', 'available', now(), $3, '{}'
      )`,
-    [marketPrice.resourceVersionId, company.rows[0].company_master_id, HASH],
+    [marketPrice.resourceVersionId, companyMasterId, HASH],
   );
   const valuationRunId = randomUUID();
   await client.query(
@@ -461,6 +468,11 @@ async function createReportFixture(
     ],
   );
   const outputArtifactId = await createArtifact(client, projectId, "final");
+  const materializationResource = await createResource(client, {
+    projectId,
+    userId,
+    kind: "report_materialization",
+  });
 
   const materializationSnapshot = canonicalSourceSnapshot({
     projectId,
@@ -507,6 +519,25 @@ async function createReportFixture(
       JSON.stringify(renderSnapshot.components),
     ],
   );
+  const materializationJobId = randomUUID();
+  await client.query(
+    `INSERT INTO workflow_job (
+       job_id, project_id, job_type, temporal_workflow_id,
+       operation_status, validity_status, current_phase,
+       input_fingerprint, source_snapshot_id, requested_by_user_id
+     ) VALUES (
+       $1, $2, 'report_materialization', $3, 'queued', 'current',
+       'materializing_report', $4, $5, $6
+     )`,
+    [
+      materializationJobId,
+      projectId,
+      `ownership:${materializationJobId}`,
+      materializationSnapshot.fingerprint,
+      materializationSnapshotId,
+      userId,
+    ],
+  );
 
   return {
     projectId,
@@ -520,6 +551,9 @@ async function createReportFixture(
     renderSnapshotId,
     renderFingerprint: renderSnapshot.fingerprint,
     materializationRunId: randomUUID(),
+    materializationJobId,
+    materializationResourceVersionId:
+      materializationResource.resourceVersionId,
   };
 }
 
@@ -714,8 +748,8 @@ test(
              materialization_run_id, project_id, source_snapshot_id,
              report_outline_approval_id, report_resource_version_id,
              output_artifact_id, input_fingerprint, materializer_version,
-             idempotency_key
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'test', $8)`,
+             idempotency_key, job_id
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'test', $8, $9)`,
           [
             value.materializationRunId,
             first.projectId,
@@ -725,6 +759,7 @@ test(
             value.outputArtifactId,
             value.materializationFingerprint,
             randomUUID(),
+            value.materializationJobId,
           ],
         );
       };
@@ -753,6 +788,14 @@ test(
         });
         assert.ok(name);
       }
+      await expectConstraint(client, {
+        code: "23514",
+        constraint: "report_materialization_completion_project_check",
+        operation: () =>
+          insertMaterialization({
+            materializationJobId: second.materializationJobId,
+          }),
+      });
 
       await insertMaterialization();
       await client.query(
@@ -760,8 +803,8 @@ test(
            materialization_run_id, project_id, source_snapshot_id,
            report_outline_approval_id, report_resource_version_id,
            output_artifact_id, input_fingerprint, materializer_version,
-           idempotency_key
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'test', $8)`,
+           idempotency_key, job_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'test', $8, $9)`,
         [
           second.materializationRunId,
           second.projectId,
@@ -771,8 +814,37 @@ test(
           second.outputArtifactId,
           second.materializationFingerprint,
           randomUUID(),
+          second.materializationJobId,
         ],
       );
+      await expectConstraint(client, {
+        code: "23514",
+        constraint: "report_materialization_completion_project_check",
+        operation: () =>
+          client.query(
+            `UPDATE report_materialization_run
+             SET materialization_resource_version_id = $1
+             WHERE materialization_run_id = $2`,
+            [
+              second.materializationResourceVersionId,
+              first.materializationRunId,
+            ],
+          ),
+      });
+      await expectConstraint(client, {
+        code: "23514",
+        constraint: "report_version_materialization_project_check",
+        operation: () =>
+          client.query(
+            `UPDATE report_version
+             SET materialization_run_id = $1
+             WHERE resource_version_id = $2`,
+            [
+              second.materializationRunId,
+              first.reportResourceVersionId,
+            ],
+          ),
+      });
 
       const insertRender = (overrides: Partial<ReportFixture> = {}) => {
         const value = { ...first, ...overrides };

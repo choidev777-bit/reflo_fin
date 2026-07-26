@@ -1,3 +1,4 @@
+import Decimal from "decimal.js";
 import { contentHash } from "./hash";
 
 export type ReportTemplateSlot = {
@@ -5,6 +6,7 @@ export type ReportTemplateSlot = {
   blockId: string;
   valueType: string;
   required: boolean;
+  styleRef?: string;
   maxLength?: number;
   semanticKey?: {
     metric?: string;
@@ -47,6 +49,7 @@ export type ReportTemplatePage = {
     bbox?: number[];
     objectIds?: string[];
     generationRule?: string;
+    styleTemplateRef?: string;
   }>;
   slots?: ReportTemplateSlot[];
   objects?: ReportTemplateObject[];
@@ -103,12 +106,16 @@ export type ReportMappingBinding = {
   slotId: string;
   metric: string;
   kind: "scalar" | "table" | "chart";
+  required?: boolean;
   status: "confirmed" | "suggested" | "unmapped" | "invalid";
   sourceLabel: string | null;
   sourceAddress: string | null;
   sourceType: string | null;
   sourceSheetId?: string | null;
   sourceSheetName?: string | null;
+  pageId?: string | null;
+  blockId?: string | null;
+  styleTemplateRef?: string | null;
   definition?: ReportBindingDefinition | null;
 };
 
@@ -121,6 +128,37 @@ export type ReportRangeSource = {
   structureFingerprint: string | null;
 };
 
+export type ReportDisplayRule = {
+  unit?: string;
+  formatCode?: string;
+  decimalPlaces?: number;
+  scale?: string;
+  roundingIncrement?: string;
+  roundingMode?: "half_up" | "half_even" | "floor" | "ceiling" | "truncate";
+  prefix?: string;
+  suffix?: string;
+  negativeStyle?: "minus" | "parentheses";
+  blankDisplay?: string;
+};
+
+export type ReportScalarBindingDefinition = {
+  kind: "scalar";
+  valueType:
+    | "decimal"
+    | "money"
+    | "percent"
+    | "integer"
+    | "date"
+    | "string"
+    | "boolean";
+  source: ReportRangeSource;
+  verificationSources: ReportRangeSource[];
+  display: ReportDisplayRule;
+  unit?: string | null;
+  period?: string | null;
+  styleTemplateRef?: string | null;
+};
+
 export type ReportTableBindingDefinition = {
   kind: "table";
   source: ReportRangeSource;
@@ -128,21 +166,59 @@ export type ReportTableBindingDefinition = {
   columnHeaderRow: number;
   expectedRows: number;
   expectedColumns: number;
+  subtotalRows?: number[];
+  unitRows?: number[];
+  forecastRows?: number[];
+  styleTemplateRef?: string | null;
+};
+
+export type ReportChartSeriesBinding = {
+  seriesId: string;
+  label: string | null;
+  source: ReportRangeSource;
+  axis?: "primary" | "secondary";
+  role?:
+    | "actual"
+    | "forecast"
+    | "target"
+    | "band_upper"
+    | "band_lower"
+    | "benchmark";
+  chartType?: string;
+  estimateType?: "actual" | "forecast" | "mixed" | "not_applicable";
+  unit?: string | null;
+  numberFormat?: string;
 };
 
 export type ReportChartBindingDefinition = {
   kind: "chart";
   categories: ReportRangeSource;
-  series: Array<{
-    seriesId: string;
-    label: string | null;
-    source: ReportRangeSource;
-  }>;
+  series: ReportChartSeriesBinding[];
+  styleTemplateRef?: string | null;
+};
+
+export type ReportCompositeChartBindingDefinition = {
+  kind: "composite_chart";
+  categories: ReportRangeSource;
+  series: ReportChartSeriesBinding[];
+  styleTemplateRef: string;
+};
+
+export type ReportGeneratedBandChartBindingDefinition = {
+  kind: "generated_band_chart";
+  source: ReportRangeSource;
+  bandFamily: "pe" | "pb";
+  generatorId: string;
+  sourceEvidenceIds: string[];
+  styleTemplateRef?: string | null;
 };
 
 export type ReportBindingDefinition =
+  | ReportScalarBindingDefinition
   | ReportTableBindingDefinition
-  | ReportChartBindingDefinition;
+  | ReportChartBindingDefinition
+  | ReportCompositeChartBindingDefinition
+  | ReportGeneratedBandChartBindingDefinition;
 
 export type ReportWorkbookCell = {
   address: string;
@@ -153,6 +229,32 @@ export type ReportWorkbookCell = {
   formattedText: string;
   formula: string | null;
   numberFormat: string;
+  fill?: string;
+  fontColor?: string;
+  bold?: boolean;
+  italic?: boolean;
+  fontSize?: number;
+  horizontalAlignment?: string;
+  verticalAlignment?: string;
+  wrapText?: boolean;
+  borderTop?: string;
+  borderRight?: string;
+  borderBottom?: string;
+  borderLeft?: string;
+  style?: {
+    fill?: string;
+    fontColor?: string;
+    bold?: boolean;
+    italic?: boolean;
+    fontSize?: number;
+    horizontalAlignment?: string;
+    verticalAlignment?: string;
+    wrapText?: boolean;
+    borderTop?: string;
+    borderRight?: string;
+    borderBottom?: string;
+    borderLeft?: string;
+  };
 };
 
 export type ReportWorkbookReadModel = {
@@ -161,14 +263,55 @@ export type ReportWorkbookReadModel = {
   sheets: Array<{
     sheetId: string;
     name: string;
+    columnWidths?: Array<{
+      column: number;
+      widthPixels: number;
+      hidden: boolean;
+    }>;
+    rowHeights?: Array<{
+      row: number;
+      heightPixels: number;
+      hidden: boolean;
+    }>;
+    mergedRanges?: Array<{
+      firstRow: number;
+      firstColumn: number;
+      lastRow: number;
+      lastColumn: number;
+    }>;
     cells: ReportWorkbookCell[];
   }>;
 };
 
+export type ReportAuthoritativeScalar = {
+  metric: string;
+  sourceType: string;
+  sourceAddress: string;
+  rawValue: string | null;
+  formattedValue: string;
+  valueType:
+    | "decimal"
+    | "money"
+    | "percent"
+    | "integer"
+    | "date"
+    | "string"
+    | "boolean"
+    | "null";
+  unit: string | null;
+  period: string | null;
+  authority: "formula" | "workbook" | "validated_value" | "user_decision";
+  sourceDecision: string;
+};
+
 export type ReportMaterializationContext = {
+  sourceSnapshotId?: string;
   mappingSetResourceVersionId: string;
   workbookArtifactId: string;
   workbookVersion: number;
+  validationApprovalVersionId?: string;
+  valuationApprovalVersionId?: string;
+  authoritativeScalars?: ReportAuthoritativeScalar[];
   readModel: ReportWorkbookReadModel | null;
 };
 
@@ -181,16 +324,22 @@ export type ReportMaterializedCell = {
   formattedText: string;
   formula: string | null;
   numberFormat: string;
+  style?: ReportWorkbookCell["style"];
 };
 
 export type ReportMaterializationProvenance = {
+  sourceSnapshotId: string | null;
   mappingSetResourceVersionId: string;
   workbookArtifactId: string;
   workbookVersion: number;
   workbookHash: string | null;
+  validationApprovalVersionId: string | null;
+  valuationApprovalVersionId: string | null;
+  pageId: string | null;
+  blockId: string | null;
   slotId: string;
   sources: Array<{
-    role: "table" | "category" | "series";
+    role: "scalar" | "table" | "category" | "series";
     seriesId: string | null;
     label: string | null;
     sheetId: string;
@@ -204,6 +353,27 @@ type ReportMaterializationState = {
   status: "ready" | "blocked";
   blockerCode: string | null;
   provenance: ReportMaterializationProvenance;
+};
+
+export type ReportScalarSnapshot = ReportMaterializationState & {
+  kind: "scalar";
+  rawValue: string | null;
+  formattedValue: string;
+  valueType:
+    | "decimal"
+    | "money"
+    | "percent"
+    | "integer"
+    | "date"
+    | "string"
+    | "boolean"
+    | "null";
+  unit: string | null;
+  period: string | null;
+  authority: "formula" | "workbook" | "validated_value" | "user_decision";
+  sourceDecision: string;
+  displayRule: ReportDisplayRule;
+  styleTemplateRef: string | null;
 };
 
 export type ReportTableSnapshot = ReportMaterializationState & {
@@ -220,17 +390,57 @@ export type ReportTableSnapshot = ReportMaterializationState & {
     rowKey: string | null;
     cells: ReportMaterializedCell[];
   }>;
+  rawMatrix: Array<Array<string | null>>;
+  formattedMatrix: Array<Array<string | null>>;
+  formulaMatrix: Array<Array<string | null>>;
+  mergedRanges: string[];
+  rowHeightsPt: number[];
+  columnWidthsPt: number[];
+  subtotalRows: number[];
+  unitRows: number[];
+  forecastRows: number[];
+  styleTemplateRef: string | null;
 };
 
-export type ReportChartSnapshot = ReportMaterializationState & {
-  kind: "chart";
+export type ReportChartAxisSnapshot = {
+  position: "left" | "right" | "top" | "bottom";
+  unit: string | null;
+  numberFormat: string;
+};
+
+export type ReportChartMaterializedSeries = {
+  seriesId: string;
+  label: string;
+  role:
+    | "actual"
+    | "forecast"
+    | "target"
+    | "band_upper"
+    | "band_lower"
+    | "benchmark";
+  axis: "primary" | "secondary";
+  chartType: string;
+  unit: string | null;
+  numberFormat: string;
+  estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
+  values: ReportMaterializedCell[];
+};
+
+type ReportChartSnapshotFields = ReportMaterializationState & {
   supportedChartTypes: ReportChartType[];
   categories: ReportMaterializedCell[];
-  series: Array<{
-    seriesId: string;
-    label: string;
-    values: ReportMaterializedCell[];
-  }>;
+  series: ReportChartMaterializedSeries[];
+  primaryAxis: ReportChartAxisSnapshot;
+  secondaryAxis: ReportChartAxisSnapshot | null;
+  styleTemplateRef: string | null;
+};
+
+export type ReportChartSnapshot = ReportChartSnapshotFields & {
+  kind: "chart";
+};
+
+export type ReportCompositeChartSnapshot = ReportChartSnapshotFields & {
+  kind: "composite_chart";
 };
 
 export type ReportFixedVisualSnapshot = {
@@ -241,13 +451,18 @@ export type ReportFixedVisualSnapshot = {
 };
 
 export type ReportMaterializedData =
+  | ReportScalarSnapshot
   | ReportTableSnapshot
   | ReportChartSnapshot
+  | ReportCompositeChartSnapshot
   | ReportFixedVisualSnapshot;
 
 export type ReportMaterializationsBySlotId = Record<
   string,
-  ReportTableSnapshot | ReportChartSnapshot
+  | ReportScalarSnapshot
+  | ReportTableSnapshot
+  | ReportChartSnapshot
+  | ReportCompositeChartSnapshot
 >;
 
 export type OutlinePage = {
@@ -297,6 +512,7 @@ export type ReportBlock = {
     sourceType: string | null;
   } | null;
   materializedData?: ReportMaterializedData;
+  materializationSnapshotId?: string | null;
   chartType?: ReportChartType;
   patchStrategy:
     | "fixed"
@@ -439,6 +655,10 @@ type ParsedCellRange = {
   endColumn: number;
 };
 
+const EXCEL_MAX_ROW = 1_048_576;
+const EXCEL_MAX_COLUMN = 16_384;
+const REPORT_MAX_RANGE_CELLS = 100_000;
+
 function columnNumber(value: string): number {
   return [...value.toUpperCase()].reduce(
     (result, character) => result * 26 + character.charCodeAt(0) - 64,
@@ -467,12 +687,30 @@ function parseCellRange(value: string): ParsedCellRange | null {
   const firstRow = Number(match[2]);
   const secondColumn = columnNumber(match[3] ?? match[1]);
   const secondRow = Number(match[4] ?? match[2]);
-  return {
+  if (
+    !Number.isSafeInteger(firstRow) ||
+    !Number.isSafeInteger(secondRow) ||
+    firstRow < 1 ||
+    secondRow < 1 ||
+    firstRow > EXCEL_MAX_ROW ||
+    secondRow > EXCEL_MAX_ROW ||
+    firstColumn < 1 ||
+    secondColumn < 1 ||
+    firstColumn > EXCEL_MAX_COLUMN ||
+    secondColumn > EXCEL_MAX_COLUMN
+  ) {
+    return null;
+  }
+  const parsed = {
     startRow: Math.min(firstRow, secondRow),
     endRow: Math.max(firstRow, secondRow),
     startColumn: Math.min(firstColumn, secondColumn),
     endColumn: Math.max(firstColumn, secondColumn),
   };
+  const rowCount = parsed.endRow - parsed.startRow + 1;
+  const columnCount = parsed.endColumn - parsed.startColumn + 1;
+  if (rowCount * columnCount > REPORT_MAX_RANGE_CELLS) return null;
+  return parsed;
 }
 
 function materializedCell(
@@ -480,6 +718,32 @@ function materializedCell(
   row: number,
   column: number,
 ): ReportMaterializedCell {
+  const style = cell
+    ? cell.style ?? {
+        ...(cell.fill ? { fill: cell.fill } : {}),
+        ...(cell.fontColor ? { fontColor: cell.fontColor } : {}),
+        ...(typeof cell.bold === "boolean" ? { bold: cell.bold } : {}),
+        ...(typeof cell.italic === "boolean"
+          ? { italic: cell.italic }
+          : {}),
+        ...(typeof cell.fontSize === "number"
+          ? { fontSize: cell.fontSize }
+          : {}),
+        ...(cell.horizontalAlignment
+          ? { horizontalAlignment: cell.horizontalAlignment }
+          : {}),
+        ...(cell.verticalAlignment
+          ? { verticalAlignment: cell.verticalAlignment }
+          : {}),
+        ...(typeof cell.wrapText === "boolean"
+          ? { wrapText: cell.wrapText }
+          : {}),
+        ...(cell.borderTop ? { borderTop: cell.borderTop } : {}),
+        ...(cell.borderRight ? { borderRight: cell.borderRight } : {}),
+        ...(cell.borderBottom ? { borderBottom: cell.borderBottom } : {}),
+        ...(cell.borderLeft ? { borderLeft: cell.borderLeft } : {}),
+      }
+    : undefined;
   return cell
     ? {
         address: cell.address,
@@ -490,6 +754,7 @@ function materializedCell(
         formattedText: cell.formattedText,
         formula: cell.formula,
         numberFormat: cell.numberFormat,
+        ...(style && Object.keys(style).length > 0 ? { style } : {}),
       }
     : {
         address: `${columnLabel(column)}${row}`,
@@ -507,6 +772,19 @@ function bindingSources(
   binding: ReportMappingBinding,
 ): ReportMaterializationProvenance["sources"] {
   const definition = binding.definition;
+  if (definition?.kind === "scalar") {
+    return [
+      {
+        role: "scalar",
+        seriesId: null,
+        label: binding.sourceLabel,
+        sheetId: definition.source.sheetId,
+        sheetName: definition.source.sheetName,
+        address: definition.source.address,
+        structureFingerprint: definition.source.structureFingerprint,
+      },
+    ];
+  }
   if (definition?.kind === "table") {
     return [
       {
@@ -520,7 +798,10 @@ function bindingSources(
       },
     ];
   }
-  if (definition?.kind === "chart") {
+  if (
+    definition?.kind === "chart" ||
+    definition?.kind === "composite_chart"
+  ) {
     return [
       {
         role: "category",
@@ -542,6 +823,44 @@ function bindingSources(
       })),
     ];
   }
+  if (definition?.kind === "generated_band_chart") {
+    return [
+      {
+        role: "category",
+        seriesId: null,
+        label: `${definition.bandFamily.toUpperCase()} period`,
+        sheetId: definition.source.sheetId,
+        sheetName: definition.source.sheetName,
+        address: definition.source.address,
+        structureFingerprint: definition.source.structureFingerprint,
+      },
+      ...(["price", "band_upper", "band_lower"] as const).map(
+        (seriesId) => ({
+          role: "series" as const,
+          seriesId,
+          label: seriesId,
+          sheetId: definition.source.sheetId,
+          sheetName: definition.source.sheetName,
+          address: definition.source.address,
+          structureFingerprint: definition.source.structureFingerprint,
+        }),
+      ),
+    ];
+  }
+  if (binding.kind === "scalar" && binding.sourceAddress) {
+    return [
+      {
+        role: "scalar",
+        seriesId: null,
+        label: binding.sourceLabel,
+        sheetId: binding.sourceSheetId ?? binding.sourceType ?? "authority",
+        sheetName:
+          binding.sourceSheetName ?? binding.sourceType ?? "authority",
+        address: binding.sourceAddress,
+        structureFingerprint: null,
+      },
+    ];
+  }
   return [];
 }
 
@@ -550,12 +869,44 @@ function materializationProvenance(
   context: ReportMaterializationContext,
 ): ReportMaterializationProvenance {
   return {
+    sourceSnapshotId: context.sourceSnapshotId ?? null,
     mappingSetResourceVersionId: context.mappingSetResourceVersionId,
     workbookArtifactId: context.workbookArtifactId,
     workbookVersion: context.workbookVersion,
     workbookHash: context.readModel?.workbookHash ?? null,
+    validationApprovalVersionId:
+      context.validationApprovalVersionId ?? null,
+    valuationApprovalVersionId:
+      context.valuationApprovalVersionId ?? null,
+    pageId: binding.pageId ?? null,
+    blockId: binding.blockId ?? null,
     slotId: binding.slotId,
     sources: bindingSources(binding),
+  };
+}
+
+function blockedScalarSnapshot(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+  blockerCode: string,
+): ReportScalarSnapshot {
+  const definition =
+    binding.definition?.kind === "scalar" ? binding.definition : null;
+  return {
+    kind: "scalar",
+    status: "blocked",
+    blockerCode,
+    provenance: materializationProvenance(binding, context),
+    rawValue: null,
+    formattedValue: "",
+    valueType: definition?.valueType ?? "null",
+    unit: definition?.unit ?? null,
+    period: definition?.period ?? null,
+    authority: "workbook",
+    sourceDecision: blockerCode,
+    displayRule: definition?.display ?? {},
+    styleTemplateRef:
+      definition?.styleTemplateRef ?? binding.styleTemplateRef ?? null,
   };
 }
 
@@ -573,6 +924,21 @@ function blockedTableSnapshot(
     columns: [],
     headers: [],
     rows: [],
+    rawMatrix: [],
+    formattedMatrix: [],
+    formulaMatrix: [],
+    mergedRanges: [],
+    rowHeightsPt: [],
+    columnWidthsPt: [],
+    subtotalRows: [],
+    unitRows: [],
+    forecastRows: [],
+    styleTemplateRef:
+      binding.definition?.kind === "table"
+        ? binding.definition.styleTemplateRef ??
+          binding.styleTemplateRef ??
+          null
+        : binding.styleTemplateRef ?? null,
   };
 }
 
@@ -580,25 +946,45 @@ function blockedChartSnapshot(
   binding: ReportMappingBinding,
   context: ReportMaterializationContext,
   blockerCode: string,
-): ReportChartSnapshot {
+): ReportChartSnapshot | ReportCompositeChartSnapshot {
+  const definition =
+    binding.definition?.kind === "chart" ||
+    binding.definition?.kind === "composite_chart" ||
+    binding.definition?.kind === "generated_band_chart"
+      ? binding.definition
+      : null;
   return {
-    kind: "chart",
+    kind:
+      definition?.kind === "composite_chart"
+        ? "composite_chart"
+        : "chart",
     status: "blocked",
     blockerCode,
     provenance: materializationProvenance(binding, context),
     supportedChartTypes: [],
     categories: [],
     series: [],
+    primaryAxis: {
+      position: "left",
+      unit: null,
+      numberFormat: "",
+    },
+    secondaryAxis: null,
+    styleTemplateRef:
+      definition?.styleTemplateRef ?? binding.styleTemplateRef ?? null,
   };
 }
 
-function readRange(
-  source: ReportRangeSource,
-  context: ReportMaterializationContext,
-): {
+type ResolvedWorkbookSource = {
   range: ParsedCellRange;
   cells: ReportMaterializedCell[];
-} | null {
+  sheet: ReportWorkbookReadModel["sheets"][number];
+};
+
+function resolveWorkbookSource(
+  source: ReportRangeSource,
+  context: ReportMaterializationContext,
+): ResolvedWorkbookSource | null {
   const range = parseCellRange(source.address);
   if (!range || !context.readModel) return null;
   const sheet = context.readModel.sheets.find(
@@ -620,14 +1006,14 @@ function readRange(
       );
     }
   }
-  return { range, cells };
+  return { range, cells, sheet };
 }
 
 function oneDimensionalRange(
   source: ReportRangeSource,
   context: ReportMaterializationContext,
 ): ReportMaterializedCell[] | null {
-  const resolved = readRange(source, context);
+  const resolved = resolveWorkbookSource(source, context);
   if (
     !resolved ||
     (resolved.range.startRow !== resolved.range.endRow &&
@@ -636,6 +1022,156 @@ function oneDimensionalRange(
     return null;
   }
   return resolved.cells;
+}
+
+function scalarValueType(
+  binding: ReportMappingBinding,
+  cell: ReportMaterializedCell,
+): ReportScalarSnapshot["valueType"] {
+  if (binding.definition?.kind === "scalar") {
+    return binding.definition.valueType;
+  }
+  if (
+    binding.metric === "target_price" ||
+    binding.metric === "current_price" ||
+    binding.metric === "eps" ||
+    binding.metric === "forward_eps"
+  ) {
+    return "money";
+  }
+  if (binding.metric === "per" || binding.metric === "target_per") {
+    return "decimal";
+  }
+  if (cell.valueType === "boolean") return "boolean";
+  if (cell.valueType === "date") return "date";
+  if (cell.valueType === "number") return "decimal";
+  return "string";
+}
+
+function scalarWorkbookSource(
+  binding: ReportMappingBinding,
+): ReportRangeSource | null {
+  if (binding.definition?.kind === "scalar") {
+    return binding.definition.source;
+  }
+  if (
+    binding.sourceSheetId &&
+    binding.sourceSheetName &&
+    binding.sourceAddress
+  ) {
+    return {
+      sheetId: binding.sourceSheetId,
+      sheetName: binding.sourceSheetName,
+      address: binding.sourceAddress,
+      structureFingerprint: null,
+    };
+  }
+  return null;
+}
+
+function canonicalScalarMetric(metric: string): string {
+  if (metric === "forward_eps") return "eps";
+  if (metric === "target_per") return "per";
+  return metric;
+}
+
+function materializeScalarBinding(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+): ReportScalarSnapshot {
+  if (binding.status !== "confirmed") {
+    return blockedScalarSnapshot(
+      binding,
+      context,
+      "BINDING_NOT_CONFIRMED",
+    );
+  }
+  const authoritative = context.authoritativeScalars?.find(
+    (source) =>
+      canonicalScalarMetric(source.metric) ===
+        canonicalScalarMetric(binding.metric) &&
+      (!binding.sourceType || source.sourceType === binding.sourceType) &&
+      (!binding.sourceAddress ||
+        source.sourceAddress === binding.sourceAddress),
+  );
+  if (authoritative) {
+    return {
+      kind: "scalar",
+      status: "ready",
+      blockerCode: null,
+      provenance: materializationProvenance(binding, context),
+      rawValue: authoritative.rawValue,
+      formattedValue: authoritative.formattedValue,
+      valueType: authoritative.valueType,
+      unit: authoritative.unit,
+      period: authoritative.period,
+      authority: authoritative.authority,
+      sourceDecision: authoritative.sourceDecision,
+      displayRule:
+        binding.definition?.kind === "scalar"
+          ? binding.definition.display
+          : {},
+      styleTemplateRef:
+        binding.definition?.kind === "scalar"
+          ? binding.definition.styleTemplateRef ??
+            binding.styleTemplateRef ??
+            null
+          : binding.styleTemplateRef ?? null,
+    };
+  }
+  const source = scalarWorkbookSource(binding);
+  if (!source) {
+    return blockedScalarSnapshot(
+      binding,
+      context,
+      "SCALAR_SOURCE_REQUIRED",
+    );
+  }
+  if (!context.readModel) {
+    return blockedScalarSnapshot(
+      binding,
+      context,
+      "APPROVED_WORKBOOK_READ_MODEL_MISSING",
+    );
+  }
+  const resolved = resolveWorkbookSource(source, context);
+  if (!resolved || resolved.cells.length !== 1) {
+    return blockedScalarSnapshot(
+      binding,
+      context,
+      "SCALAR_SOURCE_CELL_UNAVAILABLE",
+    );
+  }
+  const cell = resolved.cells[0];
+  if (cell.rawValue === null && cell.formattedText === "") {
+    return blockedScalarSnapshot(
+      binding,
+      context,
+      "SCALAR_SOURCE_CELL_EMPTY",
+    );
+  }
+  const definition =
+    binding.definition?.kind === "scalar" ? binding.definition : null;
+  return {
+    kind: "scalar",
+    status: "ready",
+    blockerCode: null,
+    provenance: materializationProvenance(binding, context),
+    rawValue: cell.rawValue,
+    formattedValue: cell.formattedText || cell.rawValue || "",
+    valueType: scalarValueType(binding, cell),
+    unit: definition?.unit ?? null,
+    period: definition?.period ?? null,
+    authority: cell.formula ? "formula" : "workbook",
+    sourceDecision: cell.formula
+      ? `${source.sheetName}!${cell.address}:${cell.formula}`
+      : `${source.sheetName}!${cell.address}`,
+    displayRule: definition?.display ?? {
+      formatCode: cell.numberFormat,
+    },
+    styleTemplateRef:
+      definition?.styleTemplateRef ?? binding.styleTemplateRef ?? null,
+  };
 }
 
 function materializeTableBinding(
@@ -659,7 +1195,7 @@ function materializeTableBinding(
       "APPROVED_WORKBOOK_READ_MODEL_MISSING",
     );
   }
-  const resolved = readRange(binding.definition.source, context);
+  const resolved = resolveWorkbookSource(binding.definition.source, context);
   if (!resolved) {
     return blockedTableSnapshot(
       binding,
@@ -737,6 +1273,56 @@ function materializeTableBinding(
         cells,
       };
     });
+  const matrixRows = Array.from(
+    { length: rowCount },
+    (_, offset) => resolved.range.startRow + offset,
+  );
+  const cellsByCoordinate = new Map(
+    resolved.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
+  );
+  const matrix = matrixRows.map((row) =>
+    Array.from(
+      { length: columnCount },
+      (_, offset) =>
+        cellsByCoordinate.get(
+          `${row}:${resolved.range.startColumn + offset}`,
+        )!,
+    ),
+  );
+  const mergedRanges = (resolved.sheet.mergedRanges ?? [])
+    .filter(
+      (range) =>
+        range.lastRow >= resolved.range.startRow &&
+        range.firstRow <= resolved.range.endRow &&
+        range.lastColumn >= resolved.range.startColumn &&
+        range.firstColumn <= resolved.range.endColumn,
+    )
+    .map(
+      (range) =>
+        `${columnLabel(range.firstColumn)}${range.firstRow}:` +
+        `${columnLabel(range.lastColumn)}${range.lastRow}`,
+    );
+  const pixelsToPoints = (pixels: number) =>
+    Math.round(pixels * 75) / 100;
+  const rowHeights = new Map(
+    (resolved.sheet.rowHeights ?? []).map((row) => [
+      row.row,
+      pixelsToPoints(row.heightPixels),
+    ]),
+  );
+  const columnWidths = new Map(
+    (resolved.sheet.columnWidths ?? []).map((column) => [
+      column.column,
+      pixelsToPoints(column.widthPixels),
+    ]),
+  );
+  const relativeRows = (values: number[] | undefined) =>
+    (values ?? [])
+      .filter(
+        (row) =>
+          row >= resolved.range.startRow && row <= resolved.range.endRow,
+      )
+      .map((row) => row - resolved.range.startRow);
   return {
     kind: "table",
     status: "ready",
@@ -750,17 +1336,653 @@ function materializeTableBinding(
     })),
     headers,
     rows,
+    rawMatrix: matrix.map((row) => row.map((cell) => cell.rawValue)),
+    formattedMatrix: matrix.map((row) =>
+      row.map((cell) => cell.formattedText || null),
+    ),
+    formulaMatrix: matrix.map((row) => row.map((cell) => cell.formula)),
+    mergedRanges,
+    rowHeightsPt: matrixRows.map((row) => rowHeights.get(row) ?? 15),
+    columnWidthsPt: Array.from(
+      { length: columnCount },
+      (_, offset) =>
+        columnWidths.get(resolved.range.startColumn + offset) ?? 64,
+    ),
+    subtotalRows: relativeRows(binding.definition.subtotalRows),
+    unitRows: relativeRows(binding.definition.unitRows),
+    forecastRows: relativeRows(binding.definition.forecastRows),
+    styleTemplateRef:
+      binding.definition.styleTemplateRef ??
+      binding.styleTemplateRef ??
+      null,
+  };
+}
+
+type GeneratedBandComponent =
+  | "price"
+  | "base"
+  | "multiple_upper"
+  | "multiple_lower"
+  | "band_upper"
+  | "band_lower";
+
+type GeneratedBandRow = {
+  component: GeneratedBandComponent;
+  period: string;
+  unit: string;
+  value: Decimal;
+  valueCell: ReportMaterializedCell;
+  periodCell: ReportMaterializedCell;
+};
+
+function bridgeCellText(cell: ReportMaterializedCell | undefined): string {
+  return (cell?.rawValue ?? cell?.formattedText ?? "").trim();
+}
+
+function normalizedBandSemantic(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "");
+}
+
+function bandFamilyMatches(
+  family: "pe" | "pb",
+  metric: string,
+  scope: string,
+): boolean {
+  const semantic = normalizedBandSemantic(`${scope} ${metric}`);
+  return family === "pe"
+    ? semantic.includes("peband") ||
+        semantic.includes("perband") ||
+        semantic.includes("pe밴드") ||
+        semantic.includes("per밴드") ||
+        semantic.startsWith("pe") ||
+        semantic.startsWith("per")
+    : semantic.includes("pbband") ||
+        semantic.includes("pbrband") ||
+        semantic.includes("pb밴드") ||
+        semantic.includes("pbr밴드") ||
+        semantic.startsWith("pb") ||
+        semantic.startsWith("pbr");
+}
+
+function templateBandFamily(
+  metric: string,
+  scope: string,
+): "pe" | "pb" | null {
+  const semantic = normalizedBandSemantic(`${metric} ${scope}`);
+  if (
+    semantic.includes("peband") ||
+    semantic.includes("perband") ||
+    semantic.includes("pe밴드") ||
+    semantic.includes("per밴드") ||
+    semantic.includes("figure2chart")
+  ) {
+    return "pe";
+  }
+  if (
+    semantic.includes("pbband") ||
+    semantic.includes("pbrband") ||
+    semantic.includes("pb밴드") ||
+    semantic.includes("pbr밴드") ||
+    semantic.includes("figure3chart")
+  ) {
+    return "pb";
+  }
+  return null;
+}
+
+export function generatedBandBindingsFromBridge(
+  pages: ReportTemplatePage[],
+  readModel: ReportWorkbookReadModel | null,
+  allowedEvidenceIds: readonly string[],
+): ReportMappingBinding[] {
+  const bridge = readModel?.sheets.find(
+    (sheet) =>
+      sheet.sheetId === "_REFLO_BRIDGE" && sheet.name === "_REFLO_BRIDGE",
+  );
+  if (!bridge) return [];
+  const cells = new Map(
+    bridge.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
+  );
+  const headers = [
+    "target_id",
+    "approved_value",
+    "evidence_ids",
+    "metric",
+    "period",
+    "unit",
+    "scope",
+  ] as const;
+  if (
+    headers.some(
+      (header, index) =>
+        bridgeCellText(cells.get(`1:${index + 1}`)).toLowerCase() !== header,
+    )
+  ) {
+    return [];
+  }
+  const maxRow = Math.max(
+    1,
+    ...bridge.cells
+      .filter((cell) => cell.column >= 1 && cell.column <= headers.length)
+      .map((cell) => cell.row),
+  );
+  const allowed = new Set(allowedEvidenceIds);
+  const evidenceByFamily = new Map<"pe" | "pb", Set<string>>();
+  const invalidFamilies = new Set<"pe" | "pb">();
+  for (let row = 2; row <= maxRow; row += 1) {
+    const metric = bridgeCellText(cells.get(`${row}:4`));
+    const scope = bridgeCellText(cells.get(`${row}:7`));
+    const family = templateBandFamily(metric, scope);
+    if (!family) continue;
+    const evidenceIds = bridgeCellText(cells.get(`${row}:3`))
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (
+      evidenceIds.length === 0 ||
+      evidenceIds.some((evidenceId) => !allowed.has(evidenceId))
+    ) {
+      invalidFamilies.add(family);
+      continue;
+    }
+    const familyEvidence = evidenceByFamily.get(family) ?? new Set<string>();
+    evidenceIds.forEach((evidenceId) => familyEvidence.add(evidenceId));
+    evidenceByFamily.set(family, familyEvidence);
+  }
+  const generatorId = "bridge_generator_v1";
+  const address = `A1:G${maxRow}`;
+  const structureFingerprint = contentHash({
+    generatorId,
+    sheetId: bridge.sheetId,
+    address,
+    headers,
+  });
+  return pages.flatMap((page) =>
+    (page.slots ?? []).flatMap((slot) => {
+      if (slot.valueType !== "chart") return [];
+      const metric = slot.semanticKey?.metric ?? "";
+      const scope = slot.semanticKey?.scope ?? "";
+      const family = templateBandFamily(metric, scope);
+      const sourceEvidenceIds = family
+        ? [...(evidenceByFamily.get(family) ?? [])].sort()
+        : [];
+      if (
+        !family ||
+        invalidFamilies.has(family) ||
+        sourceEvidenceIds.length === 0
+      ) {
+        return [];
+      }
+      const styleTemplateRef =
+        slot.styleRef ??
+        page.blocks?.find((block) => block.blockId === slot.blockId)
+          ?.styleTemplateRef ??
+        null;
+      return [
+        {
+          slotId: slot.slotId,
+          metric,
+          kind: "chart" as const,
+          required: slot.required,
+          status: "confirmed" as const,
+          sourceLabel: `_REFLO_BRIDGE ${family.toUpperCase()} band`,
+          sourceAddress: address,
+          sourceType: "generated_range",
+          sourceSheetId: bridge.sheetId,
+          sourceSheetName: bridge.name,
+          pageId: page.pageId,
+          blockId: slot.blockId,
+          styleTemplateRef,
+          definition: {
+            kind: "generated_band_chart" as const,
+            source: {
+              sheetId: bridge.sheetId,
+              sheetName: bridge.name,
+              address,
+              structureFingerprint,
+            },
+            bandFamily: family,
+            generatorId,
+            sourceEvidenceIds,
+            styleTemplateRef,
+          },
+        },
+      ];
+    }),
+  );
+}
+
+function generatedBandComponent(
+  family: "pe" | "pb",
+  metric: string,
+): GeneratedBandComponent | null {
+  const semantic = normalizedBandSemantic(metric);
+  const upper =
+    semantic.includes("upper") ||
+    semantic.includes("high") ||
+    semantic.includes("상단");
+  const lower =
+    semantic.includes("lower") ||
+    semantic.includes("low") ||
+    semantic.includes("하단");
+  if (
+    semantic.includes("multiple") ||
+    semantic.includes("multiplier") ||
+    semantic.includes("배수")
+  ) {
+    if (upper) return "multiple_upper";
+    if (lower) return "multiple_lower";
+  }
+  if (semantic.includes("band") || semantic.includes("밴드")) {
+    if (upper) return "band_upper";
+    if (lower) return "band_lower";
+  }
+  if (
+    semantic.includes("adjustedprice") ||
+    semantic.includes("currentprice") ||
+    semantic === "price" ||
+    semantic.includes("수정주가") ||
+    semantic === "주가"
+  ) {
+    return "price";
+  }
+  if (
+    family === "pe" &&
+    (semantic.includes("eps") ||
+      semantic.includes("earningpershare") ||
+      semantic.includes("주당순이익"))
+  ) {
+    return "base";
+  }
+  if (
+    family === "pb" &&
+    (semantic.includes("bps") ||
+      semantic.includes("bookvaluepershare") ||
+      semantic.includes("주당순자산"))
+  ) {
+    return "base";
+  }
+  return null;
+}
+
+function materializeGeneratedBandChart(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+): ReportChartSnapshot {
+  if (binding.definition?.kind !== "generated_band_chart") {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "GENERATED_BAND_BINDING_REQUIRED",
+    ) as ReportChartSnapshot;
+  }
+  const definition = binding.definition;
+  if (
+    !definition.generatorId.trim() ||
+    definition.sourceEvidenceIds.length === 0
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_EVIDENCE_MISSING",
+    ) as ReportChartSnapshot;
+  }
+  const allowedEvidenceIds = new Set(definition.sourceEvidenceIds);
+  const resolved = resolveWorkbookSource(definition.source, context);
+  if (!resolved) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_BRIDGE_RANGE_UNAVAILABLE",
+    ) as ReportChartSnapshot;
+  }
+  const cellsByCoordinate = new Map(
+    resolved.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
+  );
+  const headerColumns = new Map<string, number>();
+  for (
+    let column = resolved.range.startColumn;
+    column <= resolved.range.endColumn;
+    column += 1
+  ) {
+    const header = bridgeCellText(
+      cellsByCoordinate.get(`${resolved.range.startRow}:${column}`),
+    ).toLowerCase();
+    if (header) headerColumns.set(header, column);
+  }
+  const requiredHeaders = [
+    "target_id",
+    "approved_value",
+    "evidence_ids",
+    "metric",
+    "period",
+    "unit",
+    "scope",
+  ] as const;
+  if (requiredHeaders.some((header) => !headerColumns.has(header))) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_BRIDGE_SCHEMA_INVALID",
+    ) as ReportChartSnapshot;
+  }
+  const semanticRows: GeneratedBandRow[] = [];
+  for (
+    let row = resolved.range.startRow + 1;
+    row <= resolved.range.endRow;
+    row += 1
+  ) {
+    const valueCell = cellsByCoordinate.get(
+      `${row}:${headerColumns.get("approved_value")!}`,
+    );
+    const metric = bridgeCellText(
+      cellsByCoordinate.get(`${row}:${headerColumns.get("metric")!}`),
+    );
+    const scope = bridgeCellText(
+      cellsByCoordinate.get(`${row}:${headerColumns.get("scope")!}`),
+    );
+    const component = generatedBandComponent(
+      definition.bandFamily,
+      metric,
+    );
+    if (
+      !component ||
+      !bandFamilyMatches(definition.bandFamily, metric, scope)
+    ) {
+      continue;
+    }
+    const evidenceIds = bridgeCellText(
+      cellsByCoordinate.get(`${row}:${headerColumns.get("evidence_ids")!}`),
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (evidenceIds.length === 0) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_EVIDENCE_MISSING",
+      ) as ReportChartSnapshot;
+    }
+    if (evidenceIds.some((evidenceId) => !allowedEvidenceIds.has(evidenceId))) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_EVIDENCE_MISMATCH",
+      ) as ReportChartSnapshot;
+    }
+    const periodCell = cellsByCoordinate.get(
+      `${row}:${headerColumns.get("period")!}`,
+    );
+    const period = bridgeCellText(periodCell);
+    const unit = bridgeCellText(
+      cellsByCoordinate.get(`${row}:${headerColumns.get("unit")!}`),
+    );
+    const rawValue = bridgeCellText(valueCell);
+    if (!period || !unit || !rawValue || !valueCell || !periodCell) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_COMPONENT_PROVENANCE_INCOMPLETE",
+      ) as ReportChartSnapshot;
+    }
+    let parsed: Decimal;
+    try {
+      parsed = new Decimal(rawValue);
+    } catch {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_COMPONENT_VALUE_INVALID",
+      ) as ReportChartSnapshot;
+    }
+    if (!parsed.isFinite()) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_COMPONENT_VALUE_INVALID",
+      ) as ReportChartSnapshot;
+    }
+    semanticRows.push({
+      component,
+      period,
+      unit,
+      value: parsed,
+      valueCell,
+      periodCell,
+    });
+  }
+  if (semanticRows.length === 0) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_COMPONENT_PROVENANCE_INCOMPLETE",
+    ) as ReportChartSnapshot;
+  }
+  const periods = new Map<
+    string,
+    Partial<Record<GeneratedBandComponent, GeneratedBandRow>>
+  >();
+  for (const row of semanticRows) {
+    const components = periods.get(row.period) ?? {};
+    if (components[row.component]) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_COMPONENT_DUPLICATE",
+      ) as ReportChartSnapshot;
+    }
+    components[row.component] = row;
+    periods.set(row.period, components);
+  }
+  const orderedPeriods = [...periods.keys()].sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true }),
+  );
+  const requiredComponents = [
+    "price",
+    "base",
+    "multiple_upper",
+    "multiple_lower",
+  ] as const;
+  if (
+    orderedPeriods.length === 0 ||
+    orderedPeriods.some((period) =>
+      requiredComponents.some(
+        (component) => !periods.get(period)?.[component],
+      ),
+    )
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_COMPONENT_PROVENANCE_INCOMPLETE",
+    ) as ReportChartSnapshot;
+  }
+  if (
+    orderedPeriods.some((period) => {
+      const rows = periods.get(period)!;
+      return requiredComponents.some(
+        (component) => rows[component]!.value.lte(0),
+      );
+    })
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_COMPONENT_VALUE_INVALID",
+    ) as ReportChartSnapshot;
+  }
+  const first = periods.get(orderedPeriods[0])!;
+  const normalizedUnit = (unit: string) =>
+    unit.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, "");
+  const currencyFamily = (unit: string): string | null => {
+    const normalized = normalizedUnit(unit)
+      .replace(/(?:\/|per)?share/g, "")
+      .replace(/\/주|주당/g, "");
+    if (normalized === "krw" || normalized === "원") return "KRW";
+    if (normalized === "usd" || normalized === "$" || normalized === "달러") {
+      return "USD";
+    }
+    if (normalized === "jpy" || normalized === "엔") return "JPY";
+    return null;
+  };
+  const isMultipleUnit = (unit: string) =>
+    ["multiple", "x", "배"].includes(normalizedUnit(unit));
+  const priceUnit = first.price!.unit;
+  const priceCurrency = currencyFamily(first.price!.unit);
+  const baseCurrency = currencyFamily(first.base!.unit);
+  if (
+    !priceCurrency ||
+    !baseCurrency ||
+    priceCurrency !== baseCurrency ||
+    orderedPeriods.some((period) => {
+      const rows = periods.get(period)!;
+      return (
+        currencyFamily(rows.price!.unit) !== priceCurrency ||
+        currencyFamily(rows.base!.unit) !== baseCurrency ||
+        !isMultipleUnit(rows.multiple_upper!.unit) ||
+        !isMultipleUnit(rows.multiple_lower!.unit) ||
+        (rows.band_upper &&
+          currencyFamily(rows.band_upper.unit) !== priceCurrency) ||
+        (rows.band_lower &&
+          currencyFamily(rows.band_lower.unit) !== priceCurrency)
+      );
+    })
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_UNIT_MISMATCH",
+    ) as ReportChartSnapshot;
+  }
+  const derivedCell = (
+    base: GeneratedBandRow,
+    multiple: GeneratedBandRow,
+    direct: GeneratedBandRow | undefined,
+  ): ReportMaterializedCell | null => {
+    const calculated = base.value.mul(multiple.value);
+    if (direct && !direct.value.eq(calculated)) return null;
+    const value = (direct?.value ?? calculated).toString();
+    return {
+      ...(direct?.valueCell ?? base.valueCell),
+      address:
+        direct?.valueCell.address ??
+        `${base.valueCell.address}*${multiple.valueCell.address}`,
+      valueType: "number",
+      rawValue: value,
+      formattedText: value,
+      formula: null,
+      numberFormat: base.valueCell.numberFormat || "#,##0",
+    };
+  };
+  const categories: ReportMaterializedCell[] = [];
+  const prices: ReportMaterializedCell[] = [];
+  const upperBands: ReportMaterializedCell[] = [];
+  const lowerBands: ReportMaterializedCell[] = [];
+  for (const period of orderedPeriods) {
+    const rows = periods.get(period)!;
+    const upper = derivedCell(
+      rows.base!,
+      rows.multiple_upper!,
+      rows.band_upper,
+    );
+    const lower = derivedCell(
+      rows.base!,
+      rows.multiple_lower!,
+      rows.band_lower,
+    );
+    if (!upper || !lower) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "BAND_SERIES_VALUE_MISMATCH",
+      ) as ReportChartSnapshot;
+    }
+    categories.push({
+      ...rows.price!.periodCell,
+      rawValue: period,
+      formattedText: period,
+    });
+    prices.push(rows.price!.valueCell);
+    upperBands.push(upper);
+    lowerBands.push(lower);
+  }
+  const numberFormat = prices.find((cell) => cell.numberFormat)?.numberFormat ??
+    "#,##0";
+  return {
+    kind: "chart",
+    status: "ready",
+    blockerCode: null,
+    provenance: materializationProvenance(binding, context),
+    supportedChartTypes: ["line", "area"],
+    categories,
+    series: [
+      {
+        seriesId: "price",
+        label: "주가",
+        role: "actual",
+        axis: "primary",
+        chartType: "line",
+        unit: priceUnit,
+        numberFormat,
+        estimateType: "actual",
+        values: prices,
+      },
+      {
+        seriesId: "band_upper",
+        label: "상단 밴드",
+        role: "band_upper",
+        axis: "primary",
+        chartType: "line",
+        unit: priceUnit,
+        numberFormat,
+        estimateType: "mixed",
+        values: upperBands,
+      },
+      {
+        seriesId: "band_lower",
+        label: "하단 밴드",
+        role: "band_lower",
+        axis: "primary",
+        chartType: "line",
+        unit: priceUnit,
+        numberFormat,
+        estimateType: "mixed",
+        values: lowerBands,
+      },
+    ],
+    primaryAxis: {
+      position: "left",
+      unit: priceUnit,
+      numberFormat,
+    },
+    secondaryAxis: null,
+    styleTemplateRef:
+      definition.styleTemplateRef ?? binding.styleTemplateRef ?? null,
   };
 }
 
 function materializeChartBinding(
   binding: ReportMappingBinding,
   context: ReportMaterializationContext,
-): ReportChartSnapshot {
+): ReportChartSnapshot | ReportCompositeChartSnapshot {
   if (binding.status !== "confirmed") {
     return blockedChartSnapshot(binding, context, "BINDING_NOT_CONFIRMED");
   }
-  if (binding.definition?.kind !== "chart") {
+  if (binding.definition?.kind === "generated_band_chart") {
+    if (!context.readModel) {
+      return blockedChartSnapshot(
+        binding,
+        context,
+        "APPROVED_WORKBOOK_READ_MODEL_MISSING",
+      );
+    }
+    return materializeGeneratedBandChart(binding, context);
+  }
+  if (
+    binding.definition?.kind !== "chart" &&
+    binding.definition?.kind !== "composite_chart"
+  ) {
     return blockedChartSnapshot(
       binding,
       context,
@@ -794,6 +2016,12 @@ function materializeChartBinding(
   const series = binding.definition.series.map((item) => ({
     seriesId: item.seriesId,
     label: item.label ?? item.seriesId,
+    axis: item.axis ?? "primary",
+    role: item.role ?? "actual",
+    chartType: item.chartType ?? "line",
+    estimateType: item.estimateType ?? "not_applicable",
+    unit: item.unit ?? null,
+    numberFormat: item.numberFormat ?? "",
     values: oneDimensionalRange(item.source, context),
   }));
   if (
@@ -821,8 +2049,68 @@ function materializeChartBinding(
       "CHART_SERIES_RANGE_INVALID",
     );
   }
+  if (
+    /(^|_)(p_?e|p_?b)_?band($|_)/i.test(binding.metric) &&
+    !["actual", "band_upper", "band_lower"].every((role) =>
+      series.some((item) => item.role === role),
+    )
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "BAND_SERIES_INCOMPLETE",
+    );
+  }
+  if (
+    binding.definition.kind === "composite_chart" &&
+    (series.length < 2 ||
+      !series.some((item) => item.axis === "secondary"))
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "COMPOSITE_AXIS_REQUIRED",
+    );
+  }
+  const categoryOrder = categories.map((cell, index) => ({
+    index,
+    key: categorySortKey(cell),
+  }));
+  const shouldSort =
+    binding.definition.kind === "composite_chart" &&
+    categoryOrder.every((item) => item.key !== null);
+  if (shouldSort) {
+    categoryOrder.sort(
+      (left, right) =>
+        left.key!.localeCompare(right.key!, undefined, { numeric: true }) ||
+        left.index - right.index,
+    );
+  }
+  const orderedCategories = categoryOrder.map(
+    (item) => categories[item.index],
+  );
+  const materializedSeries = series.map((item) => ({
+    seriesId: item.seriesId,
+    label: item.label,
+    role: item.role,
+    axis: item.axis,
+    chartType: item.chartType,
+    unit: item.unit,
+    numberFormat:
+      item.numberFormat ||
+      item.values?.find((cell) => cell.numberFormat)?.numberFormat ||
+      "",
+    estimateType: item.estimateType,
+    values: categoryOrder.map((order) => item.values![order.index]),
+  }));
+  const primarySeries =
+    materializedSeries.find((item) => item.axis === "primary") ??
+    materializedSeries[0];
+  const secondarySeries = materializedSeries.find(
+    (item) => item.axis === "secondary",
+  );
   return {
-    kind: "chart",
+    kind: binding.definition.kind,
     status: "ready",
     blockerCode: null,
     provenance: materializationProvenance(binding, context),
@@ -830,13 +2118,33 @@ function materializeChartBinding(
       binding,
       series.length,
     ),
-    categories,
-    series: series.map((item) => ({
-      seriesId: item.seriesId,
-      label: item.label,
-      values: item.values!,
-    })),
+    categories: orderedCategories,
+    series: materializedSeries,
+    primaryAxis: {
+      position: "left",
+      unit: primarySeries.unit,
+      numberFormat: primarySeries.numberFormat,
+    },
+    secondaryAxis: secondarySeries
+      ? {
+          position: "right",
+          unit: secondarySeries.unit,
+          numberFormat: secondarySeries.numberFormat,
+        }
+      : null,
+    styleTemplateRef:
+      binding.definition.styleTemplateRef ??
+      binding.styleTemplateRef ??
+      null,
   };
+}
+
+function categorySortKey(cell: ReportMaterializedCell): string | null {
+  const value = cell.rawValue ?? cell.formattedText;
+  if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(value)) return value;
+  const quarter = value.match(/^(\d{4})\s*Q([1-4])$/i);
+  if (quarter) return `${quarter[1]}-${quarter[2].padStart(2, "0")}`;
+  return null;
 }
 
 function supportedChartTypesForBinding(
@@ -867,13 +2175,84 @@ export function materializeReportBindings(
 ): ReportMaterializationsBySlotId {
   const result: ReportMaterializationsBySlotId = {};
   for (const binding of bindings) {
-    if (binding.kind === "table") {
-      result[binding.slotId] = materializeTableBinding(binding, context);
+    let materialization: ReportMaterializationsBySlotId[string] | undefined;
+    if (binding.kind === "scalar") {
+      materialization = materializeScalarBinding(binding, context);
+    } else if (binding.kind === "table") {
+      materialization = materializeTableBinding(binding, context);
     } else if (binding.kind === "chart") {
-      result[binding.slotId] = materializeChartBinding(binding, context);
+      materialization = materializeChartBinding(binding, context);
+    }
+    if (
+      materialization &&
+      (binding.required !== false || materialization.status === "ready")
+    ) {
+      result[binding.slotId] = materialization;
     }
   }
   return result;
+}
+
+export function assertRequiredReportMaterializationsReady(
+  requiredSlotIds: readonly string[],
+  materializations: ReportMaterializationsBySlotId,
+): void {
+  const blockers = requiredSlotIds.flatMap((slotId) => {
+    const materialization = materializations[slotId];
+    return !materialization || materialization.status !== "ready"
+      ? [
+          `${slotId}:${
+            materialization?.blockerCode ?? "MATERIALIZATION_MISSING"
+          }`,
+        ]
+      : [];
+  });
+  if (blockers.length > 0) {
+    throw new Error(
+      `REPORT_MATERIALIZATION_BLOCKED:${blockers.join(",")}`,
+    );
+  }
+}
+
+export function compactReportMaterializations(
+  document: ReportDocument,
+  snapshotIdsBySlotId: Readonly<Record<string, string>>,
+): ReportDocument {
+  const compact = structuredClone(document);
+  for (const page of compact.pages) {
+    for (const block of page.blocks) {
+      const slotId = block.dataBinding?.slotId;
+      if (!slotId || !block.materializedData) continue;
+      const snapshotId = snapshotIdsBySlotId[slotId];
+      if (!snapshotId) {
+        throw new Error(`MATERIALIZATION_SNAPSHOT_ID_MISSING:${slotId}`);
+      }
+      block.materializationSnapshotId = snapshotId;
+      delete block.materializedData;
+    }
+  }
+  return compact;
+}
+
+export function hydrateReportMaterializations(
+  document: ReportDocument,
+  snapshotsById: Readonly<Record<string, ReportMaterializedData>>,
+): ReportDocument {
+  const hydrated = structuredClone(document);
+  for (const page of hydrated.pages) {
+    for (const block of page.blocks) {
+      const snapshotId = block.materializationSnapshotId;
+      if (!snapshotId) continue;
+      const snapshot = snapshotsById[snapshotId];
+      if (!snapshot) {
+        throw new Error(
+          `MATERIALIZATION_SNAPSHOT_MISSING:${snapshotId}`,
+        );
+      }
+      block.materializedData = snapshot;
+    }
+  }
+  return hydrated;
 }
 
 type DetectedChartRegion = {
@@ -2205,6 +3584,25 @@ export function attachTemplateGeometry(
             block.blockId === blockId ||
             block.dataBinding?.slotId === slot.slotId,
         );
+        const optionalUnavailable =
+          !slot.required &&
+          (status !== "confirmed" || materializedData?.status !== "ready");
+        if (optionalUnavailable) {
+          for (
+            let index = hydratedBlocks.length - 1;
+            index >= 0;
+            index -= 1
+          ) {
+            const block = hydratedBlocks[index];
+            if (
+              block.blockId === blockId ||
+              block.dataBinding?.slotId === slot.slotId
+            ) {
+              hydratedBlocks.splice(index, 1);
+            }
+          }
+          continue;
+        }
         if (existingSlotBlock) {
           if (kind !== "scalar" && slot.semanticKey?.scope?.trim()) {
             existingSlotBlock.label = displayLabel;
@@ -2502,11 +3900,7 @@ export function validateReportDocument(input: {
           blockId: block.blockId,
         });
       }
-      if (
-        (block.dataBinding?.kind === "table" ||
-          block.dataBinding?.kind === "chart") &&
-        block.dataBinding.status !== "confirmed"
-      ) {
+      if (block.dataBinding && block.dataBinding.status !== "confirmed") {
         issues.push({
           code: "REPORT_DATA_BINDING_NOT_CONFIRMED",
           severity: "blocking",
@@ -2515,10 +3909,13 @@ export function validateReportDocument(input: {
           blockId: block.blockId,
         });
       } else if (
-        (block.dataBinding?.kind === "table" ||
-          block.dataBinding?.kind === "chart") &&
+        block.dataBinding &&
         (!block.materializedData ||
-          block.materializedData.kind !== block.dataBinding.kind ||
+          (block.materializedData.kind !== block.dataBinding.kind &&
+            !(
+              block.dataBinding.kind === "chart" &&
+              block.materializedData.kind === "composite_chart"
+            )) ||
           block.materializedData.status !== "ready")
       ) {
         issues.push({

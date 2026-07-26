@@ -24,10 +24,36 @@ import type {
 import styles from "./phase6.module.css";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "conflict";
+type DraftTask = NonNullable<ReportOutlineWorkspace["draftTask"]>;
+
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
     : "요청을 처리하지 못했습니다. 다시 시도해주세요.";
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  );
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 export function ReportOutlineScreen({ projectId }: { projectId: string }) {
@@ -44,6 +70,8 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
   const pendingRef = useRef(new Map<string, OutlineChange>());
   const savePromiseRef = useRef<Promise<boolean> | null>(null);
   const approvalKeyRef = useRef("");
+  const approvalPollControllerRef = useRef<AbortController | null>(null);
+  const resumedTaskIdRef = useRef("");
   const resetKeyRef = useRef("");
   const approvalButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -82,11 +110,124 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
     }
   }, [projectId, routeError]);
 
+  const updateDraftTask = useCallback((draftTask: DraftTask) => {
+    setWorkspace((current) => {
+      if (!current) return current;
+      const next = { ...current, draftTask };
+      workspaceRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const pollDraftTask = useCallback(
+    async (initialTask: DraftTask, signal: AbortSignal) => {
+      let task = initialTask;
+      for (
+        let attempt = 0;
+        task.operationStatus !== "succeeded" && attempt < 300;
+        attempt += 1
+      ) {
+        if (
+          task.operationStatus === "failed" ||
+          task.operationStatus === "cancelled"
+        ) {
+          throw new Error("보고서 초안 생성에 실패했습니다.");
+        }
+        if (!task.statusUrl) {
+          throw new Error("보고서 생성 상태 주소를 확인할 수 없습니다.");
+        }
+        await abortableDelay(2_000, signal);
+        const projection = await apiJson<{
+          operationStatus: string;
+          validity: string;
+          reportRoute: string | null;
+          error: { message?: string; summary?: string } | null;
+        }>(task.statusUrl, { signal });
+        if (projection.validity === "obsolete") {
+          throw new Error(
+            "입력 버전이 변경되어 보고서 생성을 다시 시작해야 합니다.",
+          );
+        }
+        task = {
+          ...task,
+          operationStatus: projection.operationStatus,
+          reportRoute: projection.reportRoute ?? task.reportRoute,
+        };
+        updateDraftTask(task);
+        if (
+          projection.operationStatus === "failed" ||
+          projection.operationStatus === "cancelled"
+        ) {
+          throw new Error(
+            projection.error?.summary ??
+              projection.error?.message ??
+              "보고서 초안 생성에 실패했습니다.",
+          );
+        }
+      }
+      if (task.operationStatus !== "succeeded") {
+        throw new Error("보고서 초안 생성 시간이 초과되었습니다.");
+      }
+      return task;
+    },
+    [updateDraftTask],
+  );
+
   useEffect(() => {
     if (session.status !== "authenticated") return;
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load, session.status]);
+
+  useEffect(() => {
+    return () => approvalPollControllerRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const task = workspace?.draftTask;
+    if (
+      session.status !== "authenticated" ||
+      !task ||
+      !task.statusUrl ||
+      !["queued", "running", "cancel_requested"].includes(
+        task.operationStatus,
+      ) ||
+      resumedTaskIdRef.current === task.taskId
+    ) {
+      return;
+    }
+    resumedTaskIdRef.current = task.taskId;
+    approvalPollControllerRef.current?.abort();
+    const controller = new AbortController();
+    approvalPollControllerRef.current = controller;
+    setPendingAction("approve");
+    setPageError("");
+    void pollDraftTask(task, controller.signal)
+      .then((completed) => {
+        if (controller.signal.aborted) return;
+        router.push(completed.reportRoute);
+        router.refresh();
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || isAbortError(error)) return;
+        approvalKeyRef.current = "";
+        if (!routeError(error)) setPageError(errorMessage(error));
+      })
+      .finally(() => {
+        if (approvalPollControllerRef.current === controller) {
+          approvalPollControllerRef.current = null;
+          setPendingAction("");
+        }
+      });
+    return () => controller.abort();
+  }, [
+    pollDraftTask,
+    routeError,
+    router,
+    session.status,
+    workspace?.draftTask?.statusUrl,
+    workspace?.draftTask?.taskId,
+  ]);
 
   const flushPending = useCallback(async (): Promise<boolean> => {
     if (savePromiseRef.current) return savePromiseRef.current;
@@ -314,9 +455,12 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
     if (!saved || !current || !session.csrfToken) return;
     setPendingAction("approve");
     if (!approvalKeyRef.current) approvalKeyRef.current = crypto.randomUUID();
+    approvalPollControllerRef.current?.abort();
+    const controller = new AbortController();
+    approvalPollControllerRef.current = controller;
     try {
       const result = await apiJson<{
-        draftTask: { reportRoute: string; operationStatus: string };
+        draftTask: DraftTask;
       }>(`/api/projects/${projectId}/report-outline/approve`, {
         method: "POST",
         headers: {
@@ -328,11 +472,22 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
           expectedOutlineVersion: current.outline.version,
           expectedInputVersions: current.inputVersions,
         }),
+        signal: controller.signal,
       });
       setApprovalOpen(false);
-      router.push(result.draftTask.reportRoute);
+      resumedTaskIdRef.current = result.draftTask.taskId;
+      updateDraftTask(result.draftTask);
+      const completed = await pollDraftTask(
+        result.draftTask,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      approvalKeyRef.current = "";
+      router.push(completed.reportRoute);
       router.refresh();
     } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) return;
+      approvalKeyRef.current = "";
       if (error instanceof ClientApiError) {
         const first = error.body.error.details[0];
         if (first?.path.startsWith("pages.")) {
@@ -342,7 +497,10 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
       if (!routeError(error)) setPageError(errorMessage(error));
       setApprovalOpen(false);
     } finally {
-      setPendingAction("");
+      if (approvalPollControllerRef.current === controller) {
+        approvalPollControllerRef.current = null;
+        setPendingAction("");
+      }
     }
   };
 
@@ -452,6 +610,20 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
         {pageError && (
           <div className={styles.errorBox} role="alert">
             {pageError}
+          </div>
+        )}
+
+        {(pendingAction === "approve" ||
+          ["queued", "running", "cancel_requested"].includes(
+            workspace.draftTask?.operationStatus ?? "",
+          )) && (
+          <div
+            className={styles.noticeBox}
+            role="status"
+            aria-live="polite"
+          >
+            보고서 초안을 생성하고 있습니다. 다른 화면으로 이동해도 작업은
+            계속됩니다.
           </div>
         )}
 

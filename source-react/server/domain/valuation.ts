@@ -3,6 +3,39 @@ import { ApiError } from "../http/api-error";
 
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 
+export type ValuationWorkbookLineage = {
+  validationApprovalId: string;
+  validatedValueSetResourceVersionId: string;
+  validatedWorkbookResourceVersionId: string;
+  sourceWorkbookResourceVersionId: string;
+  mappingSetResourceVersionId: string;
+  workbookArtifactId: string;
+  workbookHash: string;
+  structureHash: string;
+  inputFingerprint: string;
+};
+
+export function valuationWorkbookLineageIsCurrent(
+  approved: ValuationWorkbookLineage,
+  current: ValuationWorkbookLineage,
+): boolean {
+  return (
+    approved.validationApprovalId === current.validationApprovalId &&
+    approved.validatedValueSetResourceVersionId ===
+      current.validatedValueSetResourceVersionId &&
+    approved.validatedWorkbookResourceVersionId ===
+      current.validatedWorkbookResourceVersionId &&
+    approved.sourceWorkbookResourceVersionId ===
+      current.sourceWorkbookResourceVersionId &&
+    approved.mappingSetResourceVersionId ===
+      current.mappingSetResourceVersionId &&
+    approved.workbookArtifactId === current.workbookArtifactId &&
+    approved.workbookHash === current.workbookHash &&
+    approved.structureHash === current.structureHash &&
+    approved.inputFingerprint === current.inputFingerprint
+  );
+}
+
 function groupedInteger(value: Decimal): string {
   return value.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }

@@ -163,6 +163,12 @@ export function mergeWorkbookApplicationCells(
 
 export type WorkbookPatchCommand = {
   targetId: string;
+  semanticKey?: {
+    metric: string;
+    period: string;
+    unit: string;
+    scope: string;
+  };
   sheetId: string;
   sheetName: string;
   address: string;
@@ -507,6 +513,7 @@ function bridgeCommand(
   const patch = patchValue(value.normalizedValue);
   return {
     targetId: value.targetId,
+    semanticKey: value.semanticKey,
     sheetId: "_REFLO_BRIDGE",
     sheetName: "_REFLO_BRIDGE",
     address: `B${row}`,

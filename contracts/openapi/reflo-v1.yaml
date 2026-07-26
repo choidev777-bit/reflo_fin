@@ -1087,7 +1087,11 @@ paths:
           $ref: "#/components/responses/Error"
       x-idempotency-required: true
       x-project-owner-required: true
-      x-error-codes: [OUTLINE_APPROVAL_BLOCKED, REPORT_DRAFT_GENERATION_FAILED]
+      x-error-codes:
+        - OUTLINE_APPROVAL_BLOCKED
+        - OUTLINE_VERSION_CONFLICT
+        - OUTLINE_REVALIDATION_REQUIRED
+        - REPORT_MATERIALIZATION_BLOCKED
   /api/projects/{projectId}/tasks/{taskId}:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -3199,15 +3203,32 @@ components:
         draftTask:
           type: object
           additionalProperties: false
-          required: [taskId, operationStatus, reportRoute]
+          required:
+            - taskId
+            - operationStatus
+            - statusUrl
+            - reportRoute
+            - sourceSnapshotId
+            - sourceFingerprint
+            - reportVersionId
           properties:
             taskId:
               $ref: "#/components/schemas/OpaqueId"
             operationStatus:
-              type: string
-              const: queued
+              $ref: "#/components/schemas/JobStatus"
+            statusUrl:
+              $ref: "#/components/schemas/RelativeRoute"
             reportRoute:
               $ref: "#/components/schemas/RelativeRoute"
+            sourceSnapshotId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceFingerprint:
+              type: string
+              pattern: "^[a-f0-9]{64}$"
+            reportVersionId:
+              oneOf:
+                - $ref: "#/components/schemas/OpaqueId"
+                - type: "null"
     AiProposalAccepted:
       type: object
       additionalProperties: false
@@ -3293,6 +3314,21 @@ components:
         error:
           oneOf:
             - $ref: ../schemas/v1/worker-error.schema.json
+            - type: "null"
+    ReportDraftTaskSummary:
+      type: object
+      additionalProperties: true
+      required: [taskId, operationStatus, reportRoute, statusUrl]
+      properties:
+        taskId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          $ref: "#/components/schemas/JobStatus"
+        reportRoute:
+          $ref: "#/components/schemas/RelativeRoute"
+        statusUrl:
+          oneOf:
+            - $ref: "#/components/schemas/RelativeRoute"
             - type: "null"
     SessionUser:
       type: object
@@ -4962,7 +4998,7 @@ components:
             $ref: "#/components/schemas/EvidenceSummary"
         draftTask:
           oneOf:
-            - $ref: "#/components/schemas/JobProjection"
+            - $ref: "#/components/schemas/ReportDraftTaskSummary"
             - type: "null"
     OutlineInputVersions:
       type: object
@@ -5589,7 +5625,9 @@ components:
             previewId:
               $ref: "#/components/schemas/OpaqueId"
             reportVersionId:
-              $ref: "#/components/schemas/OpaqueId"
+              oneOf:
+                - $ref: "#/components/schemas/OpaqueId"
+                - type: "null"
             artifactId:
               type: [string, "null"]
             expiresAt:
@@ -5630,7 +5668,9 @@ components:
             runId:
               $ref: "#/components/schemas/OpaqueId"
             reportVersionId:
-              $ref: "#/components/schemas/OpaqueId"
+              oneOf:
+                - $ref: "#/components/schemas/OpaqueId"
+                - type: "null"
             issues:
               type: array
               items:
@@ -6443,7 +6483,9 @@ components:
               type: string
               pattern: "^[a-f0-9]{64}$"
             reportVersionId:
-              $ref: "#/components/schemas/OpaqueId"
+              oneOf:
+                - $ref: "#/components/schemas/OpaqueId"
+                - type: "null"
             materializationId:
               type: ["string", "null"]
             materializedItemCount:
@@ -6454,10 +6496,21 @@ components:
               minimum: 0
             artifact:
               oneOf:
-                - $ref: "#/components/schemas/VersionRef"
+                - type: object
+                  additionalProperties: false
+                  required: [id, version, artifactId]
+                  properties:
+                    id:
+                      $ref: "#/components/schemas/OpaqueId"
+                    version:
+                      $ref: "#/components/schemas/VersionNumber"
+                    artifactId:
+                      $ref: "#/components/schemas/OpaqueId"
                 - type: "null"
             obsoleteReason:
               type: ["string", "null"]
+            reportRoute:
+              type: [string, "null"]
     ValidationDecisionRequest:
       type: object
       additionalProperties: false

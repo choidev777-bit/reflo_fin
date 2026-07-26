@@ -10,6 +10,8 @@ import {
   inverseTargetPer,
   sensitivityGrid,
   upside,
+  valuationWorkbookLineageIsCurrent,
+  type ValuationWorkbookLineage,
 } from "../../domain/valuation";
 import { ApiError } from "../../http/api-error";
 import type { TransactionClient } from "../database/transaction";
@@ -167,6 +169,8 @@ type WorkbookState = {
   mappingSetResourceVersionId: string;
   structureHash: string;
   inputFingerprint: string;
+  sourceArtifactId: string;
+  sourceArtifactHash: string;
   workbookVersion: number;
   editableCellSetVersion: number;
   currentArtifactId: string;
@@ -770,6 +774,8 @@ async function readWorkbookState(
     mapping_set_resource_version_id: string;
     structure_hash: string;
     input_fingerprint: string;
+    source_artifact_id: string;
+    source_artifact_hash: string;
     workbook_version: string;
     editable_cell_set_version: string;
     current_artifact_id: string;
@@ -785,10 +791,16 @@ async function readWorkbookState(
        vw.mapping_set_resource_version_id, vw.structure_hash,
        vw.input_fingerprint, vw.workbook_version,
        vw.editable_cell_set_version,
-       vw.current_artifact_id, a.object_key, vw.read_model_json,
+       vw.source_artifact_id, source_artifact.sha256
+         AS source_artifact_hash,
+       vw.current_artifact_id, current_artifact.object_key,
+       vw.read_model_json,
        vw.calculation_status, vw.saved_at
      FROM valuation_workbook vw
-     JOIN artifact a ON a.artifact_id = vw.current_artifact_id
+     JOIN artifact current_artifact
+       ON current_artifact.artifact_id = vw.current_artifact_id
+     JOIN artifact source_artifact
+       ON source_artifact.artifact_id = vw.source_artifact_id
      WHERE vw.project_id = $1
      ${lock ? "FOR UPDATE OF vw" : ""}`,
     [projectId],
@@ -806,6 +818,8 @@ async function readWorkbookState(
         mappingSetResourceVersionId: row.mapping_set_resource_version_id,
         structureHash: row.structure_hash,
         inputFingerprint: row.input_fingerprint,
+        sourceArtifactId: row.source_artifact_id,
+        sourceArtifactHash: row.source_artifact_hash,
         workbookVersion: Number(row.workbook_version),
         editableCellSetVersion: Number(row.editable_cell_set_version),
         currentArtifactId: row.current_artifact_id,
@@ -818,19 +832,35 @@ async function readWorkbookState(
 }
 
 function workbookInputsMatch(state: WorkbookState, context: Context) {
-  return (
-    state.validationApprovalId === context.validationApprovalId &&
-    state.validatedValueSetResourceVersionId ===
-      context.validatedValueSetResourceVersionId &&
-    state.validatedWorkbookResourceVersionId ===
-      context.validatedWorkbookResourceVersionId &&
-    state.sourceWorkbookResourceVersionId ===
-      context.sourceWorkbookResourceVersionId &&
-    state.mappingSetResourceVersionId ===
-      context.mappingSetResourceVersionId &&
-    state.structureHash === context.structureHash &&
-    state.inputFingerprint === context.inputFingerprint
-  );
+  const stateLineage: ValuationWorkbookLineage = {
+    validationApprovalId: state.validationApprovalId,
+    validatedValueSetResourceVersionId:
+      state.validatedValueSetResourceVersionId,
+    validatedWorkbookResourceVersionId:
+      state.validatedWorkbookResourceVersionId,
+    sourceWorkbookResourceVersionId:
+      state.sourceWorkbookResourceVersionId,
+    mappingSetResourceVersionId: state.mappingSetResourceVersionId,
+    workbookArtifactId: state.sourceArtifactId,
+    workbookHash: state.sourceArtifactHash,
+    structureHash: state.structureHash,
+    inputFingerprint: state.inputFingerprint,
+  };
+  const currentLineage: ValuationWorkbookLineage = {
+    validationApprovalId: context.validationApprovalId,
+    validatedValueSetResourceVersionId:
+      context.validatedValueSetResourceVersionId,
+    validatedWorkbookResourceVersionId:
+      context.validatedWorkbookResourceVersionId,
+    sourceWorkbookResourceVersionId:
+      context.sourceWorkbookResourceVersionId,
+    mappingSetResourceVersionId: context.mappingSetResourceVersionId,
+    workbookArtifactId: context.sourceArtifactId,
+    workbookHash: context.sourceSha256,
+    structureHash: context.structureHash,
+    inputFingerprint: context.inputFingerprint,
+  };
+  return valuationWorkbookLineageIsCurrent(stateLineage, currentLineage);
 }
 
 function workbookMatchesContext(state: WorkbookState, context: Context) {

@@ -41,6 +41,7 @@ export async function suggestReportDraft(input: {
   targetPrice: string;
   currentPrice: string;
   evidence: EvidenceInput[];
+  signal?: AbortSignal;
 }): Promise<Record<string, string>> {
   const fallback = sourceFallback(input.outline);
   const blocks = input.outline.pages.flatMap((page) =>
@@ -71,7 +72,9 @@ export async function suggestReportDraft(input: {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(120_000),
+        signal: input.signal
+          ? AbortSignal.any([AbortSignal.timeout(120_000), input.signal])
+          : AbortSignal.timeout(120_000),
         body: JSON.stringify({
           input: {
             company: input.companyName,
@@ -119,15 +122,23 @@ export async function suggestReportDraft(input: {
       const text =
         typeof candidate?.text === "string" ? candidate.text.trim() : "";
       const evidenceIds = candidate?.evidenceIds;
+      const blockEvidenceIds = new Set(
+        block.evidenceIds.filter((evidenceId) =>
+          allowedEvidenceIds.has(evidenceId),
+        ),
+      );
       if (
         text.length < block.minimumLength ||
         text.length > block.maximumLength ||
         /[\r\n]/.test(text) ||
         !Array.isArray(evidenceIds) ||
+        evidenceIds.length === 0 ||
+        new Set(evidenceIds).size !== evidenceIds.length ||
+        blockEvidenceIds.size === 0 ||
         evidenceIds.some(
           (evidenceId) =>
             typeof evidenceId !== "string" ||
-            !allowedEvidenceIds.has(evidenceId),
+            !blockEvidenceIds.has(evidenceId),
         )
       ) {
         return fallback;
@@ -135,7 +146,10 @@ export async function suggestReportDraft(input: {
       result[block.blockId] = text;
     }
     return result;
-  } catch {
+  } catch (error) {
+    if (input.signal?.aborted) {
+      throw input.signal.reason ?? error;
+    }
     return fallback;
   }
 }

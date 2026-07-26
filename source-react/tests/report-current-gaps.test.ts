@@ -58,7 +58,7 @@ test("Phase 3: 검증값을 새 Workbook artifact에 실제 반영한다", () =>
   );
 });
 
-test.todo("Phase 4 gap: scalar를 원래 PDF slot용 snapshot으로 materialize한다", () => {
+test("Phase 4: scalar를 원래 PDF slot용 snapshot으로 materialize한다", () => {
   const binding: ReportMappingBinding = {
     slotId: "slot-forward-eps",
     metric: "forward_eps",

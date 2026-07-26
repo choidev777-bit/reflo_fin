@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { assertValidatedWorkbookReady } from "../server/infrastructure/repositories/workbook-application-repository";
 import { ApiError } from "../server/http/api-error";
 
@@ -10,6 +10,242 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
 const HASH_D = "d".repeat(64);
+
+type ApprovedPlanFixture = {
+  project_id: string;
+  owner_user_id: string;
+  approved_plan_resource_version_id: string;
+  workbook_resource_version_id: string;
+  mapping_set_resource_version_id: string;
+  source_artifact_id: string;
+  plan_content_hash: string;
+};
+
+async function createResource(
+  client: PoolClient,
+  projectId: string,
+  userId: string,
+  kind: string,
+) {
+  const resourceId = randomUUID();
+  const resourceVersionId = randomUUID();
+  await client.query(
+    `INSERT INTO versioned_resource (
+       resource_id, project_id, resource_kind, resource_key
+     ) VALUES ($1, $2, $3, $4)`,
+    [resourceId, projectId, kind, randomUUID()],
+  );
+  await client.query(
+    `INSERT INTO resource_version (
+       resource_version_id, resource_id, version_no, lifecycle_status,
+       input_fingerprint, content_hash, created_by_user_id
+     ) VALUES ($1, $2, 1, 'approved', $3, $3, $4)`,
+    [resourceVersionId, resourceId, HASH_A, userId],
+  );
+  return { resourceId, resourceVersionId };
+}
+
+async function createSourceFile(
+  client: PoolClient,
+  input: {
+    projectId: string;
+    userId: string;
+    role: "previous_report_pdf" | "analysis_workbook";
+  },
+) {
+  const file = await createResource(
+    client,
+    input.projectId,
+    input.userId,
+    `test_${input.role}`,
+  );
+  const artifactId = randomUUID();
+  const workbook = input.role === "analysis_workbook";
+  await client.query(
+    `INSERT INTO artifact (
+       artifact_id, project_id, artifact_kind, storage_status,
+       bucket_name, object_key, sha256, byte_size, media_type,
+       original_filename, retention_class, created_by_actor_type
+     ) VALUES ($1, $2, 'source', 'accepted', 'test', $3, $4, 1,
+       $5, $6, 'project', 'system')`,
+    [
+      artifactId,
+      input.projectId,
+      `test/${artifactId}`,
+      HASH_A,
+      workbook
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf",
+      workbook ? "source.xlsx" : "source.pdf",
+    ],
+  );
+  await client.query(
+    `INSERT INTO project_file_version (
+       resource_version_id, artifact_id, file_role, inspection_status,
+       detected_filename, detected_media_type
+     ) VALUES ($1, $2, $3, 'accepted', $4, $5)`,
+    [
+      file.resourceVersionId,
+      artifactId,
+      input.role,
+      workbook ? "source.xlsx" : "source.pdf",
+      workbook
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf",
+    ],
+  );
+  return { ...file, artifactId };
+}
+
+async function createApprovedPlanFixture(
+  client: PoolClient,
+): Promise<ApprovedPlanFixture> {
+  const userId = randomUUID();
+  const projectId = randomUUID();
+  await client.query(
+    `INSERT INTO user_account (user_id, display_name, email)
+     VALUES ($1, 'Workbook Application Plan Fixture', $2)`,
+    [userId, `${userId}@example.test`],
+  );
+  await client.query(
+    `INSERT INTO project (project_id, owner_user_id, name)
+     VALUES ($1, $2, 'Workbook application plan fixture')`,
+    [projectId, userId],
+  );
+  const pdfFile = await createSourceFile(client, {
+    projectId,
+    userId,
+    role: "previous_report_pdf",
+  });
+  const workbookFile = await createSourceFile(client, {
+    projectId,
+    userId,
+    role: "analysis_workbook",
+  });
+  const template = await createResource(
+    client,
+    projectId,
+    userId,
+    "test_template_ir",
+  );
+  const workbook = await createResource(
+    client,
+    projectId,
+    userId,
+    "test_workbook_analysis",
+  );
+  const mapping = await createResource(
+    client,
+    projectId,
+    userId,
+    "test_mapping_set",
+  );
+  await client.query(
+    `INSERT INTO template_ir_version (
+       resource_version_id, source_file_version_id, page_count,
+       parser_name, parser_version, validation_status
+     ) VALUES ($1, $2, 1, 'test', '1', 'passed')`,
+    [template.resourceVersionId, pdfFile.resourceVersionId],
+  );
+  await client.query(
+    `INSERT INTO workbook_version (
+       resource_version_id, source_file_version_id, original_sha256,
+       structure_hash, calculation_status, calculation_engine,
+       engine_version, compatibility_status
+     ) VALUES ($1, $2, $3, $4, 'success', 'ClosedXML', 'test', 'passed')`,
+    [
+      workbook.resourceVersionId,
+      workbookFile.resourceVersionId,
+      HASH_A,
+      HASH_B,
+    ],
+  );
+  await client.query(
+    `INSERT INTO mapping_set_version (
+       resource_version_id, template_ir_version_id, workbook_version_id,
+       mapping_status
+     ) VALUES ($1, $2, $3, 'confirmed')`,
+    [
+      mapping.resourceVersionId,
+      template.resourceVersionId,
+      workbook.resourceVersionId,
+    ],
+  );
+  const questionSet = await createResource(
+    client,
+    projectId,
+    userId,
+    "test_question_set",
+  );
+  const questionSetId = randomUUID();
+  await client.query(
+    `INSERT INTO hypothesis_question_set (
+       question_set_id, project_id, resource_id, current_version
+     ) VALUES ($1, $2, $3, 1)`,
+    [questionSetId, projectId, questionSet.resourceId],
+  );
+  await client.query(
+    `INSERT INTO hypothesis_question_set_version (
+       resource_version_id, question_set_id, version_no,
+       generated_from_input_revision, status, created_by_user_id,
+       created_by_actor_type
+     ) VALUES ($1, $2, 1, $3, 'approved', $4, 'user')`,
+    [questionSet.resourceVersionId, questionSetId, HASH_A, userId],
+  );
+  const plan = await createResource(
+    client,
+    projectId,
+    userId,
+    "test_research_plan",
+  );
+  const planId = randomUUID();
+  await client.query(
+    `INSERT INTO research_plan (
+       plan_id, project_id, resource_id, current_resource_version_id,
+       current_version, status, updated_by_user_id
+     ) VALUES ($1, $2, $3, $4, 1, 'approved', $5)`,
+    [
+      planId,
+      projectId,
+      plan.resourceId,
+      plan.resourceVersionId,
+      userId,
+    ],
+  );
+  await client.query(
+    `INSERT INTO research_plan_version (
+       resource_version_id, plan_id, project_id, version_no, status,
+       question_set_id, question_set_version,
+       question_set_resource_version_id, workbook_resource_version_id,
+       workbook_structure_hash, mapping_set_resource_version_id,
+       cutoff_at, plan_snapshot_json, created_by_user_id,
+       approved_by_user_id, approved_at
+     ) VALUES (
+       $1, $2, $3, 1, 'approved', $4, 1, $5, $6, $7, $8,
+       now(), '{}'::jsonb, $9, $9, now()
+     )`,
+    [
+      plan.resourceVersionId,
+      planId,
+      projectId,
+      questionSetId,
+      questionSet.resourceVersionId,
+      workbook.resourceVersionId,
+      HASH_B,
+      mapping.resourceVersionId,
+      userId,
+    ],
+  );
+  return {
+    project_id: projectId,
+    owner_user_id: userId,
+    approved_plan_resource_version_id: plan.resourceVersionId,
+    workbook_resource_version_id: workbook.resourceVersionId,
+    mapping_set_resource_version_id: mapping.resourceVersionId,
+    source_artifact_id: workbookFile.artifactId,
+    plan_content_hash: HASH_A,
+  };
+}
 
 test(
   "Validation 완료는 새 Validated Workbook artifact가 없으면 fail closed한다",
@@ -55,49 +291,12 @@ test(
 test(
   "Validation 완료는 현재 run과 승인 plan에 고정된 성공 Workbook만 선택한다",
   { skip: !databaseUrl },
-  async (context) => {
+  async () => {
     const pool = new Pool({ connectionString: databaseUrl });
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const fixture = await client.query<{
-        project_id: string;
-        owner_user_id: string;
-        approved_plan_resource_version_id: string;
-        workbook_resource_version_id: string;
-        mapping_set_resource_version_id: string;
-        source_artifact_id: string;
-        plan_content_hash: string;
-      }>(
-        `SELECT project.project_id, project.owner_user_id,
-           plan.resource_version_id AS approved_plan_resource_version_id,
-           plan.workbook_resource_version_id,
-           plan.mapping_set_resource_version_id,
-           source_file.artifact_id AS source_artifact_id,
-           plan_resource.content_hash AS plan_content_hash
-         FROM project
-         JOIN research_plan
-           ON research_plan.project_id = project.project_id
-         JOIN research_plan_version plan
-           ON plan.resource_version_id =
-              research_plan.current_resource_version_id
-          AND plan.status = 'approved'
-         JOIN resource_version plan_resource
-           ON plan_resource.resource_version_id = plan.resource_version_id
-         JOIN workbook_version workbook
-           ON workbook.resource_version_id =
-              plan.workbook_resource_version_id
-         JOIN project_file_version source_file
-           ON source_file.resource_version_id =
-              workbook.source_file_version_id
-         ORDER BY project.created_at DESC
-         LIMIT 1`,
-      );
-      const row = fixture.rows[0];
-      if (!row) {
-        context.skip("승인 research plan fixture가 없습니다.");
-        return;
-      }
+      const row = await createApprovedPlanFixture(client);
 
       const sourceSnapshotId = randomUUID();
       await client.query(

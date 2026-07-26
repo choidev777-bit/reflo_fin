@@ -9,6 +9,7 @@ import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ReportMaterializationWorkflowInput,
   ResearchValidationWorkflowInput,
   WorkbookApplicationWorkflowInput,
 } from "./types";
@@ -82,6 +83,18 @@ const workbookApplicationActivities = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumInterval: "1 minute",
     maximumAttempts: 3,
+  },
+});
+
+const reportMaterializationActivities = proxyActivities<typeof activities>({
+  taskQueue: "report-materialization",
+  startToCloseTimeout: "10 minutes",
+  heartbeatTimeout: "1 minute",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 2,
   },
 });
 
@@ -322,6 +335,46 @@ export async function workbookApplicationWorkflow(
           message.slice(0, 500),
         );
       }
+    });
+    throw error;
+  }
+}
+
+export async function reportMaterializationWorkflow(
+  input: ReportMaterializationWorkflowInput,
+): Promise<void> {
+  try {
+    await reportMaterializationActivities.materializeAndPublishReport(input);
+  } catch (error) {
+    await CancellationScope.nonCancellable(async () => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "REPORT_MATERIALIZATION_FAILED";
+      const cancelled = isCancellation(error);
+      const code = cancelled
+        ? "REPORT_MATERIALIZATION_CANCELLED"
+        : (message.match(/([A-Z][A-Z0-9_]{4,})/)?.[1] ??
+          "REPORT_MATERIALIZATION_FAILED");
+      if (cancelled) {
+        await scanActivities.reportCancellation(
+          input.jobId,
+          input.jobAttempt,
+        );
+      } else {
+        await scanActivities.reportFailure(
+          input.jobId,
+          input.jobAttempt,
+          code,
+          "보고서 초안을 생성하지 못했습니다.",
+          true,
+        );
+      }
+      await reportMaterializationActivities.reportReportMaterializationFailure(
+        input,
+        code,
+        message.slice(0, 1000),
+      );
     });
     throw error;
   }

@@ -26,6 +26,7 @@ import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ReportMaterializationWorkflowInput,
   ResearchValidationWorkflowInput,
   WorkbookApplicationWorkflowInput,
   PdfInspectionResult,
@@ -35,6 +36,10 @@ import type {
   WorkbookApplicationWorkerResult,
 } from "../../server/domain/workbook-application";
 import { buildMappingSet } from "./mapping";
+import {
+  executeReportMaterialization,
+  failReportMaterialization,
+} from "../../server/infrastructure/repositories/report-repository";
 
 const internalApiUrl =
   process.env.REFLO_INTERNAL_API_URL?.replace(/\/$/, "") ||
@@ -331,6 +336,7 @@ export async function applyAndPublishWorkbook(
         expectedStructureHash: null,
         commands: input.plan.commands.map((command) => ({
           targetId: command.targetId,
+          semanticKey: command.semanticKey,
           sheetId:
             command.generatedBridge && command.sheetId === "_REFLO_BRIDGE"
               ? null
@@ -428,6 +434,60 @@ export async function applyAndPublishWorkbook(
       },
     },
   );
+}
+
+export async function materializeAndPublishReport(
+  input: ReportMaterializationWorkflowInput,
+): Promise<void> {
+  const activity = Context.current();
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    "materializing_report",
+    15,
+    "승인된 입력 스냅샷으로 보고서 데이터 블록을 생성하고 있습니다.",
+  );
+  const heartbeatTimer = setInterval(() => {
+    try {
+      activity.heartbeat({
+        phase: "materializing_report",
+        progressPercent: 15,
+      });
+    } catch {
+      // The cancellation signal below is the authoritative stop path.
+    }
+  }, 20_000);
+  heartbeatTimer.unref();
+  try {
+    await executeReportMaterialization({
+      materializationRunId: input.materializationRunId,
+      jobId: input.jobId,
+      attempt: input.jobAttempt,
+      projectId: input.projectId,
+      sourceSnapshotId: input.sourceSnapshotId,
+      sourceFingerprint: input.sourceFingerprint,
+      outlineApprovalId: input.outlineApprovalId,
+      requestedByUserId: input.requestedByUserId,
+      signal: activity.cancellationSignal,
+    });
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+}
+
+export async function reportReportMaterializationFailure(
+  input: ReportMaterializationWorkflowInput,
+  code: string,
+  message: string,
+): Promise<void> {
+  await failReportMaterialization({
+    materializationRunId: input.materializationRunId,
+    jobId: input.jobId,
+    attempt: input.jobAttempt,
+    code,
+    message,
+  });
 }
 
 export async function inspectAndFinalize(

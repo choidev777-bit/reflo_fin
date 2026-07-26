@@ -1,6 +1,6 @@
 # Implementation Plan: REFLO 종단간 리서치·Excel·보고서 자동화 완성
 
-**상태:** 승인됨 · Phase 1·2·3 완료 · Phase 4 미착수<br>
+**상태:** 승인됨 · Phase 1·2·3·4 완료 · Phase 5 대기<br>
 **작성일:** 2026-07-26  
 **최종 수정일:** 2026-07-26  
 **예상 구현:** 7개 독립 Phase, 집중 개발 28시간 내외  
@@ -8,7 +8,7 @@
 **기준 Fixture:** `fixtures/ISC_095340_4Q25_Valuation_하나증권_12.xlsx`와 대응 ISC PDF  
 
 > 이 문서는 기존의 부분 계획을 종단간 관점에서 통합한 **승인된 완성 실행 계획**이다.<br>
-> 2026-07-26에는 사용자 지시에 따라 Phase 1, Phase 2, Phase 3을 순서대로 완료했으며 Phase 4 이후 범위는 미착수 상태로 보존한다.
+> 2026-07-26에는 사용자 지시에 따라 Phase 1, Phase 2, Phase 3, Phase 4를 순서대로 완료했으며 Phase 5 이후 범위는 미착수 상태로 보존한다.
 
 관련 부분 계획:
 
@@ -821,56 +821,97 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 **목표:** 하나의 승인 Workbook에서 모든 동적 보고서 block snapshot을 만들고 version·provenance를 고정한다.  
 **예상:** 4시간  
-**상태:** 대기  
+**실제:** 약 4시간<br>
+**상태:** 완료<br>
 **의존성:** Phase 3
 
 ### RED — 테스트 먼저
 
-- [ ] `source-react/tests/phase5-domain.test.ts` 확장
+- [x] 전용 `source-react/tests/phase4-report-materialization.test.ts`에 계보 테스트 추가
   - Validated Workbook lineage 확인
   - stale Workbook 승인 차단
-- [ ] `source-react/tests/phase6-domain.test.ts` 확장
+- [x] 전용 `source-react/tests/phase4-report-materialization.test.ts`에 materialization 테스트 추가
   - scalar raw/formatted materialization
   - table exact cell matrix
   - chart axis·series role
   - composite chart
   - 하나라도 blocked면 report materialization 실패
-- [ ] P/E/P/B band 정상·부족 데이터 fixture 테스트 작성
+- [x] P/E/P/B band 정상·부족 데이터 fixture 테스트 작성
 
 ### GREEN — 최소 구현
 
-- [ ] repository의 `bindingDefinition`이 ScalarBinding을 복원하도록 수정
-- [ ] `materializeScalarBinding` 구현
-- [ ] valuation approval·market snapshot·Workbook cell source resolver 구현
-- [ ] table snapshot에 merged cell·dimension·style 추가
-- [ ] chart snapshot에 primary/secondary axis·type·forecast 추가
-- [ ] composite chart category 정렬과 series merge 구현
-- [ ] P/E/P/B 필요한 기간·주가·band series를 `_REFLO_BRIDGE`에서 제공
-- [ ] materialization 결과를 versioned artifact/DB block row로 저장
-- [ ] Outline 승인을 `202 + task`로 변경
-- [ ] LLM narrative와 deterministic data materializer를 같은 DB transaction에서 분리
-- [ ] Report creation은 모든 required block이 `ready`일 때만 완료
+- [x] repository의 `bindingDefinition`이 ScalarBinding을 복원하도록 수정
+- [x] `materializeScalarBinding` 구현
+- [x] valuation approval·market snapshot·Workbook cell source resolver 구현
+- [x] table snapshot에 merged cell·dimension·style 추가
+- [x] chart snapshot에 primary/secondary axis·type·forecast 추가
+- [x] composite chart category 정렬과 series merge 구현
+- [x] P/E/P/B 필요한 기간·주가·band series를 `_REFLO_BRIDGE`에서 제공
+- [x] materialization 결과를 versioned artifact/DB block row로 저장
+- [x] Outline 승인을 `202 + task`로 변경
+- [x] LLM narrative와 deterministic data materializer를 같은 DB transaction에서 분리
+- [x] Report creation은 모든 required block이 `ready`일 때만 완료
 
 ### REFACTOR
 
-- [ ] 큰 cell matrix를 report page JSON에 반복 저장하지 않고 snapshot ID 참조
-- [ ] source resolver를 scalar/table/chart 공통 interface로 통합
-- [ ] blocker code와 provenance serializer 정리
+- [x] 큰 cell matrix를 report page JSON에 반복 저장하지 않고 snapshot ID 참조
+- [x] source resolver를 scalar/table/chart 공통 interface로 통합
+- [x] blocker code와 provenance serializer 정리
 
 ### 품질 게이트
 
-- [ ] EPS·PER·목표주가·현재주가 scalar ready
-- [ ] 재무표 4개 ready
-- [ ] 지원 데이터 차트 전부 ready
-- [ ] 원본 PDF의 과거 숫자를 silent fallback으로 사용하지 않음
-- [ ] 한 run의 모든 block이 같은 SourceSnapshot을 참조
-- [ ] 공통 검증 명령 통과
+- [x] EPS·PER·목표주가·현재주가 scalar ready
+- [x] 재무표 4개 ready
+- [x] 지원 데이터 차트 전부 ready(승인된 정상 fixture 기준)
+- [x] 원본 PDF의 과거 숫자를 silent fallback으로 사용하지 않음
+- [x] 한 run의 모든 block이 같은 SourceSnapshot을 참조
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
 - 기존 report version을 수정하지 않는다.
 - 새 materializer version이 실패하면 report pointer를 승격하지 않는다.
 - 기능 flag로 기존 report 읽기 경로를 유지하되 “완성 초안”으로 표시하지 않는다.
+
+### Phase 4 완료 기록 — 2026-07-26
+
+**RED**
+
+- exact Validated Workbook artifact/hash 계보, scalar raw/formatted 값, 4개 독립 재무표, composite axis·series role, required block fail-closed 테스트를 먼저 추가해 미구현 경계를 재현했다.
+- 기존 `_REFLO_BRIDGE`의 target/value/Evidence 3열만으로는 기간별 P/E·P/B band를 재현할 수 없음을 정상·부족 fixture로 고정했다.
+- Outline 승인 경로가 동기 보고서 생성에 묶여 있고 versioned materialization block/artifact가 없던 상태를 wiring 테스트로 고정했다.
+- 연결만 `confirmed`이고 ready snapshot이 없는 블록은 원본 PDF의 과거 숫자가 남아 있어도 검증을 통과할 수 없도록 회귀 테스트를 추가했다.
+
+**GREEN**
+
+- 승인된 valuation·market snapshot·Workbook read model을 하나의 resolver 경계에서 읽어 scalar/table/chart/composite snapshot을 결정적으로 생성한다.
+- 표는 raw/formatted/formula matrix, merge, 행·열 크기, style과 row role을 보존하고, 차트는 category, primary/secondary axis, series role·type·forecast를 보존한다.
+- `_REFLO_BRIDGE`를 metric·period·unit·scope·Evidence가 포함된 semantic long-form range로 확장하고 승인된 기초지표·배수·주가로만 P/E·P/B band를 계산한다.
+- Outline 승인은 `202 + task`를 반환하며 Temporal 작업이 LLM narrative를 transaction 밖에서 생성한 뒤 deterministic snapshot, 불변 artifact, block row, report version을 저장한다.
+- commit 직전 SourceSnapshot과 활성 report pointer를 다시 검사하며, 하나라도 blocked이면 새 report pointer를 승격하지 않는다.
+
+**REFACTOR**
+
+- report page에는 큰 matrix를 중복 저장하지 않고 `materializationSnapshotId`만 저장하며 조회 시 versioned block snapshot을 hydrate한다.
+- scalar/table/chart가 Workbook range resolver와 provenance builder를 공유하도록 통합했다.
+- materialization artifact serializer를 strict schema 경계에 맞추고 blocker·display rule·source reference 직렬화를 정리했다.
+- valuation 초기화도 동일한 exact Workbook lineage 비교 함수를 사용하도록 연결해 오래된 원본/validated Workbook artifact를 거부한다.
+
+| 검증 | 완료 결과 |
+|---|---|
+| Phase 4 domain | materialization 13/13, async wiring 3/3 통과 |
+| Source tests | 118 total, 106 pass, 11 DB-env skip, Phase 6 intentional TODO 1, fail 0 |
+| Explicit Postgres integration | 11/11 pass; ownership·lock·late/duplicate/obsolete·Validated Workbook exact pin |
+| Contract | 16 schemas, 29 fixtures, 21 result types drift 0; OpenAPI Redocly strict lint 통과 |
+| Migration | 실제 DB 적용 확인, 격리 DB full up → Phase 4 down → up 통과, 현재 up |
+| Next | lint 0 errors(기존 warning 22), typecheck·production build 통과 |
+| Browser | Playwright 10/10 통과 |
+| Workers | PDF 9/9, Excel 5/5, .NET 9 Release build 0 warnings/errors |
+| Diff | `git diff --check` 통과 |
+
+기준 ISC Workbook 자체에는 아직 기간별 주가·P/E·P/B band 승인 행이 없으므로 도표 2·3은 조용히 과거 데이터를 재사용하지 않고 `BAND_*` blocker로 중단된다. 정상 semantic bridge fixture는 ready이며, 실제 프로젝트는 Phase 3 승인 Evidence로 해당 행이 생성된 경우에만 진행한다.
+
+Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없었다. 동일 worker와 테스트 csproj를 공식 .NET 9 SDK Docker 이미지에서 빌드·실행해 대체 검증했다.
 
 ---
 
@@ -1301,11 +1342,11 @@ ISC 6페이지 fixture 기준:
 | Phase 1 계약·버전 계보 | 완료 | 4h | 1h 30m |
 | Phase 2 분석·매핑·스타일 | 완료 | 4h | 2h |
 | Phase 3 Evidence→Workbook | 완료 | 4h | 1h |
-| Phase 4 typed materialization | 대기 | 4h | - |
+| Phase 4 typed materialization | 완료 | 4h | 4h |
 | Phase 5 공용 renderer·UI | 대기 | 4h | - |
 | Phase 6 PDF·검증·export | 대기 | 4h | - |
 | Phase 7 migration·E2E·출시 | 대기 | 4h | - |
-| **합계** | **3/7** | **28h** | **4h 30m** |
+| **합계** | **4/7** | **28h** | **8h 30m** |
 
 PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 개발 시간에 포함하지 않는다.
 
@@ -1318,7 +1359,7 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - 시트명을 PDF 제목과 같게 바꾸는 것만으로 차트 데이터 부족 문제는 해결되지 않는다.
 - P/E/P/B Band는 기간·주가·band series가 필요하다.
 - 자료 수집 Evidence는 Phase 3에서 승인된 cell만 새 immutable Workbook artifact에 실제 적용되도록 완료했다.
-- scalar materializer가 없어 PDF의 과거 EPS 등이 남을 수 있다.
+- scalar/table/chart materializer는 완성됐으며 ready snapshot이 없으면 원본 PDF의 과거 숫자를 사용할 수 없다.
 - 브라우저 overlay는 final PDF가 아니다.
 - 현재 export PDF는 원본 PDF artifact를 사용한다.
 - 도표 6은 fixed visual로 유지해야 한다.
@@ -1361,6 +1402,14 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - 결과 commit은 application/job row lock보다 project lineage advisory lock을 먼저 획득하고, terminal 상태 및 현재 validation run·version·plan을 artifact 저장 전에 재검사해야 한다.
 - 검토용 GET은 immutable resource라도 생성하면 안 되며, 상태 생성은 CSRF가 적용된 명시적 POST로 분리해야 한다.
 
+### Phase 4 학습
+
+- MappingSet의 `confirmed` 상태만으로는 보고서 숫자 권위를 보장할 수 없고, exact Validated Workbook artifact/hash와 valuation·market approval까지 함께 비교해야 한다.
+- P/E/P/B band는 sheet 이름이나 배수 목록으로 복원할 수 없으며 기간별 기초지표·배수·주가·Evidence를 가진 semantic bridge가 필요하다.
+- LLM 문장 생성은 장시간 DB transaction 밖에서 실행하고, 시작·완료 양쪽에서 동일 SourceSnapshot과 report pointer를 재검사해야 stale 결과를 게시하지 않는다.
+- 큰 table/chart matrix를 report page마다 복제하면 version 저장과 편집 비용이 커지므로 불변 block snapshot과 ID 참조가 더 안전하다.
+- 기준 ISC 입력의 band 데이터 결손은 구현 실패가 아니라 명시적 데이터 blocker이며, 과거 PDF 값이나 추정 series로 우회해서는 안 된다.
+
 ---
 
 ## 17. 최종 완료 체크리스트
@@ -1397,10 +1446,10 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 ## 18. 다음 행동
 
-1. Phase 3 완료 결과와 immutable Validated Workbook 계보를 검토한다.
-2. 사용자 지시가 있을 때만 Phase 4의 RED부터 시작한다.
+1. Phase 4 완료 결과와 불변 ReportMaterialization 계보를 검토한다.
+2. 사용자 지시가 있을 때만 Phase 5의 RED부터 시작한다.
 3. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
 
-**Plan Status:** 승인됨 · Phase 1·2·3 완료 · Phase 4 미착수<br>
-**Next Action:** 사용자 지시 후 Phase 4 RED 시작<br>
+**Plan Status:** 승인됨 · Phase 1·2·3·4 완료 · Phase 5 대기<br>
+**Next Action:** 사용자 지시 후 Phase 5 RED 시작<br>
 **Blocked By:** 없음

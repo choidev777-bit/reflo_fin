@@ -1024,8 +1024,13 @@ static string WorksheetVisibility(IXLWorksheet worksheet)
 }
 
 static string StableSheetId(ZipInsights zip, IXLWorksheet worksheet) =>
-    zip.SheetsByPosition.GetValueOrDefault(worksheet.Position)?.StableSheetId ??
-    $"sheet_{worksheet.Position}";
+    string.Equals(
+        worksheet.Name,
+        "_REFLO_BRIDGE",
+        StringComparison.Ordinal)
+        ? "_REFLO_BRIDGE"
+        : zip.SheetsByPosition.GetValueOrDefault(worksheet.Position)?.StableSheetId ??
+          $"sheet_{worksheet.Position}";
 
 static DependencyImpactResult AnalyzeValuationDependencies(
     XLWorkbook workbook,

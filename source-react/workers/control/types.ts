@@ -138,6 +138,18 @@ export type WorkbookApplicationWorkflowInput = {
   inputVersionIds: string[];
 };
 
+export type ReportMaterializationWorkflowInput = {
+  workflowType: "reportMaterializationWorkflow";
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  materializationRunId: string;
+  sourceSnapshotId: string;
+  sourceFingerprint: string;
+  outlineApprovalId: string;
+  requestedByUserId: string;
+};
+
 export type InspectionIssue = {
   code: string;
   severity: "info" | "warning" | "blocking";

@@ -23,7 +23,14 @@ public sealed record WorkbookPatchCommand(
     string? AfterValue,
     IReadOnlyList<string> EvidenceIds,
     string? ExpectedStructureFingerprint,
-    bool GeneratedBridge);
+    bool GeneratedBridge,
+    WorkbookSemanticKey? SemanticKey = null);
+
+public sealed record WorkbookSemanticKey(
+    string Metric,
+    string Period,
+    string Unit,
+    string Scope);
 
 public sealed record WorkbookApplicationOutputBinding(
     string Metric,
@@ -147,6 +154,14 @@ public static class WorkbookApplicationEngine
                 "WORKBOOK_APPLICATION_EVIDENCE_REQUIRED",
                 "Every workbook command must reference approved Evidence.");
         }
+        if (request.Commands.Any(command =>
+                command.GeneratedBridge &&
+                command.SemanticKey is null))
+        {
+            throw new WorkbookApplicationException(
+                "WORKBOOK_BRIDGE_SEMANTIC_KEY_REQUIRED",
+                "Every generated bridge command must preserve its approved semantic key.");
+        }
 
         var protectedBefore = ProtectedPartHashes(sourceBytes);
         var sourceSheetIds = ReadStableSheetIds(sourceBytes);
@@ -163,6 +178,25 @@ public static class WorkbookApplicationEngine
             throw new WorkbookApplicationException(
                 "WORKBOOK_STRUCTURE_MISMATCH",
                 "Workbook structure changed after the application was approved.");
+        }
+
+        var firstBridgeCommand = request.Commands.FirstOrDefault(
+            command => command.GeneratedBridge);
+        if (firstBridgeCommand is not null)
+        {
+            var bridge = ResolveWorksheet(
+                workbook,
+                firstBridgeCommand,
+                sourceSheetIds);
+            var lastUsedRow = bridge
+                .LastRowUsed(XLCellsUsedOptions.All)
+                ?.RowNumber() ?? 1;
+            if (lastUsedRow >= 2)
+            {
+                bridge
+                    .Range(2, 1, lastUsedRow, 7)
+                    .Clear(XLClearOptions.Contents);
+            }
         }
 
         var changedCells = new List<WorkbookChangedCell>();
@@ -213,6 +247,10 @@ public static class WorkbookApplicationEngine
                 worksheet.Cell(row, 1).Value = command.TargetId;
                 worksheet.Cell(row, 3).Value =
                     string.Join(",", command.EvidenceIds.Order(StringComparer.Ordinal));
+                worksheet.Cell(row, 4).Value = command.SemanticKey!.Metric;
+                worksheet.Cell(row, 5).Value = command.SemanticKey.Period;
+                worksheet.Cell(row, 6).Value = command.SemanticKey.Unit;
+                worksheet.Cell(row, 7).Value = command.SemanticKey.Scope;
             }
 
             var beforeValue = CanonicalValue(cell);
@@ -332,9 +370,31 @@ public static class WorkbookApplicationEngine
             if (bridge is null)
             {
                 bridge = workbook.AddWorksheet("_REFLO_BRIDGE");
-                bridge.Cell("A1").Value = "target_id";
-                bridge.Cell("B1").Value = "approved_value";
-                bridge.Cell("C1").Value = "evidence_ids";
+            }
+            var headers = new[]
+            {
+                "target_id",
+                "approved_value",
+                "evidence_ids",
+                "metric",
+                "period",
+                "unit",
+                "scope",
+            };
+            for (var column = 1; column <= headers.Length; column += 1)
+            {
+                var existing = bridge.Cell(1, column).GetString();
+                if (!string.IsNullOrEmpty(existing) &&
+                    !string.Equals(
+                        existing,
+                        headers[column - 1],
+                        StringComparison.Ordinal))
+                {
+                    throw new WorkbookApplicationException(
+                        "WORKBOOK_BRIDGE_SCHEMA_MISMATCH",
+                        "The existing _REFLO_BRIDGE sheet is not system-owned.");
+                }
+                bridge.Cell(1, column).Value = headers[column - 1];
             }
             bridge.Visibility = XLWorksheetVisibility.VeryHidden;
             return bridge;

@@ -466,6 +466,12 @@ test("안전한 input cell이 없을 때 승인 Evidence 기반 _REFLO_BRIDGE �
   assert.deepEqual(plan.commands, [
     {
       targetId: "target-revenue",
+      semanticKey: {
+        metric: "revenue",
+        period: "2026년 1분기",
+        unit: "백만원",
+        scope: "연결",
+      },
       sheetId: "_REFLO_BRIDGE",
       sheetName: "_REFLO_BRIDGE",
       address: "B2",

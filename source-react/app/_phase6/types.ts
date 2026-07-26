@@ -182,6 +182,7 @@ export type ReportOutlineWorkspace = {
     taskId: string;
     operationStatus: string;
     reportRoute: string;
+    statusUrl: string | null;
   } | null;
   workflow: { stageStates: StageState[] };
   navigation: {

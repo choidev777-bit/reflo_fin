@@ -168,6 +168,82 @@ public sealed class WorkbookApplicationEngineTests
         Assert.Equal(XLWorksheetVisibility.VeryHidden, bridge.Visibility);
         Assert.Equal("target-eps", bridge.Cell("A2").GetString());
         Assert.Equal("evidence-1", bridge.Cell("C2").GetString());
+        Assert.Equal("forward_eps", bridge.Cell("D2").GetString());
+        Assert.Equal("FY2026", bridge.Cell("E2").GetString());
+        Assert.Equal("KRW/share", bridge.Cell("F2").GetString());
+        Assert.Equal("consolidated", bridge.Cell("G2").GetString());
+    }
+
+    [Fact]
+    public void ReplacesStaleGeneratedBridgeRowsBeforeApplyingCommands()
+    {
+        using var workbook = new XLWorkbook();
+        workbook.AddWorksheet("Input").Cell("A1").Value = "source";
+        var bridge = workbook.AddWorksheet("_REFLO_BRIDGE");
+        var headers = new[]
+        {
+            "target_id",
+            "approved_value",
+            "evidence_ids",
+            "metric",
+            "period",
+            "unit",
+            "scope",
+        };
+        for (var column = 1; column <= headers.Length; column += 1)
+        {
+            bridge.Cell(1, column).Value = headers[column - 1];
+        }
+        bridge.Cell("A20").Value = "stale-target";
+        bridge.Cell("B20").Value = 999;
+        bridge.Cell("C20").Value = "stale-evidence";
+        bridge.Visibility = XLWorksheetVisibility.VeryHidden;
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var source = stream.ToArray();
+
+        var result = WorkbookApplicationEngine.Apply(
+            source,
+            new WorkbookApplicationRequest(
+                ExpectedWorkbookHash: Sha(source),
+                ExpectedStructureHash: null,
+                Commands:
+                [
+                    BridgeCommand("target-eps", "B2", "12401"),
+                ],
+                OutputBindings: []));
+
+        using var output = new XLWorkbook(new MemoryStream(result.WorkbookBytes));
+        var outputBridge = output.Worksheet("_REFLO_BRIDGE");
+        Assert.Equal("target-eps", outputBridge.Cell("A2").GetString());
+        Assert.True(outputBridge.Cell("A20").IsEmpty());
+        Assert.True(outputBridge.Cell("B20").IsEmpty());
+        Assert.True(outputBridge.Cell("C20").IsEmpty());
+    }
+
+    [Fact]
+    public void RejectsAnExistingBridgeWithAConflictingSchema()
+    {
+        using var workbook = new XLWorkbook();
+        workbook.AddWorksheet("Input").Cell("A1").Value = "source";
+        workbook.AddWorksheet("_REFLO_BRIDGE").Cell("A1").Value = "user_data";
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        var source = stream.ToArray();
+
+        var error = Assert.Throws<WorkbookApplicationException>(() =>
+            WorkbookApplicationEngine.Apply(
+                source,
+                new WorkbookApplicationRequest(
+                    ExpectedWorkbookHash: Sha(source),
+                    ExpectedStructureHash: null,
+                    Commands:
+                    [
+                        BridgeCommand("target-eps", "B2", "12401"),
+                    ],
+                    OutputBindings: [])));
+
+        Assert.Equal("WORKBOOK_BRIDGE_SCHEMA_MISMATCH", error.Code);
     }
 
     [Fact]
@@ -247,7 +323,18 @@ public sealed class WorkbookApplicationEngineTests
             AfterValue: value,
             EvidenceIds: ["evidence-1"],
             ExpectedStructureFingerprint: null,
-            GeneratedBridge: true);
+            GeneratedBridge: true,
+            SemanticKey: new WorkbookSemanticKey(
+                Metric: targetId switch
+                {
+                    "target-eps" => "forward_eps",
+                    "target-per" => "target_per",
+                    "target-price" => "target_price",
+                    _ => targetId,
+                },
+                Period: "FY2026",
+                Unit: "KRW/share",
+                Scope: "consolidated"));
 
     private static string Sha(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
