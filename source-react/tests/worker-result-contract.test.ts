@@ -46,6 +46,33 @@ test("worker result envelopes use the canonical command version and lineage fiel
   assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
 });
 
+test("hypothesis question output can be wrapped in the canonical worker result envelope", () => {
+  const fixturePath = fileURLToPath(
+    new URL(
+      "../../contracts/schemas/fixtures/valid/agent-hypothesis-output.json",
+      import.meta.url,
+    ),
+  );
+  const payload = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const envelope = createWorkerResultEnvelope({
+    attempt: 1,
+    sequence: 3,
+    inputVersionIds: ["hypothesis_version_01"],
+    resultType: "hypothesis_questions",
+    payload,
+    result: {
+      entityType: "hypothesis_questions",
+      entityId: "generation_1",
+      version: 1,
+    },
+    artifacts: [],
+    tool: { name: "reflo-control", version: "1.0.0" },
+  });
+
+  assert.equal(envelope.resultType, "hypothesis_questions");
+  assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
+});
+
 test("worker result envelopes reject legacy versions and missing commit lineage", () => {
   assert.throws(
     () =>

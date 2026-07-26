@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { connect } from "node:net";
-import { Context } from "@temporalio/activity";
+import { ApplicationFailure, Context } from "@temporalio/activity";
 import yauzl from "yauzl";
 import {
   createWorkerDownloadUrl,
@@ -682,9 +682,9 @@ export async function generateHypothesisQuestions(
     throw new Error("LLM worker response is missing output");
   }
   const payload = responseBody.output;
-  await internalPost(
-    `/internal/v1/jobs/${input.jobId}/results`,
-    createWorkerResultEnvelope({
+  let envelope;
+  try {
+    envelope = createWorkerResultEnvelope({
       attempt: input.jobAttempt,
       sequence: 3,
       inputVersionIds: input.sourceInputVersionIds,
@@ -697,7 +697,17 @@ export async function generateHypothesisQuestions(
       },
       artifacts: [],
       tool: controlWorkerTool,
-    }),
+    });
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(
+      "LLM worker returned an invalid hypothesis question payload",
+      "AGENT_OUTPUT_INVALID",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    envelope,
   );
 }
 
