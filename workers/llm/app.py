@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -946,7 +945,6 @@ async def health() -> dict[str, str]:
 @app.post("/hypothesis/questions")
 async def generate_questions(body: RequestBody) -> dict[str, object]:
     started_at = datetime.now(UTC)
-    started = time.monotonic()
     if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         if FIXTURE_FAIL_TWICE_MARKER in body.input.hypothesis:
             attempt = fixture_failure_attempts.get(body.input.inputRevision, 0)
@@ -1033,7 +1031,6 @@ async def generate_questions(body: RequestBody) -> dict[str, object]:
                 "inputTokens": input_tokens,
                 "outputTokens": output_tokens,
             },
-            "latencyMs": max(0, round((time.monotonic() - started) * 1000)),
         },
         "warnings": [],
     }

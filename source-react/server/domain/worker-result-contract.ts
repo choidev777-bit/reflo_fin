@@ -67,16 +67,39 @@ if (!compiledWorkerResultEnvelope) {
 }
 const validateWorkerResultEnvelope = compiledWorkerResultEnvelope;
 
-function invalid(): never {
-  throw new Error("WORKER_RESULT_ENVELOPE_INVALID");
+function schemaValidationDiagnostic(): string {
+  return (validateWorkerResultEnvelope.errors ?? [])
+    .slice(0, 5)
+    .map((error) => {
+      const path = error.instancePath || "/";
+      const additionalProperty =
+        error.keyword === "additionalProperties" &&
+        typeof error.params.additionalProperty === "string"
+          ? `/${error.params.additionalProperty}`
+          : "";
+      return `${path}${additionalProperty} ${error.keyword}`;
+    })
+    .join("; ");
+}
+
+function invalid(diagnostic?: string): never {
+  throw new Error(
+    diagnostic
+      ? `WORKER_RESULT_ENVELOPE_INVALID: ${diagnostic}`
+      : "WORKER_RESULT_ENVELOPE_INVALID",
+  );
 }
 
 export function parseWorkerResultEnvelope(
   value: unknown,
 ): WorkerResultEnvelope {
-  if (!validateWorkerResultEnvelope(value)) invalid();
+  if (!validateWorkerResultEnvelope(value)) {
+    invalid(schemaValidationDiagnostic());
+  }
   const envelope = value as WorkerResultEnvelope;
-  if (envelope.results[0].hash !== contentHash(envelope.payload)) invalid();
+  if (envelope.results[0].hash !== contentHash(envelope.payload)) {
+    invalid("/results/0/hash contentHash");
+  }
   return envelope;
 }
 

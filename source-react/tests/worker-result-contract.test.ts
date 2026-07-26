@@ -21,6 +21,40 @@ const FILE_SCAN_PAYLOAD = {
   tool: { name: "reflo-file-scan", version: "1.0.0" },
   inspectedAt: "2026-07-26T00:00:00.000Z",
 };
+const HYPOTHESIS_QUESTIONS_PAYLOAD = {
+  schemaVersion: "1.0",
+  outputType: "hypothesis_questions",
+  inputVersionRefs: [
+    {
+      role: "hypothesis_draft",
+      resourceVersionId: "rv_hypothesis_1",
+      version: 2,
+      contentHash: HASH,
+    },
+  ],
+  questions: [1, 2, 3].map((priority) => ({
+    questionKey: `q_0${priority}`,
+    text: `대덕전자 2026년 1분기 핵심 지표 ${priority}은 개선됐는가?`,
+    purpose: `핵심 지표 ${priority}의 투자 가설 검증`,
+    metrics: [`핵심 지표 ${priority}`],
+    period: "2026년 1분기",
+    comparison: "전년 동기",
+    sourceTypes: ["filing", "company"],
+    priority,
+  })),
+  missingContext: [],
+  metadata: {
+    provider: "openai",
+    model: "test:hypothesis-fixture",
+    promptVersion: "hypothesis-v2",
+    outputSchemaId:
+      "https://schemas.reflo.dev/worker/v1/agent-output.schema.json",
+    startedAt: "2026-07-27T00:00:00.000Z",
+    finishedAt: "2026-07-27T00:00:01.000Z",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  },
+  warnings: [],
+};
 
 test("worker result envelopes use the canonical command version and lineage fields", () => {
   const envelope = createWorkerResultEnvelope({
@@ -100,6 +134,54 @@ test("worker result envelopes reject unknown top-level fields", () => {
   assert.throws(
     () => parseWorkerResultEnvelope({ ...envelope, ignored: true }),
     /WORKER_RESULT_ENVELOPE_INVALID/,
+  );
+});
+
+test("hypothesis question worker output passes the canonical envelope contract", () => {
+  const envelope = createWorkerResultEnvelope({
+    attempt: 1,
+    sequence: 3,
+    inputVersionIds: ["rv_hypothesis_1"],
+    resultType: "hypothesis_questions",
+    payload: HYPOTHESIS_QUESTIONS_PAYLOAD,
+    result: {
+      entityType: "hypothesis_questions",
+      entityId: "generation_1",
+      version: 1,
+    },
+    artifacts: [],
+    tool: { name: "reflo-control", version: "1.0.0" },
+  });
+
+  assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
+});
+
+test("hypothesis question worker output rejects unknown metadata with a safe diagnostic", () => {
+  const payload = {
+    ...HYPOTHESIS_QUESTIONS_PAYLOAD,
+    metadata: {
+      ...HYPOTHESIS_QUESTIONS_PAYLOAD.metadata,
+      latencyMs: 1_000,
+    },
+  };
+
+  assert.throws(
+    () =>
+      createWorkerResultEnvelope({
+        attempt: 1,
+        sequence: 3,
+        inputVersionIds: ["rv_hypothesis_1"],
+        resultType: "hypothesis_questions",
+        payload,
+        result: {
+          entityType: "hypothesis_questions",
+          entityId: "generation_1",
+          version: 1,
+        },
+        artifacts: [],
+        tool: { name: "reflo-control", version: "1.0.0" },
+      }),
+    /WORKER_RESULT_ENVELOPE_INVALID: \/payload\/metadata\/latencyMs additionalProperties/,
   );
 });
 

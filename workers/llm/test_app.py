@@ -106,6 +106,19 @@ class HypothesisAgentContractTest(unittest.TestCase):
         self.assertEqual(
             "hypothesis-v2", payload["output"]["metadata"]["promptVersion"]
         )
+        self.assertEqual(
+            {
+                "provider",
+                "model",
+                "promptVersion",
+                "outputSchemaId",
+                "startedAt",
+                "finishedAt",
+                "usage",
+            },
+            set(payload["output"]["metadata"]),
+        )
+        self.assertNotIn("latencyMs", payload["output"]["metadata"])
 
     def test_fixture_failure_is_retryable_then_succeeds(self) -> None:
         fixture_failure_attempts.pop(self.input.inputRevision, None)
