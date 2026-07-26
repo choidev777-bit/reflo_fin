@@ -58,6 +58,16 @@ export const METRIC_ALIASES: Readonly<Record<string, readonly string[]>> = {
   cash_flow_statement_table: ["현금흐름표", "cash flow statement", "cash flow"],
   financial_cash_flow_table: ["현금흐름표", "cash flow statement", "cash flow"],
   stock_price: ["주가추이", "stock price", "price trend"],
+  figure_6_chart: [
+    "도표6",
+    "분기실적전망수정후",
+    "quarterly performance outlook revised",
+  ],
+  figure_7_chart: [
+    "도표7",
+    "분기실적전망수정전",
+    "quarterly performance outlook prior",
+  ],
 };
 
 /**
@@ -66,6 +76,19 @@ export const METRIC_ALIASES: Readonly<Record<string, readonly string[]>> = {
  * exact sheet and address; they are never treated as semantic evidence.
  */
 type WorkbookLayoutHint = readonly [sheetName: string, address: string];
+
+export const REFLO_REPORT_OUTPUT_PROFILE: {
+  readonly profileVersion: string;
+  readonly rangeHints: Readonly<
+    Record<string, readonly WorkbookLayoutHint[]>
+  >;
+} = {
+  profileVersion: "reflo-report-output/1.0",
+  rangeHints: {
+    figure_6_chart: [["10_도표6_분기실적전망_수정후", "A4:M22"]],
+    figure_7_chart: [["11_도표7_분기실적전망_수정전", "A4:M22"]],
+  },
+};
 
 export const LEGACY_ISC_WORKBOOK_PROFILE: {
   readonly profileVersion: string;

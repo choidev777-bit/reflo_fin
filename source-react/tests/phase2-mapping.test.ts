@@ -7,6 +7,7 @@ import workerResultSchemas from "../server/domain/generated/worker-result-schema
 import {
   buildMappingRevisionBinding,
   deserializeMappingCandidateSource,
+  pdfPageProjection,
   serializeMappingCandidateSource,
   type MappingRevisionEntry,
 } from "../server/infrastructure/repositories/file-repository";
@@ -42,6 +43,149 @@ const validateCompositeChartBinding = contractAjv.getSchema(
 if (!validateCompositeChartBinding) {
   throw new Error("CompositeChartBinding contract schema unavailable.");
 }
+
+test("projects narrative subtitles and bodies from PDF text geometry", () => {
+  const objects = [
+    {
+      objectId: "report-date",
+      type: "text_run",
+      bbox: [198.53, 70.75, 387.89, 80.71],
+      textRun: {
+        text: "2026년 1월 30일 I 기업분석_Earnings Review",
+        fontSize: 9.96,
+      },
+    },
+    {
+      objectId: "company-name",
+      type: "text_run",
+      bbox: [198.53, 105.55, 364.96, 132.26],
+      textRun: {
+        text: "대덕전자 (353200)",
+        fontSize: 26.04,
+      },
+    },
+    {
+      objectId: "report-title",
+      type: "text_run",
+      bbox: [198.53, 141.21, 288.21, 157.17],
+      textRun: {
+        text: "기판 맹수, 앙!",
+        fontSize: 15.96,
+      },
+    },
+    {
+      objectId: "section-1-heading",
+      type: "text_run",
+      bbox: [198.53, 206.23, 367.12, 217.27],
+      textRun: {
+        text: "4Q25 Review: 반가운 하이싱글 수익성",
+        fontSize: 10.8,
+      },
+    },
+    {
+      objectId: "section-1-body-1",
+      type: "text_run",
+      bbox: [198.53, 224, 553, 235],
+      textRun: {
+        text: "25년 4분기 매출과 영업이익이 모두 하나증권 추정치를 상회했다.",
+        fontSize: 9.7,
+      },
+    },
+    {
+      objectId: "section-1-body-2",
+      type: "text_run",
+      bbox: [198.53, 242, 553, 253],
+      textRun: {
+        text: "메모리 패키지 기판과 전장용 매출 증가가 수익성을 견인했다.",
+        fontSize: 9.7,
+      },
+    },
+    {
+      objectId: "section-2-heading",
+      type: "text_run",
+      bbox: [198.53, 406.9, 382.85, 417.94],
+      textRun: {
+        text: "2026 Preview: 증설을 고민해야 하는 정도",
+        fontSize: 10.8,
+      },
+    },
+    {
+      objectId: "section-2-body",
+      type: "text_run",
+      bbox: [198.53, 425, 553, 436],
+      textRun: {
+        text: "2026년에는 신규 수주 증가와 가동률 상승이 이어질 전망이다.",
+        fontSize: 9.7,
+      },
+    },
+    {
+      objectId: "section-3-heading",
+      type: "text_run",
+      bbox: [198.53, 624.96, 312.69, 636],
+      textRun: {
+        text: "목표주가 8.1만원으로 상향",
+        fontSize: 10.8,
+      },
+    },
+    {
+      objectId: "section-3-body",
+      type: "text_run",
+      bbox: [198.53, 643, 553, 654],
+      textRun: {
+        text: "영업이익 추정치 상향을 반영해 목표주가를 8만1천원으로 상향한다.",
+        fontSize: 9.7,
+      },
+    },
+  ];
+
+  const pages = pdfPageProjection({
+    pages: [
+      {
+        pageId: "page-1",
+        pageNumber: 1,
+        pageLabel: "01",
+        boxes: {
+          mediaBox: [0, 0, 595.32, 841.92],
+          cropBox: [0, 0, 595.32, 841.92],
+        },
+        blocks: [],
+        slots: [],
+        objects,
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    pages[0]?.narrativeSections.map((section) => section.headingText),
+    [
+      "4Q25 Review: 반가운 하이싱글 수익성",
+      "2026 Preview: 증설을 고민해야 하는 정도",
+      "목표주가 8.1만원으로 상향",
+    ],
+  );
+  assert.deepEqual(pages[0]?.narrativeSections[0]?.headingBbox, [
+    198.53,
+    206.23,
+    367.12,
+    217.27,
+  ]);
+  assert.deepEqual(pages[0]?.narrativeSections[0]?.bodyBbox, [
+    198.53,
+    224,
+    553,
+    253,
+  ]);
+  assert.deepEqual(pages[0]?.headerFields.reportDate, {
+    text: "2026년 1월 30일 I 기업분석_Earnings Review",
+    bbox: [198.53, 70.75, 387.89, 80.71],
+    objectIds: ["report-date"],
+  });
+  assert.deepEqual(pages[0]?.headerFields.reportTitle, {
+    text: "기판 맹수, 앙!",
+    bbox: [198.53, 141.21, 288.21, 157.17],
+    objectIds: ["report-title"],
+  });
+});
 
 function cell(
   sheetId: string,
@@ -379,14 +523,61 @@ test("uses the KRX cutoff close as the authoritative current price", () => {
   assert.equal(binding.source.closePrice, 88_700);
   assert.equal(
     result.mappingSet.candidates.some(
-      (candidate) => candidate.kind === "cell" && !candidate.selected,
+      (candidate) => candidate.kind === "cell",
     ),
-    true,
+    false,
   );
   assert.equal(
     validateMappingSet(result.mappingSet),
     true,
     JSON.stringify(validateMappingSet.errors),
+  );
+});
+
+test("keeps current price assigned to KRX when the cutoff close is not yet available", () => {
+  const value = template();
+  value.pages[0].slots = [
+    {
+      slotId: "slot_current",
+      blockId: "block_current",
+      valueType: "money",
+      semanticKey: { metric: "current_price" },
+      required: true,
+    },
+  ];
+  const result = buildMappingSet(
+    value,
+    workbook([
+      cell("sheet_2", "09_Target_PER", "B16", "현재주가 (원)"),
+    ]),
+    {
+      schemaVersion: "1.0",
+      provider: "KRX_OPEN_API",
+      status: "unavailable",
+      companyMasterId: "company-1",
+      ticker: "005930",
+      exchange: "KOSPI",
+      requestedDate: "2026-07-25",
+      tradingDate: null,
+      closePrice: null,
+      currency: "KRW",
+      sourceApiId: null,
+      retrievedAt: "2026-07-25T00:00:00.000Z",
+      sourcePayloadHash: null,
+      errorCode: "KRX_PERMISSION_REQUIRED",
+      errorMessage: "조회 권한이 없습니다.",
+    },
+  );
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
+  assert.equal(result.mappingSet.candidates.length, 0);
+  assert.equal(result.mappingSet.bindings.length, 0);
+  assert.equal(
+    result.mappingSet.warnings.some(
+      (warning) => warning.code === "KRX_MARKET_PRICE_PENDING",
+    ),
+    true,
   );
 });
 
@@ -499,7 +690,7 @@ test("keeps equally plausible embedded charts unselected", () => {
   assert.equal(result.mappingSet.bindings.length, 0);
 });
 
-test("blocks a multiplier-only P/E range because it cannot recreate the time-series band chart", () => {
+test("defers a multiplier-only P/E range to the planned FnGuide and KRX collection", () => {
   const value = workbook([]);
   value.sheets.push({
     sheetId: "sheet_12",
@@ -579,10 +770,8 @@ test("blocks a multiplier-only P/E range because it cannot recreate the time-ser
     value,
   );
 
-  assert.equal(result.summary.status, "blocked");
-  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, [
-    "slot_figure_2_chart",
-  ]);
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
   assert.equal(result.mappingSet.candidates.length, 0);
   assert.equal(result.mappingSet.bindings.length, 0);
 });
@@ -775,6 +964,93 @@ test("maps the four page-5 financial tables independently", () => {
     validateMappingSet(result.mappingSet),
     true,
     JSON.stringify(validateMappingSet.errors),
+  );
+});
+
+test("maps revised and prior quarterly tables to their dedicated output sheets", () => {
+  const value = workbook([]);
+  const definitions = [
+    ["sheet_15", "10_도표6_분기실적전망_수정후"],
+    ["sheet_16", "11_도표7_분기실적전망_수정전"],
+  ] as const;
+  for (const [sheetId, sheetName] of definitions) {
+    value.sheets.push({
+      sheetId,
+      name: sheetName,
+      index: value.sheets.length,
+      visibility: "visible",
+      usedRange: "A1:Z90",
+      structureHash: sheetId.padEnd(64, "6").slice(0, 64),
+      formulaCount: 0,
+      mergedRangeCount: 0,
+      chartCount: 0,
+      tableCount: 0,
+    });
+    value.candidateRanges.push(
+      rangeCandidate({
+        candidateId: `range_${sheetId}`,
+        sheetId,
+        sheetName,
+        range: "A4:M22",
+        label: "구분",
+        kind: "dense_region",
+        headerRows: [4],
+        headerValues: [
+          "구분",
+          "1Q25",
+          "2Q25",
+          "3Q25",
+          "4Q25",
+          "1Q26F",
+          "2Q26F",
+          "3Q26F",
+          "4Q26F",
+          "2024",
+          "2025F",
+          "2026F",
+          "단위",
+        ],
+        rowKeyColumns: [{ index: 0, column: "A", label: "구분" }],
+      }),
+    );
+  }
+  const reportTemplate = template();
+  reportTemplate.pages[0].slots = [
+    {
+      slotId: "slot_figure_6",
+      blockId: "block_figure_6",
+      valueType: "table",
+      semanticKey: {
+        metric: "figure_6_chart",
+        scope: "대덕전자 분기별 실적 전망(수정 후)",
+      },
+      required: true,
+    },
+    {
+      slotId: "slot_figure_7",
+      blockId: "block_figure_7",
+      valueType: "table",
+      semanticKey: {
+        metric: "figure_7_chart",
+        scope: "대덕전자 분기별 실적 전망(수정 전)",
+      },
+      required: true,
+    },
+  ];
+
+  const result = buildMappingSet(reportTemplate, value);
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(
+    result.mappingSet.bindings.map((binding) =>
+      binding.kind === "table"
+        ? [binding.semanticKey.metric, binding.source.sheet, binding.source.range]
+        : null,
+    ),
+    [
+      ["figure_6_chart", definitions[0][1], "A4:M22"],
+      ["figure_7_chart", definitions[1][1], "A4:M22"],
+    ],
   );
 });
 

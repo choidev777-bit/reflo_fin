@@ -598,7 +598,7 @@ function metricLabel(metric: string): string {
   return labels[metric] ?? metric.replaceAll("_", " ");
 }
 
-type TemplateTextRun = {
+export type TemplateTextRun = {
   objectId: string;
   text: string;
   fontSize: number;
@@ -606,7 +606,20 @@ type TemplateTextRun = {
   zOrder: number;
 };
 
-type PdfRect = [number, number, number, number];
+export type PdfRect = [number, number, number, number];
+
+export type DetectedNarrativeSection = {
+  heading: TemplateTextRun;
+  sourceText: string;
+  bodyRuns: TemplateTextRun[];
+  bodyRegions: PdfRect[];
+  uncoveredObjectIds: string[];
+};
+
+export type DetectedReportHeaderFields = {
+  reportDate: TemplateTextRun | null;
+  reportTitle: TemplateTextRun | null;
+};
 
 function pdfRect(value: number[] | undefined): PdfRect | null {
   if (!value || value.length < 4) return null;
@@ -2531,6 +2544,73 @@ function dominantProseLeft(
   );
 }
 
+export function detectReportHeaderFields(
+  page: ReportTemplatePage,
+  pageWidth: number,
+  pageHeight: number,
+): DetectedReportHeaderFields {
+  const runs = templateTextRuns(page);
+  const proseLeft = dominantProseLeft(page, pageWidth);
+  const datePattern =
+    /(?:19|20)\d{2}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일/;
+  const reportDate =
+    runs
+      .filter((run) => {
+        const y = Number(run.bbox[1] ?? 0);
+        return datePattern.test(run.text) && y <= pageHeight * 0.22;
+      })
+      .sort(
+        (left, right) =>
+          Number(left.bbox[1] ?? 0) - Number(right.bbox[1] ?? 0) ||
+          Number(left.bbox[0] ?? 0) - Number(right.bbox[0] ?? 0),
+      )[0] ?? null;
+
+  if (proseLeft === null) {
+    return { reportDate, reportTitle: null };
+  }
+
+  const proseRuns = runs.filter(
+    (run) => Math.abs(Number(run.bbox[0] ?? 0) - proseLeft) <= 18,
+  );
+  const proseSizes = proseRuns
+    .filter((run) => run.text.length >= 20 && run.fontSize > 0)
+    .map((run) => run.fontSize)
+    .sort((left, right) => left - right);
+  const bodySize =
+    proseSizes[Math.floor(proseSizes.length / 2)] ?? Number.NaN;
+  const firstNarrativeY =
+    Number(
+      detectNarrativeSections(page, pageWidth, pageHeight)[0]?.heading
+        .bbox[1],
+    ) || pageHeight * 0.45;
+  const minimumTitleSize = Number.isFinite(bodySize) ? bodySize * 1.18 : 11;
+  const dateBottom = Number(reportDate?.bbox[3] ?? pageHeight * 0.06);
+  const reportTitle =
+    runs
+      .filter((run) => {
+        const x = Number(run.bbox[0] ?? 0);
+        const y = Number(run.bbox[1] ?? 0);
+        return (
+          Math.abs(x - proseLeft) <= 24 &&
+          y > dateBottom &&
+          y < firstNarrativeY - 2 &&
+          run.fontSize >= minimumTitleSize &&
+          run.text.length >= 2 &&
+          run.text.length <= 100 &&
+          isMeaningfulText(run.text) &&
+          !isBoilerplateText(run.text) &&
+          !datePattern.test(run.text)
+        );
+      })
+      .sort(
+        (left, right) =>
+          Number(right.bbox[1] ?? 0) - Number(left.bbox[1] ?? 0) ||
+          right.fontSize - left.fontSize,
+      )[0] ?? null;
+
+  return { reportDate, reportTitle };
+}
+
 function detectSourceTitle(
   page: ReportTemplatePage,
   pageWidth: number,
@@ -2560,17 +2640,11 @@ function detectSourceTitle(
   return candidates[0] ?? null;
 }
 
-function detectNarrativeSections(
+export function detectNarrativeSections(
   page: ReportTemplatePage,
   pageWidth: number,
   pageHeight: number,
-): Array<{
-  heading: TemplateTextRun;
-  sourceText: string;
-  bodyRuns: TemplateTextRun[];
-  bodyRegions: PdfRect[];
-  uncoveredObjectIds: string[];
-}> {
+): DetectedNarrativeSection[] {
   const runs = templateTextRuns(page);
   const proseLeft = dominantProseLeft(page, pageWidth);
   if (proseLeft === null) return [];
@@ -2831,7 +2905,11 @@ export function buildInitialOutline(
       const pageWidth = Math.abs(
         Number(mediaBox[2] ?? 595.32) - Number(mediaBox[0] ?? 0),
       );
-      const sourceTitle = detectSourceTitle(page, pageWidth, pageHeight);
+      const sourceTitle =
+        pageIndex === 0
+          ? detectReportHeaderFields(page, pageWidth, pageHeight).reportTitle ??
+            detectSourceTitle(page, pageWidth, pageHeight)
+          : detectSourceTitle(page, pageWidth, pageHeight);
       const pageEvidenceIds =
         pageIndex === 0
           ? allEvidenceIds

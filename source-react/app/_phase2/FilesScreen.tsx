@@ -13,6 +13,8 @@ import type {
   FilesBootstrap,
   InspectionProjection,
 } from "./types";
+import { InspectionResultDialog } from "./InspectionResultDialog";
+import { pdfPreviewBlockStyle } from "./pdf-preview-geometry";
 
 const stageLabels: Record<string, { no: string; title: string; short: string }> = {
   setup: { no: "01", title: "프로젝트 설정", short: "기업·분기·기준일" },
@@ -253,19 +255,10 @@ function bboxLabel(value: [number, number, number, number] | null): string {
 function PdfBlockPreview({ entry }: { entry: MappingEntry }) {
   const block = entry.pdfBlock;
   const confidence = analysisConfidenceCopy(block?.analysisConfidence ?? null);
-  const blockStyle = (() => {
-    if (!block?.bbox || !block.pageBox) return undefined;
-    const [pageX1, pageY1, pageX2, pageY2] = block.pageBox;
-    const [blockX1, blockY1, blockX2, blockY2] = block.bbox;
-    const width = Math.max(1, pageX2 - pageX1);
-    const height = Math.max(1, pageY2 - pageY1);
-    return {
-      left: `${Math.max(0, ((blockX1 - pageX1) / width) * 100)}%`,
-      top: `${Math.max(0, ((pageY2 - blockY2) / height) * 100)}%`,
-      width: `${Math.min(100, ((blockX2 - blockX1) / width) * 100)}%`,
-      height: `${Math.min(100, ((blockY2 - blockY1) / height) * 100)}%`,
-    };
-  })();
+  const blockStyle = pdfPreviewBlockStyle(
+    block?.bbox ?? null,
+    block?.pageBox ?? null,
+  );
 
   return (
     <section className="phase2-mapping-side phase2-pdf-block">
@@ -508,6 +501,18 @@ function ResultDialog({
   ) => Promise<void>;
 }) {
   const [tab, setTab] = useState<"pdf" | "excel" | "mapping">("pdf");
+  if (Array.isArray(inspection.analysis?.pdf.pages)) {
+    return (
+      <InspectionResultDialog
+        inspection={inspection}
+        completing={completing}
+        savingMapping={savingMapping}
+        onClose={onClose}
+        onComplete={onComplete}
+        onSaveMapping={onSaveMapping}
+      />
+    );
+  }
   const mappingEntries = (inspection.mappingSet?.entries ?? []).filter(
     (entry) => entry.metric !== "investment_opinion",
   );
@@ -1311,7 +1316,7 @@ export function FilesScreen({ projectId }: { projectId: string }) {
       </div>
       {showResult && inspection?.outcome && (
         <ResultDialog
-          key={inspection.inspectionId}
+          key={`${inspection.inspectionId}:${inspection.mappingSet?.versionId ?? "pending"}`}
           inspection={inspection}
           completing={completing}
           savingMapping={savingMapping}

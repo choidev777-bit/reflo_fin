@@ -104,6 +104,13 @@ DATA_CHART_TITLE_PATTERNS = (
     re.compile(r"\bversus\b", re.IGNORECASE),
     re.compile(r"추이"),
 )
+FULL_WIDTH_DATA_TABLE_TITLE_PATTERNS = (
+    re.compile(r"분기별\s*실적\s*전망"),
+    re.compile(
+        r"\bquarterly\s+(?:performance|earnings)\s+(?:outlook|forecast)\b",
+        re.IGNORECASE,
+    ),
+)
 FIXED_VISUAL_TITLE_TERMS = tuple(
     str(value) for value in ANALYSIS_PROFILE["fixedVisualTitleTerms"]
 )
@@ -270,6 +277,13 @@ def is_data_chart_title(value: str) -> bool:
     return any(pattern.search(value) for pattern in DATA_CHART_TITLE_PATTERNS)
 
 
+def is_full_width_data_table_title(value: str) -> bool:
+    return any(
+        pattern.search(value)
+        for pattern in FULL_WIDTH_DATA_TABLE_TITLE_PATTERNS
+    )
+
+
 def is_fixed_visual_title(value: str) -> bool:
     normalized = normalize_text(value)
     return any(term in normalized for term in FIXED_VISUAL_TITLE_TERMS)
@@ -339,6 +353,8 @@ def detect_figure_regions(
         number, title = detected
         if is_fixed_visual_title(title):
             kind = "fixed_visual"
+        elif is_full_width_data_table_title(title):
+            kind = "data_table"
         elif is_data_chart_title(title):
             kind = "data_chart"
         else:
@@ -357,7 +373,7 @@ def detect_figure_regions(
     full_margin = max(24.0, page_width * 0.07)
     for heading in headings:
         heading_box = list(heading["span"]["bbox"])
-        if heading["kind"] == "fixed_visual":
+        if heading["kind"] in {"fixed_visual", "data_table"}:
             column = None
             left = page_box[0] + full_margin
             right = page_box[2] - full_margin
@@ -1752,13 +1768,14 @@ def build_blocks_and_slots(
         if metric in document_metrics:
             continue
         document_metrics.add(metric)
+        value_type = "table" if region["kind"] == "data_table" else "chart"
         block_id = opaque("block", f"{page_id}:chart:{metric}:{title}")
         slot_id = opaque("slot", f"{page_id}:chart:{metric}:{title}")
         mask_id = opaque("mask", f"{page_id}:{slot_id}")
         blocks.append(
             {
                 "blockId": block_id,
-                "role": "chart",
+                "role": value_type,
                 "bbox": box,
                 "objectIds": object_ids,
                 "slotIds": [slot_id],
@@ -1775,7 +1792,7 @@ def build_blocks_and_slots(
             {
                 "slotId": slot_id,
                 "blockId": block_id,
-                "valueType": "chart",
+                "valueType": value_type,
                 "semanticKey": {
                     "metric": metric,
                     "scope": title[:100],
