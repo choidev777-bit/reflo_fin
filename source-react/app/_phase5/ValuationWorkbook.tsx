@@ -255,8 +255,23 @@ export default function ValuationWorkbook({
   onCommit: (changes: Change[]) => Promise<boolean>;
   onLocalError: (message: string) => void;
 }) {
+  const preferredSheetId =
+    model.sheets.find(
+      (sheet) =>
+        sheet.visibility === "visible" &&
+        /^M1_/i.test(sheet.name) &&
+        model.editableCells.some((cell) => cell.sheetId === sheet.sheetId),
+    )?.sheetId ??
+    model.sheets.find(
+      (sheet) =>
+        sheet.visibility === "visible" &&
+        model.editableCells.some((cell) => cell.sheetId === sheet.sheetId),
+    )?.sheetId ??
+    model.sheets.find((sheet) => sheet.visibility === "visible")?.sheetId ??
+    model.sheets[0]?.sheetId ??
+    "";
   const [activeSheetId, setActiveSheetId] = useState(
-    model.sheets[0]?.sheetId ?? "",
+    preferredSheetId,
   );
   const [rowStart, setRowStart] = useState(1);
   const [columnStart, setColumnStart] = useState(1);

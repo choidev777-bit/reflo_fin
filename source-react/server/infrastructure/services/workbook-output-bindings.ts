@@ -10,6 +10,18 @@ export type RequiredWorkbookOutputBinding = {
   expectedStructureFingerprint: string | null;
 };
 
+export function isValuationOutputCandidate(input: {
+  metric: "eps" | "per" | "target_price";
+  sheetName: string;
+  label: string | null;
+}): boolean {
+  if (input.metric !== "per") return true;
+  return (
+    /^M2_/i.test(input.sheetName) &&
+    /(?:적정|target|적용).*(?:p\s*\/?\s*e|per)/i.test(input.label ?? "")
+  );
+}
+
 export async function loadRequiredWorkbookOutputBindings(
   client: TransactionClient,
   mappingSetResourceVersionId: string,
@@ -20,11 +32,12 @@ export async function loadRequiredWorkbookOutputBindings(
     sheet_id: string | null;
     sheet_name: string | null;
     address: string | null;
+    label: string | null;
     expected_formula_hash: string | null;
     expected_structure_fingerprint: string | null;
   }>(
     `SELECT entry.mapping_entry_id, entry.semantic_metric, candidate.sheet_id,
-       candidate.sheet_name, candidate.address,
+       candidate.sheet_name, candidate.address, candidate.label,
        entry.source_json->>'formulaHash' AS expected_formula_hash,
        entry.source_json->>'structureFingerprint'
          AS expected_structure_fingerprint
@@ -48,6 +61,11 @@ export async function loadRequiredWorkbookOutputBindings(
       !row.sheet_id ||
       !row.sheet_name ||
       !row.address ||
+      !isValuationOutputCandidate({
+        metric: row.semantic_metric,
+        sheetName: row.sheet_name,
+        label: row.label,
+      }) ||
       !/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(row.address)
     ) {
       return [];

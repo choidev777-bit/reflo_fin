@@ -3,6 +3,10 @@ import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import {
+  createActualFinancialTargets,
+  type WorkbookCandidateCell,
+} from "../../domain/research-excel-targets";
+import {
   blockerMeta,
   resumeRouteForBlocker,
 } from "../../domain/stage-blocker-policy";
@@ -77,6 +81,9 @@ type ProjectContext = {
   questionSetResourceVersionId: string;
   workbookResourceVersionId: string;
   workbookStructureHash: string;
+  workbookAnalysis: {
+    candidateCells?: WorkbookCandidateCell[];
+  };
   mappingSetResourceVersionId: string;
   setupResourceVersionId: string;
 };
@@ -264,6 +271,7 @@ async function projectContext(
     question_set_resource_version_id: string;
     workbook_resource_version_id: string;
     structure_hash: string;
+    analysis_json: ProjectContext["workbookAnalysis"];
     mapping_set_resource_version_id: string;
     setup_resource_version_id: string;
     hypothesis_status: string;
@@ -276,7 +284,7 @@ async function projectContext(
        qsv.question_set_id, qsv.version_no AS question_set_version,
        qsv.resource_version_id AS question_set_resource_version_id,
        msv.workbook_version_id AS workbook_resource_version_id,
-       wv.structure_hash,
+       wv.structure_hash, wv.analysis_json,
        msv.resource_version_id AS mapping_set_resource_version_id,
        setup_completion.primary_version_id AS setup_resource_version_id,
        hypothesis_state.stage_status AS hypothesis_status,
@@ -363,6 +371,7 @@ async function projectContext(
     questionSetResourceVersionId: row.question_set_resource_version_id,
     workbookResourceVersionId: row.workbook_resource_version_id,
     workbookStructureHash: row.structure_hash,
+    workbookAnalysis: row.analysis_json,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     setupResourceVersionId: row.setup_resource_version_id,
   };
@@ -444,6 +453,7 @@ async function buildDefaultSnapshot(
   const mappingRows = await client.query<{
     mapping_entry_id: string;
     slot_id: string;
+    binding_kind: string;
     semantic_metric: string;
     value_type: string;
     required: boolean;
@@ -452,7 +462,8 @@ async function buildDefaultSnapshot(
     sheet_name: string | null;
     address: string | null;
   }>(
-    `SELECT me.mapping_entry_id, me.slot_id, me.semantic_metric, me.value_type,
+    `SELECT me.mapping_entry_id, me.slot_id, me.binding_kind,
+       me.semantic_metric, me.value_type,
        me.required, me.source_json,
        mc.sheet_id, mc.sheet_name, mc.address
      FROM mapping_entry me
@@ -460,12 +471,17 @@ async function buildDefaultSnapshot(
        ON mc.mapping_candidate_id = me.selected_candidate_id
      WHERE me.mapping_set_version_id = $1
        AND me.mapping_status = 'confirmed'
-       AND me.binding_kind = 'scalar'
      ORDER BY me.required DESC, me.semantic_metric`,
     [context.mappingSetResourceVersionId],
   );
   const excelTargets: ResearchExcelTarget[] = mappingRows.rows
-    .filter((row) => row.sheet_id && row.sheet_name && row.address)
+    .filter(
+      (row) =>
+        row.binding_kind === "scalar" &&
+        row.sheet_id &&
+        row.sheet_name &&
+        row.address,
+    )
     .map((row) => {
       const metric = row.semantic_metric;
       const marketPrice = /주가|종가/.test(metric);
@@ -499,6 +515,20 @@ async function buildDefaultSnapshot(
         excludedReason: null,
       };
     });
+  const mappingSlotIdsBySheetId = new Map<string, string[]>();
+  for (const row of mappingRows.rows) {
+    if (!row.sheet_id || row.binding_kind === "scalar") continue;
+    const current = mappingSlotIdsBySheetId.get(row.sheet_id) ?? [];
+    if (!current.includes(row.slot_id)) current.push(row.slot_id);
+    mappingSlotIdsBySheetId.set(row.sheet_id, current);
+  }
+  excelTargets.push(
+    ...createActualFinancialTargets({
+      candidateCells: context.workbookAnalysis.candidateCells ?? [],
+      targetYear: context.targetYear,
+      mappingSlotIdsBySheetId,
+    }),
+  );
   return attachNewsSearchPolicies(
     { questions, excelTargets, userUrls: [], sourceReferences: [] },
     {
@@ -743,7 +773,21 @@ async function ensurePlan(
     existing.workbookResourceVersionId === context.workbookResourceVersionId &&
     existing.mappingSetResourceVersionId ===
       context.mappingSetResourceVersionId;
-  if (refsMatch) return existing;
+  const expectedSystemTargetIds = new Set(
+    createActualFinancialTargets({
+      candidateCells: context.workbookAnalysis.candidateCells ?? [],
+      targetYear: context.targetYear,
+    }).map((target) => target.targetId),
+  );
+  const currentSystemTargetIds = new Set(
+    existing?.snapshot.excelTargets
+      .filter((target) => target.writeAuthority === "system")
+      .map((target) => target.targetId) ?? [],
+  );
+  const systemTargetContractCurrent = [...expectedSystemTargetIds].every(
+    (targetId) => currentSystemTargetIds.has(targetId),
+  );
+  if (refsMatch && systemTargetContractCurrent) return existing;
   const snapshot = await buildDefaultSnapshot(client, context);
   if (!existing) {
     const planId = uuidv7();

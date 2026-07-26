@@ -105,6 +105,8 @@ DATA_CHART_TITLE_PATTERNS = (
     re.compile(r"추이"),
 )
 FULL_WIDTH_DATA_TABLE_TITLE_PATTERNS = (
+    re.compile(r"\bvaluation\b", re.IGNORECASE),
+    re.compile(r"밸류에이션"),
     re.compile(r"분기별\s*실적\s*전망"),
     re.compile(
         r"\bquarterly\s+(?:performance|earnings)\s+(?:outlook|forecast)\b",

@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
+import { buildReportPeriodPlan } from "../../domain/report-period-plan";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import { blockerMeta } from "../../domain/stage-blocker-policy";
 import {
   deferredMappingPolicy,
   deferredMappingResolvesRequiredSlot,
 } from "../../domain/mapping-policy";
+import {
+  evaluateMappingDataReadiness,
+  type MappingState,
+} from "../../domain/mapping-data-readiness";
 import {
   detectNarrativeSections,
   detectReportHeaderFields,
@@ -1383,6 +1388,9 @@ async function inspectionProjection(
     mapping_unmapped_required_count: number | null;
     template_ir_json: unknown;
     workbook_analysis_json: unknown;
+    report_target_year: number;
+    report_target_quarter: number;
+    report_cutoff_date: string;
   }>(
     `SELECT fi.inspection_id, fi.job_id, wj.operation_status,
        wj.validity_status, wj.current_phase, wj.progress_percent,
@@ -1415,9 +1423,26 @@ async function inspectionProjection(
        msv.confirmed_binding_count AS mapping_confirmed_binding_count,
        msv.unmapped_required_count AS mapping_unmapped_required_count,
        tiv.template_ir_json,
-       wv.analysis_json AS workbook_analysis_json
+       wv.analysis_json AS workbook_analysis_json,
+       setup.target_year AS report_target_year,
+       setup.target_quarter AS report_target_quarter,
+       setup.cutoff_date::text AS report_cutoff_date
      FROM file_inspection fi
      JOIN workflow_job wj ON wj.job_id = fi.job_id
+     JOIN LATERAL (
+       SELECT psv.target_year, psv.target_quarter, psv.cutoff_date
+       FROM versioned_resource setup_vr
+       JOIN resource_version setup_rv
+         ON setup_rv.resource_id = setup_vr.resource_id
+       JOIN project_setup_version psv
+         ON psv.resource_version_id = setup_rv.resource_version_id
+       WHERE setup_vr.project_id = fi.project_id
+         AND setup_vr.resource_kind = 'project_setup'
+         AND setup_rv.lifecycle_status = 'approved'
+         AND setup_rv.validity_status = 'current'
+       ORDER BY setup_rv.version_no DESC
+       LIMIT 1
+     ) setup ON TRUE
      LEFT JOIN template_ir_version tiv
        ON tiv.resource_version_id = fi.template_resource_version_id
      LEFT JOIN workbook_version wv
@@ -1432,6 +1457,11 @@ async function inspectionProjection(
   );
   const row = result.rows[0];
   if (!row) return null;
+  const reportPeriodPlan = buildReportPeriodPlan({
+    targetYear: row.report_target_year,
+    targetQuarter: row.report_target_quarter,
+    cutoffDate: row.report_cutoff_date,
+  });
   const mappingRows = row.mapping_set_resource_version_id
     ? await client.query<{
         mapping_entry_id: string;
@@ -1555,6 +1585,48 @@ async function inspectionProjection(
       });
     }
   }
+  const projectedMappingEntries = [...mappingEntries.values()].map((entry) => {
+    const mappingState: MappingState =
+      entry.status === "invalid"
+        ? "invalid"
+        : entry.selectedCandidateId
+          ? "connected"
+          : entry.candidates.length > 0
+            ? "review_required"
+            : "unmapped";
+    const candidates = entry.candidates.map((candidate) => {
+      const preview = recordValue(candidate.preview);
+      return {
+        ...candidate,
+        dataReadiness: evaluateMappingDataReadiness({
+          metric: entry.metric,
+          mappingState: "connected",
+          sourceType: candidate.sourceType,
+          periodLabels: stringArrayValue(preview?.periodLabels),
+          periodPlan: reportPeriodPlan,
+          deferredResolution: entry.plan?.resolution ?? null,
+        }),
+      };
+    });
+    const selected = candidates.find(
+      (candidate) => candidate.candidateId === entry.selectedCandidateId,
+    );
+    return {
+      ...entry,
+      mappingState,
+      dataReadiness: selected
+        ? selected.dataReadiness
+        : evaluateMappingDataReadiness({
+            metric: entry.metric,
+            mappingState,
+            sourceType: null,
+            periodLabels: [],
+            periodPlan: reportPeriodPlan,
+            deferredResolution: entry.plan?.resolution ?? null,
+          }),
+      candidates,
+    };
+  });
   return {
     inspectionId: row.inspection_id,
     jobId: row.job_id,
@@ -1571,6 +1643,7 @@ async function inspectionProjection(
     finishedAt: row.finished_at?.toISOString() ?? null,
     outcome: row.outcome,
     issues: row.issues_json,
+    reportPeriodPlan,
     mappingSet: row.mapping_set_resource_version_id
       ? {
           versionId: row.mapping_set_resource_version_id,
@@ -1582,7 +1655,7 @@ async function inspectionProjection(
             confirmedBindingCount: row.mapping_confirmed_binding_count ?? 0,
             unmappedRequiredCount: row.mapping_unmapped_required_count ?? 0,
           },
-          entries: [...mappingEntries.values()],
+          entries: projectedMappingEntries,
         }
       : null,
     analysis: row.pdf_page_count
@@ -1820,12 +1893,16 @@ export async function createFileInspection(input: {
     const setupResult = await client.query<{
       resource_version_id: string;
       company_master_id: string;
+      corp_code: string | null;
       ticker: string;
       exchange_code: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
+      target_year: number;
+      target_quarter: number;
       cutoff_date: string;
     }>(
-      `SELECT rv.resource_version_id, psv.company_master_id, cm.ticker,
-         cm.exchange_code, psv.cutoff_date::text
+      `SELECT rv.resource_version_id, psv.company_master_id, cm.corp_code,
+         cm.ticker, cm.exchange_code, psv.target_year, psv.target_quarter,
+         psv.cutoff_date::text
        FROM versioned_resource vr
        JOIN resource_version rv ON rv.resource_id = vr.resource_id
        JOIN project_setup_version psv
@@ -1919,6 +1996,14 @@ export async function createFileInspection(input: {
       projectId: input.projectId,
       inspectionId,
       setupResourceVersionId: setup.resource_version_id,
+      targetYear: setup.target_year,
+      targetQuarter: setup.target_quarter,
+      corpCode: setup.corp_code,
+      reportPeriodPlan: buildReportPeriodPlan({
+        targetYear: setup.target_year,
+        targetQuarter: setup.target_quarter,
+        cutoffDate: setup.cutoff_date,
+      }),
       pdf,
       workbook,
       marketData: {

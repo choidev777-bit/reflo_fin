@@ -305,6 +305,15 @@ function aliases(metric: string): string[] {
   return [...new Set([metric, ...values].map(normalize).filter(Boolean))];
 }
 
+function declaredReportPage(sheetName: string): number | null {
+  const match = /(?:^|[_\s-])p(\d+)(?=$|[_\s-])/i.exec(sheetName);
+  if (!match) return null;
+  const pageNumber = Number(match[1]);
+  return Number.isSafeInteger(pageNumber) && pageNumber > 0
+    ? pageNumber
+    : null;
+}
+
 function figureNumber(metric: string): number | null {
   const normalized = normalize(metric);
   const match =
@@ -613,6 +622,7 @@ function synthesizeRange(
 function rangeMatch(
   slot: TemplateSlot,
   range: WorkbookCandidateRange,
+  pageNumber: number,
 ): { score: number; reasons: string[] } {
   const context = normalize(
     `${range.sheetName} ${range.label} ${(range.headerValues ?? []).join(" ")}`,
@@ -632,9 +642,21 @@ function rangeMatch(
     score += 0.1;
     reasons.push("SCOPE_MATCH");
   }
+  const declaredPage = declaredReportPage(range.sheetName);
+  if (declaredPage !== null && declaredPage !== pageNumber) {
+    return { score: 0, reasons: ["REPORT_PAGE_MISMATCH"] };
+  }
+  if (declaredPage === pageNumber) {
+    score += 0.1;
+    reasons.push("REPORT_PAGE_MATCH");
+  }
   if (range.kind === "dense_region" || range.kind === "excel_table") {
     score += 0.04;
     reasons.push("STRUCTURED_RANGE");
+  }
+  if (range.kind === "used_range") {
+    score = Math.min(score, MAPPING_RULES.table.automaticMinimum - 0.01);
+    reasons.push("BROAD_USED_RANGE");
   }
   return { score: Math.min(0.98, score), reasons };
 }
@@ -642,6 +664,7 @@ function rangeMatch(
 function tableCandidates(
   slot: TemplateSlot,
   workbook: WorkbookAnalysis,
+  pageNumber: number,
 ): MappingCandidate[] {
   const fixed = [
     ...(REFLO_REPORT_OUTPUT_PROFILE.rangeHints[slot.semanticKey.metric] ?? []),
@@ -649,6 +672,10 @@ function tableCandidates(
   ]
     .map(([sheet, range]) => synthesizeRange(workbook, sheet, range))
     .filter((value): value is WorkbookCandidateRange => Boolean(value))
+    .filter((range) => {
+      const declaredPage = declaredReportPage(range.sheetName);
+      return declaredPage === null || declaredPage === pageNumber;
+    })
     .map((range) => ({
       candidateId: opaque("mapcand", `${slot.slotId}:${range.candidateId}`),
       slotId: slot.slotId,
@@ -665,7 +692,7 @@ function tableCandidates(
     ),
   );
   const ranked = workbook.candidateRanges
-    .map((range) => ({ range, ...rangeMatch(slot, range) }))
+    .map((range) => ({ range, ...rangeMatch(slot, range, pageNumber) }))
     .filter(({ score }) => score >= MAPPING_RULES.table.candidateMinimum)
     .filter(
       ({ range }) =>
@@ -676,6 +703,8 @@ function tableCandidates(
     .sort(
       (left, right) =>
         right.score - left.score ||
+        Number(right.reasons.includes("STRUCTURED_RANGE")) -
+          Number(left.reasons.includes("STRUCTURED_RANGE")) ||
         left.range.candidateId.localeCompare(right.range.candidateId),
     )
     .slice(0, Math.max(0, 5 - fixed.length))
@@ -692,16 +721,23 @@ function tableCandidates(
   const candidates = [...fixed, ...ranked].sort(
     (left, right) =>
       right.score - left.score ||
+      Number(right.reasonCodes.includes("STRUCTURED_RANGE")) -
+        Number(left.reasonCodes.includes("STRUCTURED_RANGE")) ||
       left.candidateId.localeCompare(right.candidateId),
   );
   const top = candidates[0];
-  const next = candidates[1];
+  const nextComparable = candidates.slice(1).find(
+    (candidate) =>
+      candidate.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
+      candidate.reasonCodes.includes("STRUCTURED_RANGE"),
+  );
   const unambiguous =
     top &&
     (top.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
       (top.score >= MAPPING_RULES.table.automaticMinimum &&
-        (!next ||
-          top.score - next.score >= MAPPING_RULES.table.automaticMargin)));
+        (!nextComparable ||
+          top.score - nextComparable.score >=
+            MAPPING_RULES.table.automaticMargin)));
   return candidates.map((candidate, index) => ({
     ...candidate,
     selected: Boolean(unambiguous && index === 0),
@@ -1322,8 +1358,11 @@ export function buildMappingSet(
   workbook: WorkbookAnalysis,
   marketPrice?: MarketPriceSnapshot,
 ): { mappingSet: MappingSet; summary: MappingSummary } {
-  const slots = template.pages.flatMap((page) => page.slots);
-  const candidateSeeds = slots.flatMap((slot) => {
+  const slotContexts = template.pages.flatMap((page) =>
+    page.slots.map((slot) => ({ slot, pageNumber: page.pageNumber })),
+  );
+  const slots = slotContexts.map(({ slot }) => slot);
+  const candidateSeeds = slotContexts.flatMap(({ slot, pageNumber }) => {
     const deferredPolicy = deferredMappingPolicy(slot.semanticKey.metric);
     if (deferredPolicy?.exclusiveSource) {
       const krxCandidate = marketPrice
@@ -1331,7 +1370,9 @@ export function buildMappingSet(
         : null;
       return krxCandidate ? [krxCandidate] : [];
     }
-    if (slot.valueType === "table") return tableCandidates(slot, workbook);
+    if (slot.valueType === "table") {
+      return tableCandidates(slot, workbook, pageNumber);
+    }
     if (slot.valueType === "chart") return chartCandidates(slot, workbook);
     const workbookCandidates = scalarCandidates(slot, workbook);
     const krxCandidate = marketPrice

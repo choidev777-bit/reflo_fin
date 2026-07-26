@@ -879,6 +879,98 @@ type DartRow = {
   frmtrm_amount?: string;
 };
 
+type DartReportSnapshot = {
+  businessYear: number;
+  quarter: number;
+  reportCode: string;
+  receiptNumber: string;
+  publishedAt: string;
+  rows: Array<
+    DartRow & {
+      _reflo_period: string;
+      _reflo_report_type: "annual" | "quarterly";
+    }
+  >;
+  publicParameters: Record<string, string>;
+};
+
+function dartPublishedAt(receiptNumber: string | undefined): string | null {
+  const receiptDate = receiptNumber?.slice(0, 8);
+  return receiptDate && /^\d{8}$/.test(receiptDate)
+    ? `${receiptDate.slice(0, 4)}-${receiptDate.slice(4, 6)}-${receiptDate.slice(6, 8)}T00:00:00+09:00`
+    : null;
+}
+
+async function fetchDartReport(input: {
+  apiKey: string;
+  corpCode: string;
+  businessYear: number;
+  quarter: number;
+  cutoffAt: string;
+  required: boolean;
+  cancellationSignal?: AbortSignal;
+}): Promise<DartReportSnapshot | null> {
+  const code = reportCode(input.quarter);
+  const query = new URLSearchParams({
+    crtfc_key: input.apiKey,
+    corp_code: input.corpCode,
+    bsns_year: String(input.businessYear),
+    reprt_code: code,
+    fs_div: "CFS",
+  });
+  const response = await fetch(
+    `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?${query}`,
+    {
+      signal: input.cancellationSignal
+        ? AbortSignal.any([
+            AbortSignal.timeout(20_000),
+            input.cancellationSignal,
+          ])
+        : AbortSignal.timeout(20_000),
+    },
+  );
+  if (!response.ok) throw new Error(`DART_HTTP_${response.status}`);
+  const payload = (await response.json()) as {
+    status?: string;
+    message?: string;
+    list?: DartRow[];
+  };
+  if (payload.status === "013" && !input.required) return null;
+  if (payload.status !== "000" || !Array.isArray(payload.list)) {
+    throw new Error(`DART_${payload.status ?? "INVALID_RESPONSE"}`);
+  }
+  const receiptNumber =
+    payload.list.find((row) => /^\d{14}$/.test(row.rcept_no ?? ""))
+      ?.rcept_no ?? "";
+  const publishedAt = dartPublishedAt(receiptNumber);
+  if (
+    !publishedAt ||
+    new Date(publishedAt).getTime() > new Date(input.cutoffAt).getTime()
+  ) {
+    if (input.required) throw new Error("DART_REPORT_OUTSIDE_CUTOFF");
+    return null;
+  }
+  const publicQuery = new URLSearchParams(query);
+  publicQuery.set("crtfc_key", "[redacted]");
+  const annual = input.quarter === 4;
+  const period = annual
+    ? `${input.businessYear}년 연간`
+    : `${input.businessYear}년 ${input.quarter}분기`;
+  return {
+    businessYear: input.businessYear,
+    quarter: input.quarter,
+    reportCode: code,
+    receiptNumber,
+    publishedAt,
+    rows: payload.list.map((row) => ({
+      ...row,
+      _reflo_period: period,
+      _reflo_report_type: annual ? "annual" : "quarterly",
+    })),
+    publicParameters: Object.fromEntries(publicQuery),
+  };
+}
+
 async function collectDart(
   context: ResearchCollectionContext,
 ): Promise<ResearchSourceSnapshot> {
@@ -886,62 +978,69 @@ async function collectDart(
   if (!apiKey) throw new Error("DART_API_KEY_MISSING");
   const corpCode =
     context.corpCode ?? (await dartCorpCode(context.ticker, apiKey));
-  const query = new URLSearchParams({
-    crtfc_key: apiKey,
-    corp_code: corpCode,
-    bsns_year: String(context.targetYear),
-    reprt_code: reportCode(context.targetQuarter),
-    fs_div: "CFS",
+  const latestActualYear = context.targetYear - 1;
+  const annual = await fetchDartReport({
+    apiKey,
+    corpCode,
+    businessYear: latestActualYear,
+    quarter: 4,
+    cutoffAt: context.cutoffAt,
+    required: true,
+    cancellationSignal: context.cancellationSignal,
   });
-  const endpoint = `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?${query}`;
-  const response = await fetch(endpoint, {
-    signal: context.cancellationSignal
-      ? AbortSignal.any([
-          AbortSignal.timeout(20_000),
-          context.cancellationSignal,
-        ])
-      : AbortSignal.timeout(20_000),
+  if (!annual) throw new Error("DART_ANNUAL_REPORT_MISSING");
+  const currentPeriod = await fetchDartReport({
+    apiKey,
+    corpCode,
+    businessYear: context.targetYear,
+    quarter: context.targetQuarter,
+    cutoffAt: context.cutoffAt,
+    required: false,
+    cancellationSignal: context.cancellationSignal,
   });
-  if (!response.ok) throw new Error(`DART_HTTP_${response.status}`);
-  const payload = (await response.json()) as {
-    status?: string;
-    message?: string;
-    list?: DartRow[];
-  };
-  if (payload.status !== "000" || !Array.isArray(payload.list)) {
-    throw new Error(`DART_${payload.status ?? "INVALID_RESPONSE"}`);
-  }
-  const publicQuery = new URLSearchParams(query);
-  publicQuery.set("crtfc_key", "[redacted]");
-  const receiptNumber = payload.list.find((row) =>
-    /^\d{14}$/.test(row.rcept_no ?? ""),
-  )?.rcept_no;
-  const receiptDate = receiptNumber?.slice(0, 8);
-  const publishedAt =
-    receiptDate && /^\d{8}$/.test(receiptDate)
-      ? `${receiptDate.slice(0, 4)}-${receiptDate.slice(4, 6)}-${receiptDate.slice(6, 8)}T00:00:00+09:00`
-      : null;
+  const reports = [annual, ...(currentPeriod ? [currentPeriod] : [])];
+  const latestReport = reports.reduce((latest, report) =>
+    new Date(report.publishedAt) > new Date(latest.publishedAt)
+      ? report
+      : latest,
+  );
   return {
-    sourceKey: `dart:${corpCode}:${context.targetYear}:${reportCode(context.targetQuarter)}`,
+    sourceKey:
+      `dart:${corpCode}:` +
+      reports
+        .map((report) => `${report.businessYear}:${report.reportCode}`)
+        .join("+"),
     sourceType: "DART",
-    title: `${context.companyName} ${context.targetYear}년 ${context.targetQuarter}분기 재무제표`,
+    title:
+      `${context.companyName} ${latestActualYear}년 연간` +
+      (currentPeriod
+        ? ` 및 ${context.targetYear}년 ${context.targetQuarter}분기`
+        : "") +
+      " 재무제표",
     publisher: "금융감독원 전자공시시스템",
-    canonicalUrl: receiptNumber
-      ? `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`
-      : "https://dart.fss.or.kr/",
-    publishedAt,
+    canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${latestReport.receiptNumber}`,
+    publishedAt: latestReport.publishedAt,
     collectedAt: nowIso(),
-    responseHash: hash(payload),
+    responseHash: hash(reports),
     locator: {
       kind: "structured_api",
       endpoint: "/api/fnlttSinglAcntAll.json",
-      parameters: {
-        ...Object.fromEntries(publicQuery),
-        ...(receiptNumber ? { rceptNo: receiptNumber } : {}),
-      },
+      reports: reports.map((report) => ({
+        parameters: report.publicParameters,
+        rceptNo: report.receiptNumber,
+        publishedAt: report.publishedAt,
+      })),
     },
-    content: { rows: payload.list },
-    collectorVersion: "opendart-fnltt-v1",
+    content: {
+      periods: reports.map((report) => ({
+        businessYear: report.businessYear,
+        quarter: report.quarter,
+        reportCode: report.reportCode,
+        publishedAt: report.publishedAt,
+      })),
+      rows: reports.flatMap((report) => report.rows),
+    },
+    collectorVersion: "opendart-fnltt-v2",
   };
 }
 

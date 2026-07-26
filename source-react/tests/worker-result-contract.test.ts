@@ -7,6 +7,7 @@ import {
   createWorkerResultEnvelope,
   parseWorkerResultEnvelope,
 } from "../server/domain/worker-result-contract";
+import workerResultSchemas from "../server/domain/generated/worker-result-schemas.json";
 
 const HASH = "a".repeat(64);
 const FILE_SCAN_PAYLOAD = {
@@ -115,6 +116,31 @@ test("runtime result types stay synchronized with the schema registry", () => {
     [...WORKER_RESULT_TYPES].sort(),
     registry.resultTypes.map((item) => item.resultType).sort(),
   );
+});
+
+test("workbook chart parts accept OOXML paths nested below xl", () => {
+  const workbookSchema = workerResultSchemas.find(
+    (schema) =>
+      schema.$id ===
+      "https://schemas.reflo.dev/worker/v1/workbook-analysis.schema.json",
+  ) as
+    | {
+        $defs?: {
+          ChartAnalysis?: {
+            properties?: {
+              partPath?: { pattern?: string };
+            };
+          };
+        };
+      }
+    | undefined;
+  const pattern =
+    workbookSchema?.$defs?.ChartAnalysis?.properties?.partPath?.pattern;
+
+  assert.ok(pattern);
+  assert.match("xl/charts/chart1.xml", new RegExp(pattern));
+  assert.match("xl/drawings/charts/chart1.xml", new RegExp(pattern));
+  assert.doesNotMatch("xl/drawings/chart1.xml", new RegExp(pattern));
 });
 
 test("worker tool metadata follows the shared strict descriptor", () => {

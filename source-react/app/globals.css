@@ -12824,7 +12824,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: #436400;
 }
 
+.phase2-result-status[data-status="period_refresh"] {
+  border-color: #d8a49b;
+  background: #fff7f5;
+  color: #8f332b;
+}
+
 .phase2-result-status[data-status="external"],
+.phase2-result-status[data-status="input"],
+.phase2-result-status[data-status="source_and_input"],
+.phase2-result-status[data-status="valuation"],
 .phase2-result-status[data-status="later"] {
   background: #f5f7f3;
 }

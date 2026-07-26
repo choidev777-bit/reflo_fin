@@ -16,6 +16,68 @@ export type InspectionIssue = {
   message: string;
 };
 
+export type ReportPeriodPlan = {
+  schemaVersion: "1.0";
+  targetYear: number;
+  targetQuarter: number;
+  cutoffDate: string;
+  latestActualYear: number;
+  source: "project_target" | "dart_verified";
+  periods: Array<{
+    year: number;
+    label: string;
+    role: "actual" | "forecast";
+  }>;
+};
+
+export type MappingDataReadiness = {
+  state:
+    | "ready"
+    | "period_refresh_required"
+    | "source_collection_required"
+    | "user_input_required"
+    | "source_and_input_required"
+    | "valuation_required"
+    | "later_stage"
+    | "review_required";
+  reasons: string[];
+  periodCoverage: {
+    state: "ready" | "refresh_required" | "not_detected";
+    detectedPeriods: Array<{
+      year: number;
+      label: string;
+      role: "actual" | "forecast";
+      quarter?: 1 | 2 | 3 | 4;
+    }>;
+    missingPeriods: Array<{
+      year: number;
+      label: string;
+      role: "actual" | "forecast";
+      quarter?: 1 | 2 | 3 | 4;
+    }>;
+    unexpectedPeriods: Array<{
+      year: number;
+      label: string;
+      role: "actual" | "forecast";
+      quarter?: 1 | 2 | 3 | 4;
+    }>;
+    roleMismatches: Array<{
+      expected: {
+        year: number;
+        label: string;
+        role: "actual" | "forecast";
+        quarter?: 1 | 2 | 3 | 4;
+      };
+      detected: {
+        year: number;
+        label: string;
+        role: "actual" | "forecast";
+        quarter?: 1 | 2 | 3 | 4;
+      };
+    }>;
+  } | null;
+};
+
 export type InspectionProjection = {
   inspectionId: string;
   jobId: string;
@@ -35,6 +97,7 @@ export type InspectionProjection = {
   attempt: number;
   outcome: "passed" | "blocked" | "failed" | null;
   issues: InspectionIssue[];
+  reportPeriodPlan: ReportPeriodPlan;
   mappingSet: {
     versionId: string;
     version: number;
@@ -53,6 +116,12 @@ export type InspectionProjection = {
       valueType: string;
       required: boolean;
       status: "suggested" | "confirmed" | "unmapped" | "invalid";
+      mappingState:
+        | "connected"
+        | "unmapped"
+        | "invalid"
+        | "review_required";
+      dataReadiness: MappingDataReadiness;
       confidence: number | null;
       source: unknown;
       plan: {
@@ -88,6 +157,7 @@ export type InspectionProjection = {
         source: unknown;
         chartDefinition: Record<string, unknown> | null;
         bindingDefinition: Record<string, unknown> | null;
+        dataReadiness: MappingDataReadiness;
         preview: {
           kind: "cell" | "range" | "chart" | "market_data";
           structureFingerprint?: string | null;

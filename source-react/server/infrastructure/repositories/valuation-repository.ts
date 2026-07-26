@@ -3,6 +3,11 @@ import Decimal from "decimal.js";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, type StageKey } from "../../domain/project";
+import {
+  buildReportPeriodPlan,
+  hasExactPeriodWindow,
+  type ReportPeriodPlan,
+} from "../../domain/report-period-plan";
 import { resumeRouteForBlocker } from "../../domain/stage-blocker-policy";
 import {
   canonicalTargetPer,
@@ -69,6 +74,12 @@ type EditableCell = {
 type ReadModel = {
   schemaVersion: string;
   workbookHash: string;
+  reportPeriodPlan?: ReportPeriodPlan;
+  inputManifest?: WorkbookInputCell[];
+  rollForward?: {
+    changed: boolean;
+    changes: WorkbookRollForwardChange[];
+  };
   sheets: Array<{
     sheetId: string;
     name: string;
@@ -98,6 +109,24 @@ type ReadModel = {
   };
 };
 
+type WorkbookInputCell = {
+  sheetName: string;
+  address: string;
+  metric: string;
+  period: string;
+  unit: string;
+  required: boolean;
+  writeAuthority: "user" | "system";
+};
+
+type WorkbookRollForwardChange = {
+  sheetName: string;
+  address: string;
+  changeType: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+};
+
 type OutputCell = {
   sheetId: string;
   sheetName: string;
@@ -115,6 +144,16 @@ type WorkerCalculation = {
   before: AppliedCell[];
   appliedChanges: AppliedCell[];
   outputs: ReadModel["outputs"];
+  durationMs: number;
+};
+
+type WorkerPreparation = {
+  workbookBase64: string;
+  workbookHash: string;
+  changed: boolean;
+  changes: WorkbookRollForwardChange[];
+  inputCells: WorkbookInputCell[];
+  readModel: ReadModel;
   durationMs: number;
 };
 
@@ -159,6 +198,7 @@ type Context = {
   tradingDate: string;
   inputFingerprint: string;
   outputBindings: OutputBinding[];
+  reportPeriodPlan: ReportPeriodPlan;
 };
 
 type WorkbookState = {
@@ -270,6 +310,57 @@ function missingRequiredCells(readModel: ReadModel) {
   );
 }
 
+function workbookPeriodHeadersCurrent(
+  readModel: ReadModel,
+  plan: ReportPeriodPlan,
+): boolean {
+  const financialSheets = readModel.sheets.filter((sheet) =>
+    /^(?:12|13|14|15)_p4_/i.test(sheet.name),
+  );
+  const statementKinds = new Set(
+    financialSheets.flatMap((sheet) => {
+      const match = /^(12|13|14|15)_p4_/i.exec(sheet.name);
+      return match?.[1] ? [match[1]] : [];
+    }),
+  );
+  if (
+    statementKinds.size !== 4 ||
+    financialSheets.some(
+      (sheet) =>
+        !hasExactPeriodWindow(
+          sheet.cells.map((cell) => ({
+            row: cell.row,
+            column: cell.column,
+            value: cell.formattedText || cell.rawValue || "",
+          })),
+          plan.periods,
+        ),
+    )
+  ) {
+    return false;
+  }
+
+  const modelSheets = readModel.sheets.filter((sheet) =>
+    /^M1_/i.test(sheet.name),
+  );
+  const forecastPeriods = plan.periods.filter(
+    (period) => period.role === "forecast",
+  );
+  return (
+    modelSheets.length > 0 &&
+    modelSheets.every((sheet) =>
+      hasExactPeriodWindow(
+        sheet.cells.map((cell) => ({
+          row: cell.row,
+          column: cell.column,
+          value: cell.formattedText || cell.rawValue || "",
+        })),
+        forecastPeriods,
+      ),
+    )
+  );
+}
+
 function workbookCell(
   readModel: ReadModel,
   sheetId: string,
@@ -284,6 +375,83 @@ function previousRowAddress(address: string): string | null {
   const match = /^([A-Z]{1,3})([1-9]\d{0,6})$/.exec(address);
   if (!match || Number(match[2]) <= 1) return null;
   return `${match[1]}${Number(match[2]) - 1}`;
+}
+
+function columnNumber(value: string): number {
+  return value
+    .toUpperCase()
+    .split("")
+    .reduce(
+      (total, character) =>
+        total * 26 + character.charCodeAt(0) - 64,
+      0,
+    );
+}
+
+function parsedAddress(address: string): { row: number; column: number } | null {
+  const match = /^\$?([A-Z]{1,3})\$?([1-9]\d{0,6})$/i.exec(address);
+  return match
+    ? { column: columnNumber(match[1]!), row: Number(match[2]) }
+    : null;
+}
+
+function addressInRange(address: string, range: string): boolean {
+  const [firstValue, lastValue = firstValue] = range
+    .replace(/^[^!]+!/, "")
+    .split(":");
+  const cell = parsedAddress(address);
+  const first = parsedAddress(firstValue ?? "");
+  const last = parsedAddress(lastValue ?? "");
+  return Boolean(
+    cell &&
+      first &&
+      last &&
+      cell.row >= Math.min(first.row, last.row) &&
+      cell.row <= Math.max(first.row, last.row) &&
+      cell.column >= Math.min(first.column, last.column) &&
+      cell.column <= Math.max(first.column, last.column),
+  );
+}
+
+async function affectedReportBindings(
+  client: TransactionClient,
+  mappingSetResourceVersionId: string,
+  cells: Array<{ sheetId: string; address: string }>,
+): Promise<string[]> {
+  if (cells.length === 0) return [];
+  const result = await client.query<{
+    slot_id: string;
+    semantic_metric: string;
+    sheet_id: string;
+    address: string | null;
+    range_address: string | null;
+  }>(
+    `SELECT me.slot_id, me.semantic_metric, mc.sheet_id,
+       CASE WHEN mc.address NOT LIKE '%:%' THEN mc.address END AS address,
+       CASE WHEN mc.address LIKE '%:%' THEN mc.address END AS range_address
+     FROM mapping_entry me
+     JOIN mapping_candidate mc
+       ON mc.mapping_candidate_id = me.selected_candidate_id
+     WHERE me.mapping_set_version_id = $1
+       AND me.mapping_status = 'confirmed'`,
+    [mappingSetResourceVersionId],
+  );
+  return [
+    ...new Set(
+      result.rows.flatMap((binding) => {
+        const matched = cells.some(
+          (cell) =>
+            cell.sheetId === binding.sheet_id &&
+            (cell.address === binding.address ||
+              (binding.range_address &&
+                addressInRange(cell.address, binding.range_address))),
+        );
+        return matched
+          ? [binding.semantic_metric || binding.slot_id]
+          : [];
+      }),
+    ),
+  ].sort((left, right) => left.localeCompare(right, "ko"));
 }
 
 function requireVersion(value: unknown, label: string): number {
@@ -670,6 +838,11 @@ async function projectContext(
       ...validatedSources.rows.map((source) => source.source_version_id),
     ]),
   ].sort((left, right) => left.localeCompare(right));
+  const reportPeriodPlan = buildReportPeriodPlan({
+    targetYear: row.target_year,
+    targetQuarter: row.target_quarter,
+    cutoffDate: row.cutoff_date,
+  });
   const inputFingerprint = contentHash({
     validationApprovalId: row.validation_approval_id,
     validatedValueSetResourceVersionId:
@@ -683,6 +856,7 @@ async function projectContext(
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     structureHash: row.structure_hash,
     priceSnapshotId: row.price_snapshot_id,
+    reportPeriodPlan,
   });
   return {
     projectId: row.project_id,
@@ -710,6 +884,7 @@ async function projectContext(
     tradingDate: row.trading_date,
     inputFingerprint,
     outputBindings,
+    reportPeriodPlan,
   };
 }
 
@@ -867,7 +1042,17 @@ function workbookMatchesContext(state: WorkbookState, context: Context) {
   return (
     workbookInputsMatch(state, context) &&
     state.calculationStatus === "success" &&
-    state.readModel.schemaVersion === "1.2"
+    state.readModel.schemaVersion === "1.2" &&
+    state.readModel.reportPeriodPlan?.targetYear ===
+      context.reportPeriodPlan.targetYear &&
+    state.readModel.reportPeriodPlan?.targetQuarter ===
+      context.reportPeriodPlan.targetQuarter &&
+    state.readModel.reportPeriodPlan?.cutoffDate ===
+      context.reportPeriodPlan.cutoffDate &&
+    workbookPeriodHeadersCurrent(
+      state.readModel,
+      context.reportPeriodPlan,
+    )
   );
 }
 
@@ -916,10 +1101,53 @@ async function ensureWorkbook(
       : found.context.sourceObjectKey,
     10 * 60,
   );
-  const readModel = await callExcel<ReadModel>("/valuation/read-model", {
+  const preparation = await callExcel<WorkerPreparation>("/valuation/prepare", {
     downloadUrl,
+    periods: found.context.reportPeriodPlan.periods,
     outputBindings: found.context.outputBindings,
   });
+  const preparedWorkbookBytes = Buffer.from(
+    preparation.workbookBase64,
+    "base64",
+  );
+  if (sha256(preparedWorkbookBytes) !== preparation.workbookHash) {
+    throw new ApiError(
+      503,
+      "CALCULATION_SESSION_UNAVAILABLE",
+      "Excel 준비 결과의 무결성을 확인하지 못했습니다.",
+      { retryable: true },
+    );
+  }
+  const readModel: ReadModel = {
+    ...preparation.readModel,
+    reportPeriodPlan: found.context.reportPeriodPlan,
+    inputManifest: preparation.inputCells,
+    rollForward: {
+      changed: preparation.changed,
+      changes: preparation.changes,
+    },
+  };
+  const preparedObjectKey = preparation.changed
+    ? `projects/${projectId}/valuation/prepared-${preparation.workbookHash.slice(
+        0,
+        12,
+      )}-${uuidv7()}.xlsx`
+    : null;
+  const preparedStored = preparedObjectKey
+    ? await putImmutableObject({
+        objectKey: preparedObjectKey,
+        body: preparedWorkbookBytes,
+        mediaType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        metadata: {
+          project: projectId,
+          purpose: "valuation-roll-forward",
+          targetYear: String(found.context.targetYear),
+          targetQuarter: String(found.context.targetQuarter),
+          engine: "ClosedXML-0.105.0",
+        },
+      })
+    : null;
   return withTransaction(async (client) => {
     await client.query(
       `SELECT pg_advisory_xact_lock(
@@ -950,7 +1178,8 @@ async function ensureWorkbook(
     const metadataRefresh =
       current &&
       workbookInputsMatch(current, context) &&
-      current.calculationStatus === "success";
+      current.calculationStatus === "success" &&
+      !preparation.changed;
     const workbookVersion = metadataRefresh
       ? current.workbookVersion
       : current
@@ -961,9 +1190,36 @@ async function ensureWorkbook(
       : current
         ? current.editableCellSetVersion + 1
         : 1;
-    const currentArtifactId = metadataRefresh
+    let currentArtifactId = metadataRefresh
       ? current.currentArtifactId
       : context.sourceArtifactId;
+    if (!metadataRefresh && preparation.changed) {
+      if (!preparedObjectKey || !preparedStored) {
+        throw new Error("VALUATION_PREPARED_ARTIFACT_MISSING");
+      }
+      currentArtifactId = uuidv7();
+      await client.query(
+        `INSERT INTO artifact (
+           artifact_id, project_id, artifact_kind, storage_status, bucket_name,
+           object_key, object_version, sha256, byte_size, media_type,
+           original_filename, retention_class, created_by_actor_type,
+           supersedes_artifact_id
+         ) VALUES ($1, $2, 'working_copy', 'accepted', $3, $4, $5, $6, $7,
+           $8, $9, 'project', 'system', $10)`,
+        [
+          currentArtifactId,
+          projectId,
+          objectStoreBucket(),
+          preparedObjectKey,
+          preparedStored.objectVersion,
+          preparation.workbookHash,
+          preparedWorkbookBytes.byteLength,
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          context.sourceFilename,
+          current?.currentArtifactId ?? context.sourceArtifactId,
+        ],
+      );
+    }
     let persistedReadModel = readModel;
     if (metadataRefresh) {
       const calculation = await client.query<{
@@ -1068,8 +1324,10 @@ async function ensureWorkbook(
           projectId,
           workbookVersion,
           JSON.stringify(readModel.outputs),
-          readModel.workbookHash || context.sourceSha256,
-          context.sourceArtifactId,
+          readModel.workbookHash ||
+            preparation.workbookHash ||
+            context.sourceSha256,
+          currentArtifactId,
         ],
       );
     }
@@ -1435,13 +1693,19 @@ async function calculateAndSave(
     ),
   );
   const affectedCells = nextReadModel.sheets.flatMap((sheet) =>
-    sheet.cells.filter((cell) => {
-      if (!cell.formula) return false;
-      return (
-        previousFormulaValues.get(`${sheet.sheetId}:${cell.address}`) !==
-        `${cell.rawValue ?? ""}\u001f${cell.formattedText}`
-      );
-    }),
+    sheet.cells
+      .filter((cell) => {
+        if (!cell.formula) return false;
+        return (
+          previousFormulaValues.get(`${sheet.sheetId}:${cell.address}`) !==
+          `${cell.rawValue ?? ""}\u001f${cell.formattedText}`
+        );
+      })
+      .map((cell) => ({
+        ...cell,
+        sheetId: sheet.sheetId,
+        sheetName: sheet.name,
+      })),
   );
   return {
     workbookVersion: nextVersion,
@@ -1554,6 +1818,10 @@ export async function getValuationWorkspace(
       isPositiveDecimal(state.readModel.outputs.forwardEps?.rawValue) &&
       isPositiveDecimal(state.readModel.outputs.targetPer?.rawValue) &&
       isPositiveDecimal(state.readModel.outputs.targetPrice?.rawValue);
+    const periodHeadersCurrent = workbookPeriodHeadersCurrent(
+      state.readModel,
+      context.reportPeriodPlan,
+    );
     const calculationCurrent =
       state.calculationStatus === "success" &&
       currentRun?.status === "success" &&
@@ -1601,6 +1869,7 @@ export async function getValuationWorkspace(
         : ["VALUATION_PREREQUISITE_CHANGED"]),
       ...(calculationCurrent ? [] : ["CALCULATION_NOT_CURRENT"]),
       ...(outputsValid ? [] : ["VALUATION_OUTPUT_INVALID"]),
+      ...(periodHeadersCurrent ? [] : ["REPORT_PERIOD_HEADER_MISMATCH"]),
       ...(requiredMissing.length === 0
         ? []
         : ["REQUIRED_INPUT_MISSING"]),
@@ -1809,6 +2078,20 @@ export async function patchValuationCells(input: {
       requestId,
       changes,
     });
+    const changedBindingLabels = await affectedReportBindings(
+      client,
+      context.mappingSetResourceVersionId,
+      [
+        ...changes.map((change) => ({
+          sheetId: change.sheetId,
+          address: change.address,
+        })),
+        ...result.affectedCells.map((cell) => ({
+          sheetId: cell.sheetId,
+          address: cell.address,
+        })),
+      ],
+    );
     const body = {
       workbookVersion: result.workbookVersion,
       calculationRunId: result.calculationRunId,
@@ -1816,7 +2099,7 @@ export async function patchValuationCells(input: {
       affectedCells: result.affectedCells,
       outputs: result.state?.readModel.outputs,
       outputDiff: result.outputDiff,
-      affectedReportBindings: [],
+      affectedReportBindings: changedBindingLabels,
       invalidatedResults: [
         "valuation_approval",
         "report_outline",

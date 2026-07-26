@@ -64,6 +64,7 @@ export type ExcelTarget = {
   unit: string;
   scope: string;
   valueKind: "actual" | "preliminary_actual";
+  writeAuthority?: "user" | "system";
   required: boolean;
   included: boolean;
   sourcePolicy: Array<{

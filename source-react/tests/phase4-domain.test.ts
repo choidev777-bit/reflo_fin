@@ -389,3 +389,104 @@ test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사�
     }
   }
 });
+
+test("DART 수집은 최근 연간 실적을 포함하고 기준일 이후 분기는 제외한다", async () => {
+  const previous = {
+    apiKey: process.env.OPENDART_API_KEY,
+    researchFixture: process.env.REFLO_RESEARCH_TEST_FIXTURE,
+    llmFixture: process.env.REFLO_LLM_TEST_FIXTURE,
+  };
+  process.env.OPENDART_API_KEY = "test-dart-key";
+  process.env.REFLO_RESEARCH_TEST_FIXTURE = "0";
+  process.env.REFLO_LLM_TEST_FIXTURE = "0";
+  const requestedUrls: string[] = [];
+  mock.method(
+    globalThis,
+    "fetch",
+    async (input: string | URL | Request) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      const query = new URL(url).searchParams;
+      const annual = query.get("bsns_year") === "2025";
+      return new Response(
+        JSON.stringify({
+          status: "000",
+          list: [
+            {
+              rcept_no: annual
+                ? "20260318000001"
+                : "20260514000001",
+              bsns_year: annual ? "2025" : "2026",
+              account_nm: "매출액",
+              thstrm_amount: annual ? "1065290000000" : "346310000000",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  );
+  try {
+    const result = await collectResearchSources({
+      projectId: "project-1",
+      companyMasterId: "company-1",
+      companyName: "대덕전자",
+      corpCode: "00126380",
+      ticker: "353200",
+      exchange: "KOSPI",
+      targetYear: 2026,
+      targetQuarter: 1,
+      cutoffDate: "2026-04-30",
+      cutoffAt: "2026-04-30T23:59:59.999+09:00",
+      questions: [
+        {
+          questionId: "question-1",
+          order: 1,
+          text: "최근 확정 실적은 무엇인가?",
+          purpose: "실적 확인",
+          metrics: ["매출액"],
+          period: "2025년 연간",
+          comparison: "전년",
+          suggestedSourceTypes: ["DART"],
+          included: true,
+          collectionTargets: [
+            { label: "매출액", resultTypes: ["number"] },
+          ],
+          sourceBindingIds: ["DART"],
+          collectionMethods: { DART: "code_then_agent" },
+          validationErrors: [],
+        },
+      ],
+      excelTargets: [],
+      userUrls: [],
+      sourceReferences: [],
+    });
+
+    assert.equal(requestedUrls.length, 2);
+    assert.match(requestedUrls[0] ?? "", /bsns_year=2025/);
+    assert.match(requestedUrls[0] ?? "", /reprt_code=11011/);
+    assert.match(requestedUrls[1] ?? "", /bsns_year=2026/);
+    assert.match(requestedUrls[1] ?? "", /reprt_code=11013/);
+    const source = result.sources[0];
+    assert.equal(source?.publishedAt, "2026-03-18T00:00:00+09:00");
+    const rows = source?.content.rows as Array<{
+      _reflo_period?: string;
+    }>;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?._reflo_period, "2025년 연간");
+  } finally {
+    mock.restoreAll();
+    if (previous.apiKey === undefined) delete process.env.OPENDART_API_KEY;
+    else process.env.OPENDART_API_KEY = previous.apiKey;
+    if (previous.researchFixture === undefined) {
+      delete process.env.REFLO_RESEARCH_TEST_FIXTURE;
+    } else {
+      process.env.REFLO_RESEARCH_TEST_FIXTURE = previous.researchFixture;
+    }
+    if (previous.llmFixture === undefined) {
+      delete process.env.REFLO_LLM_TEST_FIXTURE;
+    } else {
+      process.env.REFLO_LLM_TEST_FIXTURE = previous.llmFixture;
+    }
+  }
+});

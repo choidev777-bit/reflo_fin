@@ -14,7 +14,11 @@ type MappingEntry = NonNullable<
 type MappingCandidate = MappingEntry["candidates"][number];
 type ConnectionStatus =
   | "connected"
+  | "period_refresh"
   | "external"
+  | "input"
+  | "source_and_input"
+  | "valuation"
   | "later"
   | "review"
   | "fixed"
@@ -104,12 +108,40 @@ const statusMeta: Record<
   ConnectionStatus,
   { label: string; description: string }
 > = {
-  connected: { label: "자동 연결", description: "현재 원본에서 연결됨" },
-  external: { label: "후속 수집", description: "외부 자료 수집 단계에서 채움" },
-  later: { label: "후속 단계", description: "사용자 판단 또는 AI 초안으로 생성" },
-  review: { label: "확인 필요", description: "원본 후보를 선택해야 함" },
-  fixed: { label: "고정", description: "원문 레이아웃과 문구 유지" },
-  optional: { label: "유지", description: "현재 원문을 유지함" },
+  connected: {
+    label: "Excel 위치 연결",
+    description: "현재 Excel 원본 위치를 그대로 사용할 수 있습니다.",
+  },
+  period_refresh: {
+    label: "기간 갱신 필요",
+    description: "새 보고서 기간에 맞게 열과 수식을 갱신해야 합니다.",
+  },
+  external: {
+    label: "자료 수집 필요",
+    description: "자료 수집 단계에서 최신 원본을 연결합니다.",
+  },
+  input: {
+    label: "사용자 입력 필요",
+    description: "Excel 입력 단계에서 전망값을 확정합니다.",
+  },
+  source_and_input: {
+    label: "자료 수집·입력",
+    description: "실제값 수집과 전망값 입력이 모두 필요합니다.",
+  },
+  valuation: {
+    label: "밸류에이션 단계",
+    description: "밸류에이션 계산 결과로 확정합니다.",
+  },
+  later: {
+    label: "후속 단계",
+    description: "후속 의사결정 또는 초안 작성 단계에서 생성합니다.",
+  },
+  review: {
+    label: "연결 확인 필요",
+    description: "Excel 원본 위치를 확인해야 합니다.",
+  },
+  fixed: { label: "유지", description: "원본 레이아웃과 문구를 유지합니다." },
+  optional: { label: "선택", description: "현재 원본을 선택적으로 사용합니다." },
 };
 
 function metricLabel(metric: string): string {
@@ -136,7 +168,30 @@ function connectionStatus(
   entry: MappingEntry,
   selectedCandidateId = entry.selectedCandidateId,
 ): ConnectionStatus {
-  if (effectiveCandidateId(entry, selectedCandidateId)) return "connected";
+  const effectiveId = effectiveCandidateId(entry, selectedCandidateId);
+  const candidate = entry.candidates.find(
+    (item) => item.candidateId === effectiveId,
+  );
+  if (candidate) {
+    switch (candidate.dataReadiness.state) {
+      case "period_refresh_required":
+        return "period_refresh";
+      case "source_collection_required":
+        return "external";
+      case "user_input_required":
+        return "input";
+      case "source_and_input_required":
+        return "source_and_input";
+      case "valuation_required":
+        return "valuation";
+      case "later_stage":
+        return "later";
+      case "review_required":
+        return "review";
+      default:
+        return "connected";
+    }
+  }
   if (entry.plan?.resolution === "external_pending") return "external";
   if (entry.plan?.resolution === "later_stage") return "later";
   if (entry.required) return "review";
@@ -921,15 +976,23 @@ export function InspectionResultDialog({
   const statuses = entries.map((entry) =>
     connectionStatus(entry, selections[entry.entryId] || null),
   );
-  const connectedCount = statuses.filter((status) => status === "connected").length;
-  const externalCount = statuses.filter((status) => status === "external").length;
+  const connectedCount = entries.filter((entry) =>
+    effectiveCandidateId(entry, selections[entry.entryId] || null),
+  ).length;
+  const periodRefreshCount = statuses.filter(
+    (status) => status === "period_refresh",
+  ).length;
   const narrativeSectionCount =
     inspection.analysis?.pdf.pages.reduce(
       (total, page) => total + (page.narrativeSections?.length ?? 0),
       0,
     ) ?? 0;
-  const laterCount =
-    statuses.filter((status) => status === "later").length +
+  const followupCount =
+    statuses.filter((status) =>
+      ["external", "input", "source_and_input", "valuation", "later"].includes(
+        status,
+      ),
+    ).length +
     syntheticWritingItems.length +
     narrativeSectionCount * 2;
   const reviewCount = statuses.filter((status) => status === "review").length;
@@ -982,16 +1045,16 @@ export function InspectionResultDialog({
 
         <div className="phase2-result-summary" aria-label="분석 결과 요약">
           <div>
-            <small>자동 연결</small>
+            <small>Excel 위치</small>
             <b>{connectedCount}</b>
           </div>
           <div>
-            <small>후속 수집</small>
-            <b>{externalCount}</b>
+            <small>기간 갱신</small>
+            <b>{periodRefreshCount}</b>
           </div>
           <div>
-            <small>후속 단계</small>
-            <b>{laterCount}</b>
+            <small>후속 작업</small>
+            <b>{followupCount}</b>
           </div>
           <div data-attention={reviewCount > 0}>
             <small>확인 필요</small>

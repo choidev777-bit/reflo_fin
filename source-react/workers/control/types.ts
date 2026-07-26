@@ -27,6 +27,10 @@ export type FileInspectionWorkflowInput = {
   projectId: string;
   inspectionId: string;
   setupResourceVersionId: string;
+  targetYear: number;
+  targetQuarter: number;
+  corpCode: string | null;
+  reportPeriodPlan: import("../../server/domain/report-period-plan").ReportPeriodPlan;
   pdf: InspectionFileInput;
   workbook: InspectionFileInput;
   marketData: {
