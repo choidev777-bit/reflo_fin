@@ -111,7 +111,11 @@ export function ReportChartEditor({
                 onClick={() => setDraft(option.value)}
               >
                 <span className={styles.reportChartOptionPreview}>
-                  <ReportChartPreview type={option.value} data={snapshot} />
+                  <ReportChartPreview
+                    type={option.value}
+                    data={snapshot}
+                    asset={block.renderAssets?.[option.value]}
+                  />
                 </span>
                 <span className={styles.reportChartOptionCopy}>
                   <strong>{option.title}</strong>

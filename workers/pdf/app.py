@@ -6,7 +6,10 @@ import io
 import json
 import os
 import re
+import subprocess
+import tempfile
 import urllib.request
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -2593,6 +2596,239 @@ def normalize_render_patches(
     return normalized
 
 
+def source_region_token_hashes(
+    payload: bytes,
+    page_number: int,
+    bbox: list[float],
+) -> list[str]:
+    document = pymupdf.open(stream=payload, filetype="pdf")
+    try:
+        if page_number < 1 or page_number > document.page_count:
+            raise ValueError("render page is outside the source document")
+        rect = pymupdf.Rect(bbox)
+        page = document[page_number - 1]
+        if not page.rect.contains(rect):
+            raise ValueError("render bbox is outside the source page")
+        words = [
+            (
+                int(word[5]),
+                int(word[6]),
+                int(word[7]),
+                str(word[4]),
+            )
+            for word in page.get_text("words")
+            if pymupdf.Rect(word[:4]).intersects(rect)
+        ]
+        words.sort()
+        canonical = "\n".join(item[3] for item in words)
+        return [digest(canonical.encode("utf-8"))]
+    finally:
+        document.close()
+
+
+def sanitized_svg_bytes(svg: str) -> bytes:
+    if (
+        len(svg.encode("utf-8")) > 5 * 1024 * 1024
+        or "<!DOCTYPE" in svg.upper()
+        or "<!ENTITY" in svg.upper()
+    ):
+        raise ValueError("UNSAFE_VECTOR_ASSET")
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError as error:
+        raise ValueError("INVALID_VECTOR_ASSET") from error
+    forbidden = {"script", "foreignObject", "iframe", "image", "use"}
+    for element in root.iter():
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag in forbidden:
+            raise ValueError("UNSAFE_VECTOR_ASSET")
+        for key, value in element.attrib.items():
+            local_key = key.rsplit("}", 1)[-1].lower()
+            normalized = str(value).strip().lower()
+            if local_key.startswith("on"):
+                raise ValueError("UNSAFE_VECTOR_ASSET")
+            if local_key in {"href", "src"} and (
+                normalized.startswith(("http:", "https:", "file:", "data:"))
+                or normalized.startswith("//")
+            ):
+                raise ValueError("UNSAFE_VECTOR_ASSET")
+            if "url(" in normalized and not re.fullmatch(
+                r"url\(#[a-zA-Z0-9_.:-]+\)", normalized
+            ):
+                raise ValueError("UNSAFE_VECTOR_ASSET")
+    return ET.tostring(root, encoding="utf-8")
+
+
+def validate_qpdf(payload: bytes) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".pdf") as candidate:
+        candidate.write(payload)
+        candidate.flush()
+        completed = subprocess.run(
+            ["qpdf", "--check", candidate.name],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[:500]
+        raise ValueError(f"QPDF_STRUCTURE_INVALID:{detail}")
+
+
+def render_plan_pdf_bytes(
+    payload: bytes,
+    render_plan: Any,
+    placements: Any,
+    vector_asset_payloads: Any,
+    text_patches: Any = None,
+) -> dict[str, Any]:
+    if not isinstance(render_plan, dict):
+        raise ValueError("renderPlan is required")
+    commands = render_plan.get("commands")
+    if not isinstance(commands, list):
+        raise ValueError("renderPlan.commands must be an array")
+    if not isinstance(placements, dict):
+        raise ValueError("placements must be an object")
+    if not isinstance(vector_asset_payloads, dict):
+        raise ValueError("vectorAssetPayloads must be an object")
+
+    source_payload = payload
+    warnings: list[dict[str, str]] = []
+    applied: list[dict[str, Any]] = []
+    if text_patches:
+        text_result = render_pdf_bytes(
+            payload,
+            text_patches,
+            skip_overflow=True,
+        )
+        payload = base64.b64decode(text_result["pdfBase64"])
+        warnings.extend(text_result["warnings"])
+        source_document = pymupdf.open(stream=source_payload, filetype="pdf")
+        try:
+            applied.extend(
+                normalize_render_patches(text_patches, source_document.page_count)
+            )
+        finally:
+            source_document.close()
+
+    document = pymupdf.open(stream=payload, filetype="pdf")
+    applied_command_ids: list[str] = []
+    try:
+        prepared: list[dict[str, Any]] = []
+        seen_commands: set[str] = set()
+        for command in commands:
+            if not isinstance(command, dict):
+                raise ValueError("invalid render command")
+            command_id = str(command.get("commandId") or "").strip()
+            block_id = str(command.get("blockId") or "").strip()
+            strategy = str(command.get("strategy") or "")
+            asset_hash = str(command.get("vectorAssetHash") or "")
+            placement = placements.get(block_id)
+            if (
+                not command_id
+                or command_id in seen_commands
+                or not block_id
+                or strategy not in {
+                    "operator_replace",
+                    "block_vector_replace",
+                    "region_background_patch",
+                }
+                or not isinstance(placement, dict)
+                or not asset_hash
+            ):
+                raise ValueError("invalid render command")
+            seen_commands.add(command_id)
+            page_number = int(placement.get("pageNumber") or 0)
+            bbox = placement.get("bbox")
+            if (
+                page_number < 1
+                or page_number > document.page_count
+                or not isinstance(bbox, list)
+                or len(bbox) != 4
+            ):
+                raise ValueError("invalid render placement")
+            rect = pymupdf.Rect([float(value) for value in bbox])
+            page = document[page_number - 1]
+            if rect.is_empty or not page.rect.contains(rect):
+                raise ValueError("render bbox is outside the source page")
+            expected_tokens = command.get("expectedTokenHashes")
+            actual_tokens = source_region_token_hashes(
+                source_payload, page_number, [float(value) for value in bbox]
+            )
+            if expected_tokens != actual_tokens:
+                raise ValueError(f"TOKEN_HASH_MISMATCH:{command_id}")
+            svg = vector_asset_payloads.get(asset_hash)
+            if not isinstance(svg, str) or digest(svg.encode("utf-8")) != asset_hash:
+                raise ValueError(f"VECTOR_ASSET_HASH_MISMATCH:{command_id}")
+            svg_bytes = sanitized_svg_bytes(svg)
+            prepared.append(
+                {
+                    "command": command,
+                    "pageNumber": page_number,
+                    "rect": rect,
+                    "bbox": [float(value) for value in bbox],
+                    "svg": svg_bytes,
+                }
+            )
+            page.add_redact_annot(rect, fill=None, cross_out=False)
+
+        for page_number in sorted({item["pageNumber"] for item in prepared}):
+            document[page_number - 1].apply_redactions(
+                images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+            )
+
+        for item in prepared:
+            svg_document = pymupdf.open(stream=item["svg"], filetype="svg")
+            try:
+                vector_pdf = pymupdf.open(
+                    stream=svg_document.convert_to_pdf(), filetype="pdf"
+                )
+                try:
+                    document[item["pageNumber"] - 1].show_pdf_page(
+                        item["rect"], vector_pdf, 0, overlay=True
+                    )
+                finally:
+                    vector_pdf.close()
+            finally:
+                svg_document.close()
+            command = item["command"]
+            applied_command_ids.append(str(command["commandId"]))
+            applied.append(
+                {
+                    "blockId": str(command["blockId"]),
+                    "pageNumber": item["pageNumber"],
+                    "bbox": item["bbox"],
+                    "text": "",
+                    "sourceObjectIds": command.get("targetObjectIds") or [],
+                }
+            )
+        intermediate = document.tobytes(garbage=0, deflate=True, clean=False)
+    finally:
+        document.close()
+
+    stream = io.BytesIO()
+    with pikepdf.Pdf.open(io.BytesIO(intermediate)) as final_pdf:
+        final_pdf.save(stream)
+    result = stream.getvalue()
+    validate_qpdf(result)
+    validation = validate_fixed_regions(source_payload, result, applied)
+    if not validation["passed"]:
+        raise ValueError("FIXED_REGION_VISUAL_REGRESSION")
+    return {
+        "pdfBase64": base64.b64encode(result).decode("ascii"),
+        "sha256": digest(result),
+        "byteSize": len(result),
+        "mediaType": "application/pdf",
+        "renderPlanId": str(render_plan.get("renderPlanId") or ""),
+        "appliedCommandIds": applied_command_ids,
+        "validation": validation,
+        "qpdfPassed": True,
+        "warnings": warnings,
+    }
+
+
 def render_pdf_bytes(
     payload: bytes,
     patch_input: Any,
@@ -2747,6 +2983,7 @@ def render_pdf_bytes(
     with pikepdf.Pdf.open(io.BytesIO(intermediate)) as final_pdf:
         final_pdf.save(final_stream)
     result = final_stream.getvalue()
+    validate_qpdf(result)
     validation = validate_fixed_regions(payload, result, applied_patches)
     if not validation["passed"]:
         raise ValueError("FIXED_REGION_VISUAL_REGRESSION")
@@ -2780,6 +3017,7 @@ def render_pdf_bytes(
             "operations": render_operations,
         },
         "validation": validation,
+        "qpdfPassed": True,
         "warnings": warnings,
     }
 
@@ -2793,6 +3031,22 @@ def render_pdf(
         download_pdf(download_url),
         patches,
         skip_overflow=skip_overflow,
+    )
+
+
+def render_plan_pdf(
+    download_url: str,
+    render_plan: Any,
+    placements: Any,
+    vector_asset_payloads: Any,
+    text_patches: Any = None,
+) -> dict[str, Any]:
+    return render_plan_pdf_bytes(
+        download_pdf(download_url),
+        render_plan,
+        placements,
+        vector_asset_payloads,
+        text_patches,
     )
 
 
@@ -2811,7 +3065,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if self.path not in {"/inspect", "/render"}:
+        if self.path not in {"/inspect", "/render", "/render-plan"}:
             self.send_error(404)
             return
         try:
@@ -2828,6 +3082,14 @@ class Handler(BaseHTTPRequestHandler):
                     ocr_fallback=request.get("ocrFallback"),
                 )
                 if self.path == "/inspect"
+                else render_plan_pdf(
+                    download_url,
+                    request.get("renderPlan"),
+                    request.get("placements"),
+                    request.get("vectorAssetPayloads"),
+                    request.get("textPatches"),
+                )
+                if self.path == "/render-plan"
                 else render_pdf(
                     download_url,
                     request.get("patches"),

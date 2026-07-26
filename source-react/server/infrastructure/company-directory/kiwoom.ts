@@ -1,4 +1,5 @@
 import type { DirectoryCompany, ExchangeCode } from "./types";
+import { itManufacturingEligibility } from "./it-manufacturing-policy";
 
 const DEFAULT_API_URL = "https://api.kiwoom.com";
 const MINIMUM_COMPANY_COUNT = 2_000;
@@ -100,8 +101,7 @@ export function parseKiwoomCompanyList(
       exchange,
       industry: industry || "업종 정보 없음",
       listed: true,
-      mvpEligible: true,
-      ineligibilityReason: null,
+      ...itManufacturingEligibility(ticker),
     });
   }
   return companies;

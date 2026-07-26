@@ -450,6 +450,14 @@ export type ReportFixedVisualSnapshot = {
   provenance: null;
 };
 
+export type ReportRenderAsset = {
+  rendererVersion: "reflo-svg-1";
+  mediaType: "image/svg+xml";
+  sceneHash: string;
+  assetHash: string;
+  svg: string;
+};
+
 export type ReportMaterializedData =
   | ReportScalarSnapshot
   | ReportTableSnapshot
@@ -514,6 +522,7 @@ export type ReportBlock = {
   materializedData?: ReportMaterializedData;
   materializationSnapshotId?: string | null;
   chartType?: ReportChartType;
+  renderAssets?: Partial<Record<ReportChartType | "default", ReportRenderAsset>>;
   patchStrategy:
     | "fixed"
     | "operator_replace"
@@ -3620,6 +3629,12 @@ export function attachTemplateGeometry(
             materializedData;
           existingSlotBlock.numericAuthority =
             status === "confirmed" ? "mapping_set" : "mapping_required";
+          if (existingSlotBlock.bbox) {
+            existingSlotBlock.patchStrategy =
+              kind === "scalar"
+                ? "operator_replace"
+                : "block_vector_replace";
+          }
           if (existingSlotBlock.revision === 1) {
             existingSlotBlock.text =
               status !== "confirmed"
@@ -3664,7 +3679,10 @@ export function attachTemplateGeometry(
             sourceType: binding?.sourceType ?? null,
           },
           materializedData,
-          patchStrategy: "fixed",
+          patchStrategy:
+            kind === "scalar"
+              ? "operator_replace"
+              : "block_vector_replace",
         });
       }
 
@@ -3778,7 +3796,7 @@ export function attachTemplateGeometry(
             sourceType: binding?.sourceType ?? null,
           },
           materializedData,
-          patchStrategy: "fixed",
+          patchStrategy: "block_vector_replace",
         });
       }
       return {

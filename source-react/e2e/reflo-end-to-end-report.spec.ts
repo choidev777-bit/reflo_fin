@@ -260,7 +260,7 @@ test("외부 returnTo는 거부", async ({ request }) => {
   });
 });
 
-test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀", async ({
+test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -323,7 +323,9 @@ test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀
     timeout: 45_000,
   });
   await inputs.nth(1).setInputFiles(
-    path.resolve("../fixtures/ISC_095340_4Q25_Valuation_하나증권_12.xlsx"),
+    path.resolve(
+      "../fixtures/ISC_095340_4Q25_Valuation_하나증권_12_REFLO_BRIDGE.xlsx",
+    ),
   );
   await expect(page.getByText("서버 검사 통과")).toHaveCount(2, {
     timeout: 45_000,
@@ -695,6 +697,238 @@ test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀
     error: { code: "READ_ONLY_CELL" },
   });
 
+  await expect(
+    page.getByRole("heading", { name: "페이지 내용 설정" }),
+  ).toBeVisible();
+  const outlinePages = page.locator(
+    'section[aria-label="원본 PDF 페이지 구성"] > article',
+  );
+  const outlinePageCount = await outlinePages.count();
+  expect(outlinePageCount).toBeGreaterThan(0);
+  for (let index = 0; index < outlinePageCount; index += 1) {
+    const outlinePage = outlinePages.nth(index);
+    const toggle = outlinePage.locator(
+      'button[aria-controls^="outline-panel-"]',
+    );
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+      await toggle.click();
+    }
+    const reviewButton = outlinePage.getByRole("button", {
+      name: /이 페이지 확인|확인 완료/,
+    });
+    if ((await reviewButton.textContent())?.includes("이 페이지 확인")) {
+      await reviewButton.click();
+    }
+    await expect(reviewButton).toContainText("확인 완료");
+  }
+
+  await page.getByRole("button", { name: "이 구성으로 초안 생성" }).click();
+  const outlineApproval = page.getByRole("dialog", {
+    name: "페이지 구성을 승인할까요?",
+  });
+  await expect(outlineApproval).toBeVisible();
+  await outlineApproval
+    .getByRole("button", { name: "승인하고 초안 생성" })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/report$`), {
+    timeout: 60_000,
+  });
+  await expect(
+    page.getByRole("region", { name: "보고서 초안 1페이지" }),
+  ).toBeVisible({ timeout: 60_000 });
+
+  const initialReportResponse = await page.request.get(
+    `/api/projects/${projectId}/report`,
+  );
+  expect(initialReportResponse.status()).toBe(200);
+  const initialReport = await initialReportResponse.json();
+  expect(initialReport.jobs.preview?.status).toBe("ready");
+  expect(initialReport.jobs.preview?.contentUrl).toBeTruthy();
+  expect(initialReport.jobs.preview.contentUrl).not.toBe(
+    initialReport.sourcePdf.contentUrl,
+  );
+  expect(initialReport.jobs.preview.artifactId).not.toBe(
+    initialReport.sourcePdf.artifactId,
+  );
+
+  const originalCompare = page.getByRole("button", { name: "원본 비교" });
+  await expect(originalCompare).toBeVisible();
+  await originalCompare.click();
+  await expect(
+    page.getByRole("button", { name: "변경본 보기" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "변경본 보기" }).click();
+
+  const dataHotspots = page.locator(
+    'button[aria-label$="데이터 연결 확인"], button[aria-label*="그래프 형태 변경"]',
+  );
+  await expect(dataHotspots.first()).toBeDisabled();
+  await page.getByRole("button", { name: "편집", exact: true }).click();
+  await expect(dataHotspots.first()).toBeEnabled();
+
+  const reportBeforeChartChange = await (
+    await page.request.get(`/api/projects/${projectId}/report`)
+  ).json();
+  const chartBlockBefore = reportBeforeChartChange.pages
+    .flatMap((reportPage: { blocks: Array<Record<string, unknown>> }) =>
+      reportPage.blocks,
+    )
+    .find(
+      (block: {
+        dataBinding?: { kind?: string };
+        materializedData?: { status?: string };
+      }) =>
+        block.dataBinding?.kind === "chart" &&
+        block.materializedData?.status === "ready",
+    ) as
+    | {
+        blockId: string;
+        label: string;
+        chartType: string;
+        materializedData: { dataHash: string };
+      }
+    | undefined;
+  expect(chartBlockBefore).toBeTruthy();
+  if (!chartBlockBefore) {
+    throw new Error("ready chart block is required");
+  }
+  const chartHotspot = page.getByRole("button", {
+    name: new RegExp(`${chartBlockBefore.label}.*그래프 형태 변경`),
+  }).first();
+  await chartHotspot.click();
+  const chartPanel = page.getByRole("dialog", { name: "보고서 작업 패널" });
+  await expect(chartPanel.getByRole("heading", { name: "그래프 형태 변경" })).toBeVisible();
+  await chartPanel.getByRole("button", { name: "연결 확인" }).click();
+  await expect(chartPanel.getByRole("heading", { name: "데이터 연결" })).toBeVisible();
+  await expect(chartPanel.locator("input, textarea, select")).toHaveCount(0);
+  await chartPanel.getByRole("button", { name: "패널 닫기" }).click();
+
+  await chartHotspot.click();
+  const chartOptions = chartPanel.getByRole("group", { name: "그래프 형태" });
+  const alternativeChart = chartOptions.locator(
+    'button[aria-pressed="false"]',
+  ).first();
+  await expect(alternativeChart).toBeVisible();
+  await alternativeChart.click();
+  const chartMutation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/report/versions/"),
+  );
+  await chartPanel
+    .getByRole("button", { name: "선택한 형태 적용" })
+    .click();
+  expect((await chartMutation).status()).toBe(200);
+
+  const reportAfterChartChange = await (
+    await page.request.get(`/api/projects/${projectId}/report`)
+  ).json();
+  const chartBlockAfter = reportAfterChartChange.pages
+    .flatMap((reportPage: { blocks: Array<Record<string, unknown>> }) =>
+      reportPage.blocks,
+    )
+    .find(
+      (block: { blockId?: string }) =>
+        block.blockId === chartBlockBefore.blockId,
+    ) as
+    | {
+        chartType: string;
+        materializedData: { dataHash: string };
+      }
+    | undefined;
+  expect(chartBlockAfter).toBeTruthy();
+  expect(chartBlockAfter!.materializedData.dataHash).toBe(
+    chartBlockBefore.materializedData.dataHash,
+  );
+  expect(chartBlockAfter!.chartType).not.toBe(chartBlockBefore.chartType);
+
+  const previewResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/report/previews"),
+  );
+  await page.getByRole("button", { name: "PDF 미리보기" }).click();
+  expect((await previewResponse).status()).toBe(202);
+  await expect(
+    chartPanel.getByRole("heading", { name: "PDF 미리보기" }),
+  ).toBeVisible();
+  await chartPanel.getByRole("button", { name: "패널 닫기" }).click();
+
+  const validationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/report/validations"),
+  );
+  await page.getByRole("button", { name: "내보내기", exact: true }).click();
+  expect((await validationResponse).status()).toBe(202);
+  const finalApproval = page.getByRole("alertdialog");
+  await expect(
+    finalApproval.getByRole("heading", {
+      name: "이 버전을 최종 승인할까요?",
+    }),
+  ).toBeVisible();
+  await finalApproval
+    .getByRole("button", { name: "승인하고 내보내기" })
+    .click();
+  await expect(
+    chartPanel.getByText(
+      "동일한 승인 버전에서 PDF와 XLSX를 생성했습니다.",
+    ),
+  ).toBeVisible({ timeout: 60_000 });
+
+  const exportedReport = await (
+    await page.request.get(`/api/projects/${projectId}/report`)
+  ).json();
+  expect(exportedReport.report.status).toBe("approved");
+  expect(exportedReport.jobs.export?.artifacts).toHaveLength(2);
+  const exportedPdf = exportedReport.jobs.export.artifacts.find(
+    (artifact: { type: string }) => artifact.type === "pdf",
+  );
+  const exportedXlsx = exportedReport.jobs.export.artifacts.find(
+    (artifact: { type: string }) => artifact.type === "xlsx",
+  );
+  expect(exportedPdf.artifactId).not.toBe(exportedReport.sourcePdf.artifactId);
+  expect(exportedPdf.downloadPath).toBeTruthy();
+  expect(exportedXlsx.downloadPath).toBeTruthy();
+  const duplicateExportKey = crypto.randomUUID();
+  const duplicateExportRequest = {
+    headers: {
+      "X-CSRF-Token": auth.csrfToken,
+      "Idempotency-Key": duplicateExportKey,
+    },
+    data: {
+      approvedReportVersionId: exportedReport.report.activeVersionId,
+      validationRunId: exportedReport.jobs.validation.validationRunId,
+      artifactTypes: ["pdf", "xlsx"],
+    },
+  };
+  const duplicateExportFirst = await page.request.post(
+    `/api/projects/${projectId}/report/exports`,
+    duplicateExportRequest,
+  );
+  const duplicateExportSecond = await page.request.post(
+    `/api/projects/${projectId}/report/exports`,
+    duplicateExportRequest,
+  );
+  expect(duplicateExportFirst.status()).toBe(202);
+  expect(duplicateExportSecond.status()).toBe(202);
+  expect((await duplicateExportFirst.json()).exportId).toBe(
+    (await duplicateExportSecond.json()).exportId,
+  );
+  const finalPdfDownload = await page.request.get(exportedPdf.downloadPath);
+  expect(finalPdfDownload.status()).toBe(200);
+  expect(finalPdfDownload.headers()["content-type"]).toContain(
+    "application/pdf",
+  );
+  expect((await finalPdfDownload.body()).subarray(0, 4).toString()).toBe("%PDF");
+  const finalWorkbookDownload = await page.request.get(
+    exportedXlsx.downloadPath,
+  );
+  expect(finalWorkbookDownload.status()).toBe(200);
+  expect((await finalWorkbookDownload.body()).subarray(0, 2).toString()).toBe(
+    "PK",
+  );
+
   const targetPerInputAddress = targetPerOutput.address.replace(
     /(\d+)$/,
     (_match: string, row: string) => String(Number(row) - 1),
@@ -756,5 +990,77 @@ test("기준 fixture 계보 고정과 Phase 2 blocker, 해소 시 Phase 5 회귀
       (stage: { stageKey: string }) => stage.stageKey === "report_outline",
     ).status,
   ).toBe("revalidation_required");
+
+  const dryRunResponse = await page.request.post(
+    `/api/projects/${projectId}/report-pipeline/migrations`,
+    {
+      headers: {
+        "X-CSRF-Token": auth.csrfToken,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: { mode: "dry_run" },
+    },
+  );
+  expect(dryRunResponse.status()).toBe(200);
+  const dryRun = await dryRunResponse.json();
+  expect(dryRun.operationStatus).toBe("succeeded");
+  expect(dryRun.result.destructiveChanges).toBe(0);
+  expect(dryRun.result.generatedVersions).toBe(0);
+
+  const migrationResponse = await page.request.post(
+    `/api/projects/${projectId}/report-pipeline/migrations`,
+    {
+      headers: {
+        "X-CSRF-Token": auth.csrfToken,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data: { mode: "apply" },
+    },
+  );
+  expect(migrationResponse.status()).toBe(202);
+  const migration = await migrationResponse.json();
+  let migrationStatus: {
+    operationStatus: string;
+    result: {
+      previousApprovalsPreserved?: boolean;
+      previousExportsPreserved?: boolean;
+      targetMappingSetId?: string;
+    };
+  } | null = null;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `/api/projects/${projectId}/report-pipeline/migrations/${migration.migrationRunId}`,
+        );
+        expect(response.status()).toBe(200);
+        migrationStatus = await response.json();
+        return migrationStatus?.operationStatus;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe("succeeded");
+  const completedMigration = migrationStatus as {
+    operationStatus: string;
+    result: {
+      previousApprovalsPreserved?: boolean;
+      previousExportsPreserved?: boolean;
+      targetMappingSetId?: string;
+    };
+  } | null;
+  expect(completedMigration).not.toBeNull();
+  expect(completedMigration!.result.previousApprovalsPreserved).toBe(true);
+  expect(completedMigration!.result.previousExportsPreserved).toBe(true);
+  expect(completedMigration!.result.targetMappingSetId).toBeTruthy();
+
+  const rollbackResponse = await page.request.post(
+    `/api/projects/${projectId}/report-pipeline/rollback`,
+    { headers: { "X-CSRF-Token": auth.csrfToken } },
+  );
+  expect(rollbackResponse.status()).toBe(200);
+  await expect(rollbackResponse.json()).resolves.toMatchObject({
+    pipelineMode: "legacy",
+    historicalVersionsPreserved: true,
+  });
   assertNoRuntimeErrors();
 });

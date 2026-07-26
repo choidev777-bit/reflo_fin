@@ -6,6 +6,7 @@ import {
 } from "@/server/http/request";
 import { jsonResponse, withApiErrors } from "@/server/http/response";
 import { createReportPreview } from "@/server/infrastructure/repositories/report-repository";
+import { kickOutboxDispatcher } from "@/server/infrastructure/temporal/client";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -14,14 +15,12 @@ export async function POST(request: NextRequest, context: Context) {
     const session = await authenticatedMutation(request);
     const { projectId } = await context.params;
     const body = await readJson<{ reportVersionId: unknown }>(request);
-    return jsonResponse(
-      await createReportPreview({
+    const result = await createReportPreview({
         projectId: requireUuid(projectId),
         userId: session.userId,
         reportVersionId: body.reportVersionId,
-      }),
-      { status: 202 },
-      requestId,
-    );
+      });
+    kickOutboxDispatcher();
+    return jsonResponse(result, { status: 202 }, requestId);
   });
 }

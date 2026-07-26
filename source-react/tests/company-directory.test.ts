@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseKindCompanyHtml } from "../server/infrastructure/company-directory/kind";
 import { parseKiwoomCompanyList } from "../server/infrastructure/company-directory/kiwoom";
+import {
+  isSupportedItManufacturingTicker,
+  supportedItManufacturingCompanyCount,
+} from "../server/infrastructure/company-directory/it-manufacturing-policy";
+
+test("uses the approved 434-company IT manufacturing universe", () => {
+  assert.equal(supportedItManufacturingCompanyCount(), 434);
+  assert.equal(isSupportedItManufacturingTicker("353200"), true);
+  assert.equal(isSupportedItManufacturingTicker("005930"), true);
+  assert.equal(isSupportedItManufacturingTicker("042660"), false);
+  assert.equal(isSupportedItManufacturingTicker("095340"), false);
+});
 
 test("parses current listed companies from the KRX KIND table", () => {
   const companies = parseKindCompanyHtml(`
@@ -41,6 +53,8 @@ test("parses current listed companies from the KRX KIND table", () => {
       },
     ],
   );
+  assert.equal(companies[0].mvpEligible, false);
+  assert.match(companies[0].ineligibilityReason ?? "", /IT 제조업/);
 });
 
 test("normalizes Kiwoom ka10099 rows for a market", () => {
@@ -67,4 +81,6 @@ test("normalizes Kiwoom ka10099 rows for a market", () => {
       industry: "전기전자",
     },
   );
+  assert.equal(companies[0].mvpEligible, true);
+  assert.equal(companies[0].ineligibilityReason, null);
 });

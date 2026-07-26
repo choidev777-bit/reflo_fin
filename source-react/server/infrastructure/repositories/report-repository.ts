@@ -45,6 +45,13 @@ import {
   type ReportMaterializationSourceRefs,
 } from "../../domain/report-materialization";
 import {
+  buildChartScene,
+  buildScalarScene,
+  buildTableScene,
+  createRenderAsset,
+  type ChartStyleTemplate,
+} from "../../domain/report-renderer";
+import {
   withTransaction,
   type TransactionClient,
 } from "../database/transaction";
@@ -92,6 +99,10 @@ type Context = {
   templateResourceVersionId: string;
   templateVersion: number;
   templatePages: ReportTemplatePage[];
+  templateStyles: Array<{
+    resourceId: string;
+    typedTemplate: Record<string, unknown>;
+  }>;
   templateSourcePdfHash: string;
   mappingSetResourceVersionId: string;
   mappingVersion: number;
@@ -167,6 +178,23 @@ type PdfRenderResult = {
     profile: Record<string, unknown>;
     pages: unknown[];
   };
+  qpdfPassed: boolean;
+  warnings: PdfRenderWarning[];
+};
+
+type PdfRenderPlanResult = {
+  pdfBase64: string;
+  sha256: string;
+  byteSize: number;
+  mediaType: "application/pdf";
+  renderPlanId: string;
+  appliedCommandIds: string[];
+  validation: {
+    passed: boolean;
+    profile: Record<string, unknown>;
+    pages: unknown[];
+  };
+  qpdfPassed: boolean;
   warnings: PdfRenderWarning[];
 };
 
@@ -991,6 +1019,12 @@ async function projectContext(
     template_ir_json: {
       source?: { pdfHash?: string };
       pages?: ReportTemplatePage[];
+      resources?: {
+        styles?: Array<{
+          resourceId: string;
+          typedTemplate: Record<string, unknown>;
+        }>;
+      };
     };
     mapping_set_resource_version_id: string;
     mapping_version: string;
@@ -1421,6 +1455,7 @@ async function projectContext(
     workbookAnalysisResourceVersionId:
       row.workbook_analysis_resource_version_id,
     templatePages,
+    templateStyles: row.template_ir_json.resources?.styles ?? [],
     templateSourcePdfHash: row.template_ir_json.source?.pdfHash ?? "",
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     mappingVersion: Number(row.mapping_version),
@@ -4025,7 +4060,11 @@ function reportVersionView(report: ReportRow) {
   };
 }
 
-async function latestJobs(client: TransactionClient, report: ReportRow) {
+async function latestJobs(
+  client: TransactionClient,
+  report: ReportRow,
+  projectId: string,
+) {
   const preview = await client.query<{
     preview_id: string;
     preview_status: string;
@@ -4078,6 +4117,9 @@ async function latestJobs(client: TransactionClient, report: ReportRow) {
           previewId: preview.rows[0].preview_id,
           status: preview.rows[0].preview_status,
           artifactId: preview.rows[0].source_artifact_id,
+          contentUrl: preview.rows[0].source_artifact_id
+            ? `/api/projects/${projectId}/artifacts/${preview.rows[0].source_artifact_id}/content`
+            : undefined,
           warnings: preview.rows[0].warnings_json,
           updatedAt: preview.rows[0].updated_at.toISOString(),
         }
@@ -4108,18 +4150,143 @@ async function latestJobs(client: TransactionClient, report: ReportRow) {
   };
 }
 
+function attachAuthoritativeRenderAssets(
+  document: ReportDocument,
+  styles: Context["templateStyles"],
+): ReportDocument {
+  const next = structuredClone(document);
+  const stylesById = new Map(
+    styles.map((item) => [item.resourceId, item.typedTemplate]),
+  );
+
+  for (const block of next.pages.flatMap((page) => page.blocks)) {
+    const snapshot = block.materializedData;
+    const bbox = block.bbox;
+    if (!snapshot || snapshot.status !== "ready" || !bbox) continue;
+
+    if (snapshot.kind === "chart" || snapshot.kind === "composite_chart") {
+      const typed = snapshot.styleTemplateRef
+        ? stylesById.get(snapshot.styleTemplateRef)
+        : null;
+      if (typed?.templateType !== "chart") continue;
+      const style = typed as ChartStyleTemplate;
+      const allowed = snapshot.supportedChartTypes.filter(
+        (type) =>
+          type === style.chartFamily ||
+          style.approvedAlternativeTypes.includes(type) ||
+          (style.chartFamily === "line_band" && type === "line"),
+      );
+      const variants =
+        allowed.length > 0 ? allowed : snapshot.supportedChartTypes.slice(0, 1);
+      block.renderAssets = Object.fromEntries(
+        variants.map((type) => [
+          type,
+          createRenderAsset(
+            buildChartScene({
+              bbox,
+              categories: snapshot.categories.map(
+                (cell) => cell.formattedText || cell.rawValue || "",
+              ),
+              series: snapshot.series.map((series) => ({
+                seriesId: series.seriesId,
+                label: series.label,
+                role: series.role,
+                axis: series.axis,
+                chartType: series.chartType,
+                unit: series.unit,
+                numberFormat: series.numberFormat,
+                estimateType: series.estimateType,
+                values: series.values.map((cell) => cell.rawValue),
+              })),
+              type,
+              style,
+            }),
+          ),
+        ]),
+      );
+      const defaultType =
+        block.chartType && block.renderAssets[block.chartType]
+          ? block.chartType
+          : variants[0];
+      if (defaultType && block.renderAssets[defaultType]) {
+        block.renderAssets.default = block.renderAssets[defaultType];
+      }
+      continue;
+    }
+
+    if (snapshot.kind === "scalar") {
+      const typed = snapshot.styleTemplateRef
+        ? stylesById.get(snapshot.styleTemplateRef)
+        : null;
+      if (typed?.templateType !== "scalar") continue;
+      block.renderAssets = {
+        default: createRenderAsset(
+          buildScalarScene({
+            bbox,
+            formattedValue: snapshot.formattedValue,
+            style: {
+              fontRef: String(typed.fontRef),
+              fontSizePt: Number(typed.fontSizePt),
+              color: String(typed.color),
+              weight: Number(typed.weight),
+              alignment: String(typed.alignment),
+              bbox: (typed.bbox as [number, number, number, number]) ?? bbox,
+            },
+          }),
+        ),
+      };
+      continue;
+    }
+
+    if (snapshot.kind === "table") {
+      const typed = snapshot.styleTemplateRef
+        ? stylesById.get(snapshot.styleTemplateRef)
+        : null;
+      if (typed?.templateType !== "table") continue;
+      const body = (typed.bodyTypography ?? {}) as Record<string, unknown>;
+      const borders = Array.isArray(typed.borders)
+        ? (typed.borders as Array<Record<string, unknown>>)
+        : [];
+      const fills = Array.isArray(typed.fills)
+        ? (typed.fills as string[])
+        : [];
+      block.renderAssets = {
+        default: createRenderAsset(
+          buildTableScene({
+            bbox,
+            matrix: snapshot.formattedMatrix.map((row) =>
+              row.map((cell) => cell ?? ""),
+            ),
+            style: {
+              fontRef: String(body.fontRef ?? "sans-serif"),
+              fontSizePt: Number(body.fontSizePt ?? 8),
+              color: String(body.color ?? "#000000"),
+              borderColor: String(borders[0]?.color ?? "none"),
+              fill: String(fills[0] ?? "none"),
+            },
+          }),
+        ),
+      };
+    }
+  }
+  return next;
+}
+
 export async function getReportWorkspace(projectId: string, userId: string) {
   return withTransaction(async (client) => {
     const context = await projectContext(client, projectId, userId);
     const report = await latestReportState(client, projectId);
     const session = await activeEditSession(client, report.report_id);
-    const jobs = await latestJobs(client, report);
+    const jobs = await latestJobs(client, report, projectId);
     const templatePages = await resolvedTemplatePages(context);
-    const hydratedReport = attachTemplateGeometry(
+    const hydratedReport = attachAuthoritativeRenderAssets(
+      attachTemplateGeometry(
       report.content_json,
       templatePages,
       context.mappingBindings,
       context.materializationsBySlotId,
+      ),
+      context.templateStyles,
     );
     return {
       project: {
@@ -5048,6 +5215,164 @@ export async function getReportProvenance(
   });
 }
 
+function regionTokenHash(
+  templatePage: ReportTemplatePage,
+  bbox: [number, number, number, number],
+): string {
+  const intersects = (candidate: number[] | undefined) =>
+    Boolean(
+      candidate &&
+        candidate.length === 4 &&
+        candidate[0] < bbox[2] &&
+        candidate[2] > bbox[0] &&
+        candidate[1] < bbox[3] &&
+        candidate[3] > bbox[1],
+    );
+  const text = (templatePage.objects ?? [])
+    .filter((object) => object.type === "text_run" && intersects(object.bbox))
+    .sort((left, right) => {
+      const leftBox = left.bbox ?? [0, 0, 0, 0];
+      const rightBox = right.bbox ?? [0, 0, 0, 0];
+      return (
+        leftBox[1] - rightBox[1] ||
+        leftBox[0] - rightBox[0] ||
+        left.objectId.localeCompare(right.objectId)
+      );
+    })
+    .map((object) => object.textRun?.text ?? "")
+    .filter(Boolean)
+    .join("\n");
+  return sha256(text);
+}
+
+async function persistReportRenderSnapshot(
+  client: TransactionClient,
+  context: Context,
+  reportVersionId: string,
+): Promise<PersistedSourceSnapshot> {
+  return persistSourceSnapshot(client, {
+    projectId: context.projectId,
+    scope: "report_render",
+    schemaVersion: "1",
+    components: [
+      {
+        key: "source_pdf",
+        versionId: context.sourcePdfResourceVersionId,
+        artifactId: context.sourcePdfArtifactId,
+        contentHash: context.sourcePdfSha256,
+      },
+      {
+        key: "template_ir",
+        versionId: context.templateResourceVersionId,
+        contentHash: null,
+      },
+      {
+        key: "mapping_set",
+        versionId: context.mappingSetResourceVersionId,
+        contentHash: null,
+      },
+      {
+        key: "validated_workbook",
+        versionId: context.validatedWorkbookResourceVersionId,
+        artifactId: context.workbookArtifactId,
+        contentHash: null,
+      },
+      {
+        key: "report",
+        versionId: reportVersionId,
+        contentHash: null,
+      },
+    ],
+  });
+}
+
+function reportDeliveryWorkflowPayload(input: {
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  operationKind: "preview" | "validation" | "export";
+  operationId: string;
+  reportVersionId: string;
+  sourceSnapshotId: string;
+  sourceFingerprint: string;
+  requestedByUserId: string;
+  validationRunId?: string;
+}) {
+  return {
+    workflowType: "reportDeliveryWorkflow" as const,
+    ...input,
+  };
+}
+
+async function insertReportDeliveryJob(
+  client: TransactionClient,
+  input: {
+    context: Context;
+    operationKind: "preview" | "validation" | "export";
+    operationId: string;
+    reportVersionId: string;
+    sourceSnapshot: PersistedSourceSnapshot;
+    requestedByUserId: string;
+    validationRunId?: string;
+    attempt?: number;
+  },
+): Promise<{ jobId: string; attempt: number }> {
+  const jobId = uuidv7();
+  const attempt = input.attempt ?? 1;
+  const payload = reportDeliveryWorkflowPayload({
+    jobId,
+    jobAttempt: attempt,
+    projectId: input.context.projectId,
+    operationKind: input.operationKind,
+    operationId: input.operationId,
+    reportVersionId: input.reportVersionId,
+    sourceSnapshotId: input.sourceSnapshot.sourceSnapshotId,
+    sourceFingerprint: input.sourceSnapshot.fingerprint,
+    requestedByUserId: input.requestedByUserId,
+    ...(input.validationRunId
+      ? { validationRunId: input.validationRunId }
+      : {}),
+  });
+  await client.query(
+    `INSERT INTO workflow_job (
+       job_id, project_id, job_type, temporal_workflow_id,
+       operation_status, validity_status, current_phase,
+       progress_percent, progress_mode, progress_sequence, attempt,
+       input_fingerprint, source_snapshot_id, requested_by_user_id
+     ) VALUES ($1, $2, 'report_delivery', $3, 'queued', 'current',
+       'preparing', 0, 'determinate', 0, $4, $5, $6, $7)`,
+    [
+      jobId,
+      input.context.projectId,
+      `reflo:${jobId}`,
+      attempt,
+      input.sourceSnapshot.fingerprint,
+      input.sourceSnapshot.sourceSnapshotId,
+      input.requestedByUserId,
+    ],
+  );
+  for (const component of input.sourceSnapshot.components) {
+    await client.query(
+      `INSERT INTO workflow_job_input (
+         job_id, input_role, resource_version_id, artifact_id
+       ) VALUES ($1, $2, $3, $4)`,
+      [
+        jobId,
+        component.key,
+        component.versionId,
+        component.artifactId,
+      ],
+    );
+  }
+  await client.query(
+    `INSERT INTO outbox_event (
+       outbox_event_id, job_id, command_type, command_id, payload_json
+     ) VALUES ($1, $2, 'start_workflow', $3, $4::jsonb)`,
+    [uuidv7(), jobId, uuidv7(), JSON.stringify(payload)],
+  );
+  return { jobId, attempt };
+}
+
 export async function createReportPreview(input: {
   projectId: string;
   userId: string;
@@ -5057,12 +5382,8 @@ export async function createReportPreview(input: {
     input.reportVersionId,
     "INVALID_REPORT_VERSION",
   );
-  const snapshot = await withTransaction(async (client) => {
-    const context = await projectContext(
-      client,
-      input.projectId,
-      input.userId,
-    );
+  return withTransaction(async (client) => {
+    const context = await projectContext(client, input.projectId, input.userId);
     const report = await latestReportState(client, input.projectId);
     if (report.active_resource_version_id !== versionId) {
       throw new ApiError(
@@ -5081,43 +5402,148 @@ export async function createReportPreview(input: {
       `SELECT preview_id, preview_status, source_artifact_id,
          warnings_json, updated_at
        FROM report_preview
-       WHERE report_resource_version_id = $1 AND preview_status = 'ready'
+       WHERE report_resource_version_id = $1
+         AND preview_status IN ('queued', 'rendering', 'verifying', 'ready')
        ORDER BY created_at DESC LIMIT 1`,
       [versionId],
     );
-    if (
-      existing.rows[0]?.source_artifact_id &&
-      existing.rows[0].source_artifact_id !== context.sourcePdfArtifactId
-    ) {
+    const prior = existing.rows[0];
+    if (prior) {
       return {
-        existing: {
-        previewId: existing.rows[0].preview_id,
-        status: existing.rows[0].preview_status,
-          artifactId: existing.rows[0].source_artifact_id,
-          contentUrl:
-            `/api/projects/${input.projectId}/artifacts/` +
-            `${existing.rows[0].source_artifact_id}/content`,
-          warnings: existing.rows[0].warnings_json,
-          updatedAt: existing.rows[0].updated_at.toISOString(),
-        },
-        context,
-        report,
+        previewId: prior.preview_id,
+        status: prior.preview_status,
+        artifactId: prior.source_artifact_id,
+        ...(prior.source_artifact_id
+          ? {
+              contentUrl:
+                `/api/projects/${input.projectId}/artifacts/` +
+                `${prior.source_artifact_id}/content`,
+            }
+          : {}),
+        warnings: prior.warnings_json,
+        updatedAt: prior.updated_at.toISOString(),
       };
     }
+    const sourceSnapshot = await persistReportRenderSnapshot(
+      client,
+      context,
+      versionId,
+    );
+    const previewId = uuidv7();
+    const job = await insertReportDeliveryJob(client, {
+      context,
+      operationKind: "preview",
+      operationId: previewId,
+      reportVersionId: versionId,
+      sourceSnapshot,
+      requestedByUserId: input.userId,
+    });
+    const created = await client.query<{ updated_at: Date }>(
+      `INSERT INTO report_preview (
+         preview_id, project_id, report_resource_version_id,
+         preview_status, warnings_json, created_by_user_id,
+         job_id, source_snapshot_id, attempt
+       ) VALUES ($1, $2, $3, 'queued', '[]'::jsonb, $4, $5, $6, $7)
+       RETURNING updated_at`,
+      [
+        previewId,
+        input.projectId,
+        versionId,
+        input.userId,
+        job.jobId,
+        sourceSnapshot.sourceSnapshotId,
+        job.attempt,
+      ],
+    );
     return {
-      existing: null,
+      previewId,
+      status: "queued",
+      artifactId: null,
+      warnings: [],
+      updatedAt: created.rows[0].updated_at.toISOString(),
+    };
+  });
+}
+
+export async function executeReportPreview(input: {
+  projectId: string;
+  userId: string;
+  reportVersionId: string;
+  previewId: string;
+  jobId: string;
+  jobAttempt: number;
+  sourceSnapshotId: string;
+}) {
+  const versionId = input.reportVersionId;
+  const snapshot = await withTransaction(async (client) => {
+    const context = await projectContext(
+      client,
+      input.projectId,
+      input.userId,
+    );
+    const report = await latestReportState(client, input.projectId);
+    if (report.active_resource_version_id !== versionId) {
+      throw new ApiError(
+        409,
+        "REPORT_VERSION_CONFLICT",
+        "저장된 최신 보고서로 미리보기를 생성해주세요.",
+      );
+    }
+    const claimed = await client.query<{ preview_id: string }>(
+      `SELECT preview.preview_id
+       FROM report_preview preview
+       JOIN workflow_job job ON job.job_id = preview.job_id
+       WHERE preview.preview_id = $1
+         AND preview.project_id = $2
+         AND preview.report_resource_version_id = $3
+         AND preview.source_snapshot_id = $4
+         AND preview.attempt = $5
+         AND preview.preview_status IN ('queued', 'rendering')
+         AND job.job_id = $6
+         AND job.attempt = $5
+         AND job.validity_status = 'current'
+         AND job.operation_status IN ('queued', 'running')
+       FOR UPDATE OF preview, job`,
+      [
+        input.previewId,
+        input.projectId,
+        versionId,
+        input.sourceSnapshotId,
+        input.jobAttempt,
+        input.jobId,
+      ],
+    );
+    if (!claimed.rows[0]) {
+      throw new Error("REPORT_PREVIEW_JOB_OBSOLETE");
+    }
+    await client.query(
+      `UPDATE report_preview
+       SET preview_status = 'rendering', updated_at = now()
+       WHERE preview_id = $1`,
+      [input.previewId],
+    );
+    await client.query(
+      `UPDATE workflow_job
+       SET operation_status = 'running', current_phase = 'rendering',
+           progress_percent = 10, heartbeat_at = now(), started_at = COALESCE(started_at, now())
+       WHERE job_id = $1`,
+      [input.jobId],
+    );
+    return {
       context,
       report,
     };
   });
-  if (snapshot.existing) return snapshot.existing;
 
   const templatePages = await resolvedTemplatePages(snapshot.context);
-  const document = attachTemplateGeometry(
-    snapshot.report.content_json,
-    templatePages,
-    snapshot.context.mappingBindings,
-    snapshot.context.materializationsBySlotId,
+  const document = attachAuthoritativeRenderAssets(
+    attachTemplateGeometry(
+      snapshot.report.content_json,
+      templatePages,
+      snapshot.context.mappingBindings,
+      snapshot.context.materializationsBySlotId,
+    ),
+    snapshot.context.templateStyles,
   );
   const patches = document.pages.flatMap((page) =>
     page.blocks
@@ -5160,17 +5586,120 @@ export async function createReportPreview(input: {
     snapshot.context.sourcePdfObjectKey,
     10 * 60,
   );
-  const rendered = await callPdfWorker<PdfRenderResult>("/render", {
-    downloadUrl,
-    patches,
-    skipOverflow: true,
+  const renderPlanId = uuidv7();
+  const placements: Record<
+    string,
+    { pageNumber: number; bbox: [number, number, number, number] }
+  > = {};
+  const vectorAssetPayloads: Record<string, string> = {};
+  const commands = document.pages.flatMap((page) => {
+    const templatePage = templatePages.find(
+      (item) => item.pageNumber === page.pageNumber,
+    );
+    if (!templatePage) return [];
+    return page.blocks.flatMap((block) => {
+      const slotId = block.dataBinding?.slotId;
+      const asset =
+        (block.chartType
+          ? block.renderAssets?.[block.chartType]
+          : undefined) ?? block.renderAssets?.default;
+      if (
+        !slotId ||
+        !block.bbox ||
+        !asset ||
+        block.patchStrategy === "fixed" ||
+        block.sourceObjectIds.length === 0
+      ) {
+        return [];
+      }
+      placements[block.blockId] = {
+        pageNumber: page.pageNumber,
+        bbox: block.bbox,
+      };
+      vectorAssetPayloads[asset.assetHash] = asset.svg;
+      return [
+        {
+          commandId: uuidv7(),
+          pageId: page.pageId,
+          blockId: block.blockId,
+          slotId,
+          strategy: block.patchStrategy,
+          targetObjectIds: block.sourceObjectIds,
+          expectedTokenHashes: [regionTokenHash(templatePage, block.bbox)],
+          vectorAssetHash: asset.assetHash,
+          validationMaskIds: [],
+        },
+      ];
+    });
   });
+  const renderPlan = {
+    schemaVersion: "1.0",
+    artifactType: "render_plan",
+    renderPlanId,
+    renderPlanVersion: 1,
+    inputs: {
+      templateIrVersionId: snapshot.context.templateResourceVersionId,
+      templateIrHash: contentHash({
+        pages: templatePages,
+        styles: snapshot.context.templateStyles,
+      }),
+      mappingSetVersionId: snapshot.context.mappingSetResourceVersionId,
+      mappingSetHash: contentHash(snapshot.context.mappingBindings),
+      workbookCalculationVersionId:
+        snapshot.context.validatedWorkbookResourceVersionId,
+      workbookCalculationHash: contentHash({
+        artifactId: snapshot.context.workbookArtifactId,
+        version: snapshot.context.workbookVersion,
+      }),
+      evidenceVersionIds: snapshot.context.evidence.map(
+        (item) => item.evidenceId,
+      ),
+      reportVersionId: versionId,
+    },
+    values: [],
+    commands,
+    vectorAssets: commands.map((command) => {
+      const block = document.pages
+        .flatMap((page) => page.blocks)
+        .find((item) => item.blockId === command.blockId);
+      const kind = block?.materializedData?.kind;
+      return {
+        slotId: command.slotId,
+        assetKind:
+          kind === "composite_chart"
+            ? "composite_chart"
+            : kind === "scalar" || kind === "table" || kind === "chart"
+              ? kind
+              : "chart",
+        sha256: command.vectorAssetHash,
+        mediaType: "image/svg+xml",
+      };
+    }),
+    validationMaskIds: [],
+    createdAt: new Date().toISOString(),
+    warnings: [],
+  };
+  const rendered =
+    commands.length > 0
+      ? await callPdfWorker<PdfRenderPlanResult>("/render-plan", {
+          downloadUrl,
+          renderPlan,
+          placements,
+          vectorAssetPayloads,
+          textPatches: patches,
+        })
+      : await callPdfWorker<PdfRenderResult>("/render", {
+          downloadUrl,
+          patches,
+          skipOverflow: true,
+        });
   const pdfBytes = Buffer.from(rendered.pdfBase64, "base64");
   if (
     rendered.mediaType !== "application/pdf" ||
     rendered.byteSize !== pdfBytes.byteLength ||
     rendered.sha256 !== createHash("sha256").update(pdfBytes).digest("hex") ||
-    !rendered.validation?.passed
+    !rendered.validation?.passed ||
+    !rendered.qpdfPassed
   ) {
     throw new ApiError(
       503,
@@ -5181,7 +5710,7 @@ export async function createReportPreview(input: {
   }
 
   const artifactId = uuidv7();
-  const previewId = uuidv7();
+  const previewId = input.previewId;
   const objectKey =
     `projects/${input.projectId}/report/previews/` +
     `${versionId}-${previewId}-${rendered.sha256.slice(0, 12)}.pdf`;
@@ -5192,8 +5721,11 @@ export async function createReportPreview(input: {
     metadata: {
       project: input.projectId,
       reportVersion: versionId,
-      sourcePdfHash: rendered.renderPlan.sourcePdfHash,
-      renderPlanVersion: rendered.renderPlan.version,
+      sourcePdfHash: snapshot.context.sourcePdfSha256,
+      renderPlanVersion:
+        "renderPlan" in rendered
+          ? rendered.renderPlan.version
+          : "typed-render-plan-v1",
     },
   });
   const warnings = [...rendered.warnings, ...skippedBlocks];
@@ -5215,12 +5747,29 @@ export async function createReportPreview(input: {
         "PDF 생성 중 보고서가 변경되었습니다. 최신 버전으로 다시 생성해주세요.",
       );
     }
+    const job = await client.query<{ operation_status: string }>(
+      `SELECT operation_status
+       FROM workflow_job
+       WHERE job_id = $1 AND project_id = $2
+         AND attempt = $3 AND source_snapshot_id = $4
+         AND validity_status = 'current'
+       FOR UPDATE`,
+      [
+        input.jobId,
+        input.projectId,
+        input.jobAttempt,
+        input.sourceSnapshotId,
+      ],
+    );
+    if (!["queued", "running"].includes(job.rows[0]?.operation_status ?? "")) {
+      throw new Error("REPORT_PREVIEW_JOB_OBSOLETE");
+    }
     await client.query(
       `UPDATE report_preview
        SET preview_status = 'stale', updated_at = now()
        WHERE report_resource_version_id = $1
-         AND preview_status = 'ready'`,
-      [versionId],
+         AND preview_status = 'ready' AND preview_id <> $2`,
+      [versionId, previewId],
     );
     await client.query(
       `INSERT INTO artifact (
@@ -5243,18 +5792,38 @@ export async function createReportPreview(input: {
       ],
     );
     const created = await client.query<{ updated_at: Date }>(
-      `INSERT INTO report_preview (
-         preview_id, project_id, report_resource_version_id,
-         preview_status, source_artifact_id, warnings_json, created_by_user_id
-       ) VALUES ($1, $2, $3, 'ready', $4, $5::jsonb, $6)
+      `UPDATE report_preview
+       SET preview_status = 'ready', source_artifact_id = $2,
+           warnings_json = $3::jsonb, render_plan_hash = $4,
+           error_code = NULL, error_summary = NULL,
+           finished_at = now(), updated_at = now()
+       WHERE preview_id = $1 AND project_id = $5
+         AND job_id = $6 AND attempt = $7
        RETURNING updated_at`,
       [
         previewId,
-        input.projectId,
-        versionId,
         artifactId,
         JSON.stringify(warnings),
-        input.userId,
+        contentHash(renderPlan),
+        input.projectId,
+        input.jobId,
+        input.jobAttempt,
+      ],
+    );
+    if (!created.rows[0]) {
+      throw new Error("REPORT_PREVIEW_JOB_OBSOLETE");
+    }
+    await client.query(
+      `UPDATE workflow_job
+       SET operation_status = 'succeeded', current_phase = 'completed',
+           progress_percent = 100, progress_sequence = progress_sequence + 1,
+           heartbeat_at = now(), finished_at = now(),
+           result_summary_json = $2::jsonb
+       WHERE job_id = $1 AND attempt = $3`,
+      [
+        input.jobId,
+        JSON.stringify({ previewId, artifactId, sha256: rendered.sha256 }),
+        input.jobAttempt,
       ],
     );
     return {
@@ -5265,6 +5834,91 @@ export async function createReportPreview(input: {
       warnings,
       updatedAt: created.rows[0].updated_at.toISOString(),
     };
+  });
+}
+
+export async function failReportDelivery(input: {
+  projectId: string;
+  operationKind: "preview" | "validation" | "export";
+  operationId: string;
+  jobId: string;
+  jobAttempt: number;
+  code: string;
+  message: string;
+  cancelled: boolean;
+}) {
+  return withTransaction(async (client) => {
+    const terminalStatus = input.cancelled ? "cancelled" : "failed";
+    await client.query(
+      `UPDATE workflow_job
+       SET operation_status = $2, current_phase = $3,
+           error_code = $4, error_summary = $5,
+           heartbeat_at = now(), finished_at = now()
+       WHERE job_id = $1 AND project_id = $6 AND attempt = $7
+         AND operation_status IN ('queued', 'running', 'cancel_requested')`,
+      [
+        input.jobId,
+        terminalStatus,
+        terminalStatus,
+        input.code,
+        input.message,
+        input.projectId,
+        input.jobAttempt,
+      ],
+    );
+    if (input.operationKind === "preview") {
+      await client.query(
+        `UPDATE report_preview
+         SET preview_status = $2, error_code = $3, error_summary = $4,
+             finished_at = now(), updated_at = now()
+         WHERE preview_id = $1 AND job_id = $5 AND attempt = $6
+           AND preview_status IN (
+             'queued', 'rendering', 'verifying', 'cancel_requested'
+           )`,
+        [
+          input.operationId,
+          terminalStatus,
+          input.code,
+          input.message,
+          input.jobId,
+          input.jobAttempt,
+        ],
+      );
+    } else if (input.operationKind === "validation") {
+      await client.query(
+        `UPDATE report_validation_run
+         SET validation_status = $2, error_code = $3, error_summary = $4,
+             finished_at = now()
+         WHERE validation_run_id = $1 AND job_id = $5 AND attempt = $6
+           AND validation_status IN ('queued', 'running')`,
+        [
+          input.operationId,
+          terminalStatus,
+          input.code,
+          input.message,
+          input.jobId,
+          input.jobAttempt,
+        ],
+      );
+    } else {
+      await client.query(
+        `UPDATE report_export
+         SET operation_status = $2, error_code = $3, error_summary = $4,
+             finished_at = now(), updated_at = now()
+         WHERE export_id = $1 AND job_id = $5 AND attempt = $6
+           AND operation_status IN (
+             'queued', 'running', 'cancel_requested'
+           )`,
+        [
+          input.operationId,
+          terminalStatus,
+          input.code,
+          input.message,
+          input.jobId,
+          input.jobAttempt,
+        ],
+      );
+    }
   });
 }
 
@@ -5327,6 +5981,131 @@ export async function createReportValidation(input: {
         "최신 저장 버전으로 다시 검증해주세요.",
       );
     }
+    const existing = await client.query<{
+      validation_run_id: string;
+      validation_status: string;
+      issues_json: unknown[];
+      started_at: Date;
+      finished_at: Date | null;
+    }>(
+      `SELECT validation_run_id, validation_status, issues_json,
+         started_at, finished_at
+       FROM report_validation_run
+       WHERE project_id = $1 AND report_resource_version_id = $2
+         AND validation_status IN ('queued', 'running', 'passed', 'passed_with_warnings')
+       ORDER BY started_at DESC LIMIT 1`,
+      [input.projectId, versionId],
+    );
+    const prior = existing.rows[0];
+    if (prior) {
+      return {
+        validationRunId: prior.validation_run_id,
+        status: prior.validation_status,
+        issues: prior.issues_json,
+        startedAt: prior.started_at.toISOString(),
+        finishedAt: prior.finished_at?.toISOString() ?? null,
+      };
+    }
+    const sourceSnapshot = await persistReportRenderSnapshot(
+      client,
+      context,
+      versionId,
+    );
+    const validationRunId = uuidv7();
+    const job = await insertReportDeliveryJob(client, {
+      context,
+      operationKind: "validation",
+      operationId: validationRunId,
+      reportVersionId: versionId,
+      sourceSnapshot,
+      requestedByUserId: input.userId,
+    });
+    const created = await client.query<{ started_at: Date }>(
+      `INSERT INTO report_validation_run (
+         validation_run_id, project_id, report_resource_version_id,
+         validation_status, issues_json, rule_version, created_by_user_id,
+         job_id, source_snapshot_id, attempt
+       ) VALUES ($1, $2, $3, 'queued', '[]'::jsonb,
+         'report-validation-v1', $4, $5, $6, $7)
+       RETURNING started_at`,
+      [
+        validationRunId,
+        input.projectId,
+        versionId,
+        input.userId,
+        job.jobId,
+        sourceSnapshot.sourceSnapshotId,
+        job.attempt,
+      ],
+    );
+    return {
+      validationRunId,
+      status: "queued",
+      issues: [],
+      startedAt: created.rows[0].started_at.toISOString(),
+      finishedAt: null,
+    };
+  });
+}
+
+export async function executeReportValidation(input: {
+  projectId: string;
+  userId: string;
+  reportVersionId: string;
+  validationRunId: string;
+  jobId: string;
+  jobAttempt: number;
+  sourceSnapshotId: string;
+}) {
+  const versionId = input.reportVersionId;
+  return withTransaction(async (client) => {
+    const context = await projectContext(
+      client,
+      input.projectId,
+      input.userId,
+    );
+    const report = await latestReportState(client, input.projectId);
+    if (report.active_resource_version_id !== versionId) {
+      throw new Error("VALIDATION_STALE");
+    }
+    const claimed = await client.query<{ validation_run_id: string }>(
+      `SELECT validation.validation_run_id
+       FROM report_validation_run validation
+       JOIN workflow_job job ON job.job_id = validation.job_id
+       WHERE validation.validation_run_id = $1
+         AND validation.project_id = $2
+         AND validation.report_resource_version_id = $3
+         AND validation.source_snapshot_id = $4
+         AND validation.attempt = $5
+         AND validation.validation_status IN ('queued', 'running')
+         AND job.job_id = $6 AND job.attempt = $5
+         AND job.validity_status = 'current'
+         AND job.operation_status IN ('queued', 'running')
+       FOR UPDATE OF validation, job`,
+      [
+        input.validationRunId,
+        input.projectId,
+        versionId,
+        input.sourceSnapshotId,
+        input.jobAttempt,
+        input.jobId,
+      ],
+    );
+    if (!claimed.rows[0]) throw new Error("REPORT_VALIDATION_JOB_OBSOLETE");
+    await client.query(
+      `UPDATE report_validation_run
+       SET validation_status = 'running'
+       WHERE validation_run_id = $1`,
+      [input.validationRunId],
+    );
+    await client.query(
+      `UPDATE workflow_job
+       SET operation_status = 'running', current_phase = 'validating',
+           progress_percent = 20, heartbeat_at = now(),
+           started_at = COALESCE(started_at, now())
+       WHERE job_id = $1`,
+      [input.jobId],
+    );
     const templatePages = await resolvedTemplatePages(context);
     const hydrated = attachTemplateGeometry(
       report.content_json,
@@ -5346,28 +6125,45 @@ export async function createReportValidation(input: {
         forwardEps: context.forwardEps,
       },
     });
-    const validationRunId = uuidv7();
     const status = issues.some((issue) => issue.severity === "blocking")
       ? "failed"
       : "passed";
     const created = await client.query<{ started_at: Date; finished_at: Date }>(
-      `INSERT INTO report_validation_run (
-         validation_run_id, project_id, report_resource_version_id,
-         validation_status, issues_json, rule_version, created_by_user_id,
-         finished_at
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, 'report-validation-v1', $6, now())
+      `UPDATE report_validation_run
+       SET validation_status = $2, issues_json = $3::jsonb,
+           error_code = NULL, error_summary = NULL, finished_at = now()
+       WHERE validation_run_id = $1 AND project_id = $4
+         AND job_id = $5 AND attempt = $6
        RETURNING started_at, finished_at`,
       [
-        validationRunId,
-        input.projectId,
-        versionId,
+        input.validationRunId,
         status,
         JSON.stringify(issues),
-        input.userId,
+        input.projectId,
+        input.jobId,
+        input.jobAttempt,
+      ],
+    );
+    if (!created.rows[0]) throw new Error("REPORT_VALIDATION_JOB_OBSOLETE");
+    await client.query(
+      `UPDATE workflow_job
+       SET operation_status = 'succeeded', current_phase = 'completed',
+           progress_percent = 100, progress_sequence = progress_sequence + 1,
+           heartbeat_at = now(), finished_at = now(),
+           result_summary_json = $2::jsonb
+       WHERE job_id = $1 AND attempt = $3`,
+      [
+        input.jobId,
+        JSON.stringify({
+          validationRunId: input.validationRunId,
+          status,
+          issueCount: issues.length,
+        }),
+        input.jobAttempt,
       ],
     );
     return {
-      validationRunId,
+      validationRunId: input.validationRunId,
       status,
       issues,
       startedAt: created.rows[0].started_at.toISOString(),
@@ -5710,6 +6506,150 @@ export async function createReportExport(input: {
     artifactTypes: ["pdf", "xlsx"],
   });
   return withTransaction(async (client) => {
+    const context = await projectContext(client, input.projectId, input.userId);
+    await lockIdempotency(client, {
+      userId: input.userId,
+      operation: "report.export",
+      projectId: input.projectId,
+      key,
+    });
+    const replayed = await replay(client, {
+      userId: input.userId,
+      operation: "report.export",
+      projectId: input.projectId,
+      key,
+      requestHash,
+    });
+    if (replayed) return replayed;
+    const approval = await client.query<{ approval_id: string }>(
+      `SELECT approval_id FROM report_approval
+       WHERE project_id = $1 AND report_resource_version_id = $2
+         AND validation_run_id = $3`,
+      [input.projectId, versionId, validationRunId],
+    );
+    if (!approval.rows[0]) {
+      throw new ApiError(
+        409,
+        "APPROVAL_VERSION_MISMATCH",
+        "검증을 통과해 승인된 보고서만 내보낼 수 있습니다.",
+      );
+    }
+    const renderedPreview = await client.query<{ source_artifact_id: string }>(
+      `SELECT source_artifact_id
+       FROM report_preview
+       WHERE project_id = $1 AND report_resource_version_id = $2
+         AND preview_status = 'ready' AND source_artifact_id IS NOT NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [input.projectId, versionId],
+    );
+    if (
+      !renderedPreview.rows[0]?.source_artifact_id ||
+      renderedPreview.rows[0].source_artifact_id === context.sourcePdfArtifactId
+    ) {
+      throw new ApiError(
+        409,
+        "RENDERED_PDF_REQUIRED",
+        "승인된 보고서 버전의 새 PDF 미리보기를 생성한 뒤 내보내주세요.",
+      );
+    }
+    const existing = await client.query<{ export_id: string }>(
+      `SELECT export_id FROM report_export WHERE report_approval_id = $1`,
+      [approval.rows[0].approval_id],
+    );
+    let exportId = existing.rows[0]?.export_id;
+    if (!exportId) {
+      exportId = uuidv7();
+      const sourceSnapshot = await persistReportRenderSnapshot(
+        client,
+        context,
+        versionId,
+      );
+      const job = await insertReportDeliveryJob(client, {
+        context,
+        operationKind: "export",
+        operationId: exportId,
+        reportVersionId: versionId,
+        sourceSnapshot,
+        requestedByUserId: input.userId,
+        validationRunId,
+      });
+      await client.query(
+        `INSERT INTO report_export (
+           export_id, project_id, report_approval_id, operation_status,
+           outcome, requested_by_user_id, job_id, source_snapshot_id, attempt
+         ) VALUES ($1, $2, $3, 'queued', 'pending', $4, $5, $6, $7)`,
+        [
+          exportId,
+          input.projectId,
+          approval.rows[0].approval_id,
+          input.userId,
+          job.jobId,
+          sourceSnapshot.sourceSnapshotId,
+          job.attempt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO report_export_artifact (
+           export_artifact_id, export_id, artifact_type, artifact_status
+         ) VALUES
+           ($1, $2, 'pdf', 'pending'),
+           ($3, $2, 'xlsx', 'pending')`,
+        [uuidv7(), exportId, uuidv7()],
+      );
+    }
+    const body = await exportView(client, context, exportId);
+    await storeReplay(client, {
+      userId: input.userId,
+      operation: "report.export",
+      projectId: input.projectId,
+      key,
+      requestHash,
+      status: 202,
+      body,
+    });
+    return { status: 202, body };
+  });
+}
+
+export async function executeReportExport(input: {
+  projectId: string;
+  userId: string;
+  approvedReportVersionId: unknown;
+  validationRunId: unknown;
+  artifactTypes: unknown;
+  idempotencyKey: string | null;
+  exportId?: string;
+  jobId?: string;
+  jobAttempt?: number;
+  sourceSnapshotId?: string;
+}): Promise<IdempotentResult> {
+  const key = requireIdempotencyKey(input.idempotencyKey);
+  const versionId = requireUuidValue(
+    input.approvedReportVersionId,
+    "INVALID_REPORT_VERSION",
+  );
+  const validationRunId = requireUuidValue(
+    input.validationRunId,
+    "INVALID_VALIDATION_RUN",
+  );
+  if (
+    !Array.isArray(input.artifactTypes) ||
+    input.artifactTypes.length !== 2 ||
+    !input.artifactTypes.includes("pdf") ||
+    !input.artifactTypes.includes("xlsx")
+  ) {
+    throw new ApiError(
+      400,
+      "INVALID_EXPORT_TYPES",
+      "PDF와 XLSX를 함께 내보내야 합니다.",
+    );
+  }
+  const requestHash = contentHash({
+    versionId,
+    validationRunId,
+    artifactTypes: ["pdf", "xlsx"],
+  });
+  return withTransaction(async (client) => {
     const context = await projectContext(
       client,
       input.projectId,
@@ -5742,10 +6682,114 @@ export async function createReportExport(input: {
         "검증을 통과해 승인된 보고서만 내보낼 수 있습니다.",
       );
     }
+    const renderedPreview = await client.query<{
+      source_artifact_id: string;
+    }>(
+      `SELECT source_artifact_id
+       FROM report_preview
+       WHERE project_id = $1
+         AND report_resource_version_id = $2
+         AND preview_status = 'ready'
+         AND source_artifact_id IS NOT NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [input.projectId, versionId],
+    );
+    const renderedPdfArtifactId =
+      renderedPreview.rows[0]?.source_artifact_id;
+    if (
+      !renderedPdfArtifactId ||
+      renderedPdfArtifactId === context.sourcePdfArtifactId
+    ) {
+      throw new ApiError(
+        409,
+        "RENDERED_PDF_REQUIRED",
+        "승인된 보고서 버전의 새 PDF 미리보기를 생성한 뒤 내보내주세요.",
+      );
+    }
     let exportResult = await client.query<{ export_id: string }>(
       `SELECT export_id FROM report_export WHERE report_approval_id = $1`,
       [approval.rows[0].approval_id],
     );
+    if (
+      input.exportId &&
+      input.jobId &&
+      input.jobAttempt &&
+      input.sourceSnapshotId
+    ) {
+      if (exportResult.rows[0]?.export_id !== input.exportId) {
+        throw new Error("REPORT_EXPORT_JOB_OBSOLETE");
+      }
+      const claimed = await client.query<{ export_id: string }>(
+        `SELECT export.export_id
+         FROM report_export export
+         JOIN workflow_job job ON job.job_id = export.job_id
+         WHERE export.export_id = $1 AND export.project_id = $2
+           AND export.source_snapshot_id = $3
+           AND export.attempt = $4
+           AND export.operation_status IN ('queued', 'running')
+           AND job.job_id = $5 AND job.attempt = $4
+           AND job.validity_status = 'current'
+           AND job.operation_status IN ('queued', 'running')
+         FOR UPDATE OF export, job`,
+        [
+          input.exportId,
+          input.projectId,
+          input.sourceSnapshotId,
+          input.jobAttempt,
+          input.jobId,
+        ],
+      );
+      if (!claimed.rows[0]) throw new Error("REPORT_EXPORT_JOB_OBSOLETE");
+      await client.query(
+        `UPDATE report_export_artifact
+         SET source_artifact_id = CASE artifact_type
+               WHEN 'pdf' THEN $2
+               ELSE $3
+             END,
+             artifact_status = 'ready', retryable = false,
+             error_code = NULL, error_message = NULL, updated_at = now()
+         WHERE export_id = $1`,
+        [
+          input.exportId,
+          renderedPdfArtifactId,
+          context.workbookArtifactId,
+        ],
+      );
+      const manifestHash = contentHash({
+        sourceSnapshotId: input.sourceSnapshotId,
+        reportVersionId: versionId,
+        validationRunId,
+        pdfArtifactId: renderedPdfArtifactId,
+        workbookArtifactId: context.workbookArtifactId,
+      });
+      await client.query(
+        `UPDATE report_export
+         SET operation_status = 'succeeded', outcome = 'complete',
+             input_manifest_hash = $2, error_code = NULL,
+             error_summary = NULL, finished_at = now(), updated_at = now()
+         WHERE export_id = $1`,
+        [input.exportId, manifestHash],
+      );
+      await client.query(
+        `UPDATE workflow_job
+         SET operation_status = 'succeeded', current_phase = 'completed',
+             progress_percent = 100, progress_sequence = progress_sequence + 1,
+             heartbeat_at = now(), finished_at = now(),
+             result_summary_json = $2::jsonb
+         WHERE job_id = $1 AND attempt = $3`,
+        [
+          input.jobId,
+          JSON.stringify({
+            exportId: input.exportId,
+            manifestHash,
+            pdfArtifactId: renderedPdfArtifactId,
+            workbookArtifactId: context.workbookArtifactId,
+          }),
+          input.jobAttempt,
+        ],
+      );
+    }
     if (!exportResult.rows[0]) {
       const exportId = uuidv7();
       await client.query(
@@ -5765,7 +6809,7 @@ export async function createReportExport(input: {
         [
           uuidv7(),
           exportId,
-          context.sourcePdfArtifactId,
+          renderedPdfArtifactId,
           uuidv7(),
           context.workbookArtifactId,
         ],
@@ -5825,39 +6869,69 @@ export async function retryReportExport(input: {
       input.projectId,
       input.userId,
     );
+    const current = await client.query<{
+      report_resource_version_id: string;
+      validation_run_id: string;
+      operation_status: string;
+      attempt: number;
+    }>(
+      `SELECT approval.report_resource_version_id,
+         approval.validation_run_id, export.operation_status, export.attempt
+       FROM report_export export
+       JOIN report_approval approval
+         ON approval.approval_id = export.report_approval_id
+       WHERE export.export_id = $1 AND export.project_id = $2
+       FOR UPDATE OF export`,
+      [input.exportId, input.projectId],
+    );
+    const exportRow = current.rows[0];
+    if (!exportRow) {
+      throw new ApiError(404, "EXPORT_NOT_FOUND", "내보내기 작업을 찾을 수 없습니다.");
+    }
+    if (!["failed", "cancelled"].includes(exportRow.operation_status)) {
+      throw new ApiError(
+        409,
+        "EXPORT_RETRY_NOT_ALLOWED",
+        "실패하거나 취소된 내보내기만 재시도할 수 있습니다.",
+      );
+    }
+    const nextAttempt = exportRow.attempt + 1;
+    const sourceSnapshot = await persistReportRenderSnapshot(
+      client,
+      context,
+      exportRow.report_resource_version_id,
+    );
+    const job = await insertReportDeliveryJob(client, {
+      context,
+      operationKind: "export",
+      operationId: input.exportId,
+      reportVersionId: exportRow.report_resource_version_id,
+      sourceSnapshot,
+      requestedByUserId: input.userId,
+      validationRunId: exportRow.validation_run_id,
+      attempt: nextAttempt,
+    });
     await client.query(
-      `UPDATE report_export_artifact SET
-         artifact_status = CASE
-           WHEN source_artifact_id IS NOT NULL THEN 'ready'
-           ELSE 'failed' END,
-         attempt_no = attempt_no + 1,
-         retryable = source_artifact_id IS NULL,
-         error_code = CASE WHEN source_artifact_id IS NULL
-           THEN 'ARTIFACT_SOURCE_MISSING' ELSE NULL END,
-         error_message = CASE WHEN source_artifact_id IS NULL
-           THEN '승인 산출물 원본을 찾을 수 없습니다.' ELSE NULL END,
-         updated_at = now()
-       WHERE export_id = $1 AND artifact_type = ANY($2::text[])
-         AND artifact_status = 'failed'`,
-      [input.exportId, input.artifactTypes],
+      `UPDATE report_export
+       SET operation_status = 'queued', outcome = 'pending',
+           job_id = $2, source_snapshot_id = $3, attempt = $4,
+           error_code = NULL, error_summary = NULL, finished_at = NULL,
+           updated_at = now()
+       WHERE export_id = $1`,
+      [
+        input.exportId,
+        job.jobId,
+        sourceSnapshot.sourceSnapshotId,
+        nextAttempt,
+      ],
     );
     await client.query(
-      `UPDATE report_export export SET
-         operation_status = CASE
-           WHEN EXISTS (
-             SELECT 1 FROM report_export_artifact file
-             WHERE file.export_id = export.export_id
-               AND file.artifact_status = 'failed'
-           ) THEN 'failed' ELSE 'succeeded' END,
-         outcome = CASE
-           WHEN EXISTS (
-             SELECT 1 FROM report_export_artifact file
-             WHERE file.export_id = export.export_id
-               AND file.artifact_status = 'failed'
-           ) THEN 'partial' ELSE 'complete' END,
-         updated_at = now()
-       WHERE export.export_id = $1 AND export.project_id = $2`,
-      [input.exportId, input.projectId],
+      `UPDATE report_export_artifact
+       SET artifact_status = 'pending', source_artifact_id = NULL,
+           attempt_no = $3, retryable = false, error_code = NULL,
+           error_message = NULL, updated_at = now()
+       WHERE export_id = $1 AND artifact_type = ANY($2::text[])`,
+      [input.exportId, input.artifactTypes, nextAttempt],
     );
     return exportView(client, context, input.exportId);
   });
@@ -5874,6 +6948,15 @@ export async function cancelReportExport(input: {
       input.projectId,
       input.userId,
     );
+    const current = await client.query<{ job_id: string | null }>(
+      `SELECT job_id FROM report_export
+       WHERE export_id = $1 AND project_id = $2
+       FOR UPDATE`,
+      [input.exportId, input.projectId],
+    );
+    if (!current.rows[0]) {
+      throw new ApiError(404, "EXPORT_NOT_FOUND", "내보내기 작업을 찾을 수 없습니다.");
+    }
     await client.query(
       `UPDATE report_export_artifact SET artifact_status = 'cancelled',
          updated_at = now()
@@ -5894,6 +6977,33 @@ export async function cancelReportExport(input: {
          AND operation_status IN ('queued', 'running', 'cancel_requested')`,
       [input.exportId, input.projectId],
     );
+    const jobId = current.rows[0].job_id;
+    if (jobId) {
+      const cancelled = await client.query<{ temporal_workflow_id: string }>(
+        `UPDATE workflow_job
+         SET operation_status = 'cancel_requested',
+             current_phase = 'cancel_requested', heartbeat_at = now()
+         WHERE job_id = $1
+           AND operation_status IN ('queued', 'running')
+         RETURNING temporal_workflow_id`,
+        [jobId],
+      );
+      if (cancelled.rows[0]) {
+        await client.query(
+          `INSERT INTO outbox_event (
+             outbox_event_id, job_id, command_type, command_id, payload_json
+           ) VALUES ($1, $2, 'cancel_workflow', $3, $4::jsonb)`,
+          [
+            uuidv7(),
+            jobId,
+            uuidv7(),
+            JSON.stringify({
+              workflowId: cancelled.rows[0].temporal_workflow_id,
+            }),
+          ],
+        );
+      }
+    }
     return exportView(client, context, input.exportId);
   });
 }

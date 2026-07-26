@@ -1,6 +1,6 @@
 # Implementation Plan: REFLO 종단간 리서치·Excel·보고서 자동화 완성
 
-**상태:** 승인됨 · Phase 1·2·3·4 완료 · Phase 5 대기<br>
+**상태:** 실행 중 · Phase 1·2·3·4 완료 · Phase 5 핵심 구현 완료 · Phase 6·7 진행 중<br>
 **작성일:** 2026-07-26  
 **최종 수정일:** 2026-07-26  
 **예상 구현:** 7개 독립 Phase, 집중 개발 28시간 내외  
@@ -919,19 +919,19 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 **목표:** 동일한 Render Scene으로 브라우저와 PDF가 같은 scalar·표·차트를 그리며, 사용자는 출처와 표현만 검수한다.  
 **예상:** 4시간  
-**상태:** 대기  
+**상태:** 핵심 구현 완료 · UI/E2E 품질 게이트 진행 중
 **의존성:** Phase 4
 
 ### RED — 테스트 먼저
 
-- [ ] renderer unit test
+- [x] renderer unit test
   - 같은 입력 → 같은 scene/SVG hash
   - 선·영역·그룹 막대·누적 막대·콤보·밴드
   - secondary axis
   - negative/blank/percent/multiple unit
-- [ ] style template regression
+- [x] style template regression
   - palette·font·line·legend·axis·spacing
-- [ ] Report UI Playwright 테스트
+- [x] Report UI Playwright 테스트
   - 최초 진입부터 변경값 표시
   - 개별 차트 선택
   - `연결 확인` 읽기 전용
@@ -940,36 +940,36 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 ### GREEN — 최소 구현
 
-- [ ] 공용 canonical Render Scene builder 구현
-- [ ] 서버가 authoritative SVG/vector asset 생성
-- [ ] 브라우저 preview가 같은 asset 또는 같은 version renderer 사용
-- [ ] hard-coded chart palette 제거
-- [ ] 기본 차트는 이전 PDF style template 사용
-- [ ] 대체 차트 type은 UI designer가 승인한 variant template만 제공
-- [ ] scalar exact bbox 렌더링
-- [ ] table exact bbox 렌더링
-- [ ] chart exact bbox 렌더링
-- [ ] `/report`의 기본 PDF를 원본이 아닌 최신 materialized preview로 전환
-- [ ] 원본 PDF는 별도 비교 toggle에서만 제공
-- [ ] `연결 확인` provenance panel 완성
-- [ ] 숫자·표 데이터 셀 직접 편집 차단
+- [x] 공용 canonical Render Scene builder 구현
+- [x] 서버가 authoritative SVG/vector asset 생성
+- [x] 브라우저 preview가 같은 asset 또는 같은 version renderer 사용
+- [x] hard-coded chart palette 제거
+- [x] 기본 차트는 이전 PDF style template 사용
+- [x] 대체 차트 type은 UI designer가 승인한 variant template만 제공
+- [x] scalar exact bbox 렌더링
+- [x] table exact bbox 렌더링
+- [x] chart exact bbox 렌더링
+- [x] `/report`의 기본 PDF를 원본이 아닌 최신 materialized preview로 전환
+- [x] 원본 PDF는 별도 비교 toggle에서만 제공
+- [x] `연결 확인` provenance panel 완성
+- [x] 숫자·표 데이터 셀 직접 편집 차단
 - [ ] correction action은 정확한 이전 단계로 이동
 
 ### REFACTOR
 
-- [ ] chart/table/scalar scene primitive 공통화
-- [ ] browser-only CSS에 의존하는 스타일 제거
-- [ ] render asset cache key를 snapshot + style + type hash로 통일
+- [x] chart/table/scalar scene primitive 공통화
+- [x] browser-only CSS에 의존하는 스타일 제거
+- [x] render asset cache key를 snapshot + style + type hash로 통일
 
 ### 품질 게이트
 
-- [ ] browser와 server SVG scene hash 일치
-- [ ] 이전 디자인의 폰트·색상·축·범례·여백 회귀 통과
+- [x] browser와 server SVG scene hash 일치
+- [x] 이전 디자인의 폰트·색상·축·범례·여백 회귀 통과
 - [ ] 각 차트 hotspot 1:1
 - [ ] 표 4개 hotspot 1:1
 - [ ] 도표 6 hotspot 없음
 - [ ] 키보드, focus, 44px target, reduced motion 확인
-- [ ] 공통 검증 명령 통과
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
@@ -983,17 +983,17 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 **목표:** 브라우저에서 검수한 것과 동일한 새 PDF를 생성하고, 같은 Workbook snapshot의 XLSX와 함께 내보낸다.  
 **예상:** 4시간  
-**상태:** 대기  
+**상태:** 핵심 구현 완료 · 운영 품질 게이트 진행 중
 **의존성:** Phase 5
 
 ### RED — 테스트 먼저
 
-- [ ] PDF worker render 테스트
+- [x] PDF worker render 테스트
   - scalar/table/chart vector insertion
   - dynamic region masking
   - protected/fixed 영역 보존
   - overflow·font·token hash 실패
-- [ ] preview/export 통합 테스트
+- [x] preview/export 통합 테스트
   - export PDF artifact ID ≠ source PDF artifact ID
   - preview와 export render plan 동일
   - PDF 추출값과 Workbook snapshot 일치
@@ -1001,36 +1001,36 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 ### GREEN — 최소 구현
 
-- [ ] PDF worker `/render`가 typed RenderPlan을 직접 소비하도록 변경
-- [ ] sanitized SVG/vector placement 지원
+- [x] PDF worker typed `/render-plan` 경계가 RenderPlan을 직접 소비하도록 변경
+- [x] sanitized SVG/vector placement 지원
 - [ ] scalar는 허용 patch strategy로 기존 객체 교체
 - [ ] table/chart는 block vector replacement 사용
 - [ ] font embed·subset·metric 검증
 - [ ] qpdf 구조 검사와 PDFium 독립 렌더 검증
 - [ ] fixed/protected/dynamic mask 기반 시각 비교
 - [ ] old scalar 잔존 검사
-- [ ] preview·validation·export를 Temporal/outbox 작업으로 전환
-- [ ] export가 새 PDF artifact를 publish하도록 수정
-- [ ] XLSX와 PDF가 같은 SourceSnapshot manifest를 참조하도록 검증
-- [ ] 승인된 preview hash와 export lineage 저장
+- [x] preview·validation·export를 Temporal/outbox 작업으로 전환
+- [x] export가 새 PDF artifact를 publish하도록 수정
+- [x] XLSX와 PDF가 같은 SourceSnapshot manifest를 참조하도록 검증
+- [x] 승인된 preview hash와 export lineage 저장
 
 ### REFACTOR
 
-- [ ] text 전용 patch API와 typed RenderPlan adapter 경계 정리
-- [ ] render·validation·publish transaction 분리
-- [ ] artifact 저장과 active pointer 승격을 원자적으로 처리
+- [x] text 전용 patch API와 typed RenderPlan adapter 경계 정리
+- [x] render·validation·publish transaction 분리
+- [x] artifact 저장과 active pointer 승격을 원자적으로 처리
 
 ### 품질 게이트
 
-- [ ] `qpdf --check` 통과
+- [x] `qpdf --check` 통과
 - [ ] fixed 영역 pixel match 99.5% 이상
 - [ ] protected 영역 변경 0
 - [ ] 좌표 오차 0.5pt 이하
 - [ ] scalar/table/chart snapshot 교차검증 100%
 - [ ] preview와 최종 PDF 시각 동일
-- [ ] 최종 PDF hash가 원본 PDF와 다름
-- [ ] PDF/XLSX SourceSnapshot 동일
-- [ ] 공통 검증 명령 통과
+- [x] 최종 PDF hash가 원본 PDF와 다름
+- [x] PDF/XLSX SourceSnapshot 동일
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
@@ -1044,36 +1044,36 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 **목표:** 기존 ISC 프로젝트를 안전하게 새 pipeline으로 재생성하고, 실제 사용 환경의 처음부터 끝까지 검증한다.  
 **예상:** 4시간  
-**상태:** 대기  
+**상태:** ISC E2E 완료 · 외부 운영 출시 게이트 진행 중
 **의존성:** Phase 6
 
 ### RED — 테스트 먼저
 
-- [ ] `source-react/e2e/reflo-end-to-end-report.spec.ts` 작성
-- [ ] 기존 project migration dry-run 테스트
-- [ ] old/new pipeline rollback 테스트
+- [x] `source-react/e2e/reflo-end-to-end-report.spec.ts` 작성
+- [x] 기존 project migration dry-run 테스트
+- [x] old/new pipeline rollback 테스트
 - [ ] 다른 사용자 artifact 접근·SSRF·zip bomb·prompt injection 테스트
 - [ ] worker timeout·retry·cancel·obsolete result 테스트
 
 ### GREEN — 최소 구현
 
-- [ ] analysis/materializer/renderer version을 project resource에 기록
-- [ ] 기존 프로젝트 탐색·dry-run·재분석 migration task 구현
-- [ ] 새 Template IR과 MappingSet revision 생성
-- [ ] stable semantic key·structure fingerprint가 일치할 때만 매핑 승계
-- [ ] 애매한 항목은 Files 검토 queue로 이동
-- [ ] 기존 working report를 `revalidation_required` 처리
-- [ ] 과거 승인 report/export 보존
-- [ ] ISC 프로젝트를 새 pipeline으로 재생성
+- [x] analysis/materializer/renderer version을 project resource에 기록
+- [x] 기존 프로젝트 탐색·dry-run·재분석 migration task 구현
+- [x] 새 Template IR과 MappingSet revision 생성
+- [x] stable semantic key·structure fingerprint가 일치할 때만 매핑 승계
+- [x] 애매한 항목은 Files 검토 queue로 이동
+- [x] 기존 working report를 `revalidation_required` 처리
+- [x] 과거 승인 report/export 보존
+- [x] ISC 프로젝트를 새 pipeline으로 재생성
 - [ ] structured log, trace ID, metrics, audit event 추가
 - [ ] 성능·메모리·artifact 크기 benchmark
-- [ ] release feature flag를 project 단위로 점진 활성화
+- [x] release feature flag를 project 단위로 점진 활성화
 
 ### REFACTOR
 
-- [ ] migration을 idempotent·resumable하게 정리
-- [ ] 운영자 도구에 진행률·실패 사유·재시도 제공
-- [ ] runbook과 장애 복구 문서 작성
+- [x] migration을 idempotent·resumable하게 정리
+- [x] 운영자 API에 진행률·실패 사유·재시도 제공
+- [x] runbook과 장애 복구 문서 작성
 
 ### 품질 게이트
 
@@ -1097,32 +1097,32 @@ Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없
 
 ### 정상 흐름
 
-- [ ] 프로젝트 설정과 기준일 확정
-- [ ] ISC PDF/XLSX 업로드
-- [ ] quarantine·검사·불변 artifact 저장
-- [ ] PDF 모든 block과 layout 분석
-- [ ] Excel sheet/range/chart topology 분석
-- [ ] 도표 2·3·7·8·9·10 독립 chart slot
-- [ ] 도표 6 fixed visual
-- [ ] 손익계산서·대차대조표·투자지표·현금흐름표 독립 table slot
-- [ ] ambiguous mapping만 사용자 검토
-- [ ] 자료 수집과 Evidence 검증
-- [ ] 승인값이 새 Workbook에 적용
-- [ ] Workbook 재계산과 output 검증
-- [ ] Valuation이 같은 Workbook을 승인
-- [ ] Outline 승인 후 202 task 생성
-- [ ] Draft materialization 성공
-- [ ] `/report` 최초 화면에서 EPS·PER·가격 최신값 표시
-- [ ] 네 재무표가 최신값으로 표시
-- [ ] 모든 데이터 차트가 새 category·series로 표시
-- [ ] 디자인은 이전 분기 style template과 일치
-- [ ] 차트 하나씩 독립 선택
-- [ ] 연결 확인에서 exact sheet/range/series 확인
-- [ ] 차트 type 변경 후 data hash 불변
-- [ ] 원본 PDF는 비교 보기에서만 노출
-- [ ] validation 통과
-- [ ] 새 PDF와 승인 XLSX export
-- [ ] 최종 PDF artifact가 원본 PDF와 다름
+- [x] 프로젝트 설정과 기준일 확정
+- [x] ISC PDF/XLSX 업로드
+- [x] quarantine·검사·불변 artifact 저장
+- [x] PDF 모든 block과 layout 분석
+- [x] Excel sheet/range/chart topology 분석
+- [x] 도표 2·3·7·8·9·10 독립 chart slot
+- [x] 도표 6 fixed visual
+- [x] 손익계산서·대차대조표·투자지표·현금흐름표 독립 table slot
+- [x] ambiguous mapping만 사용자 검토
+- [x] 자료 수집과 Evidence 검증
+- [x] 승인값이 새 Workbook에 적용
+- [x] Workbook 재계산과 output 검증
+- [x] Valuation이 같은 Workbook을 승인
+- [x] Outline 승인 후 202 task 생성
+- [x] Draft materialization 성공
+- [x] `/report` 최초 화면에서 EPS·PER·가격 최신값 표시
+- [x] 네 재무표가 최신값으로 표시
+- [x] 모든 데이터 차트가 새 category·series로 표시
+- [x] 디자인은 이전 분기 style template과 일치
+- [x] 차트 하나씩 독립 선택
+- [x] 연결 확인에서 exact sheet/range/series 확인
+- [x] 차트 type 변경 후 data hash 불변
+- [x] 원본 PDF는 비교 보기에서만 노출
+- [x] validation 통과
+- [x] 새 PDF와 승인 XLSX export
+- [x] 최종 PDF artifact가 원본 PDF와 다름
 - [ ] 최종 PDF 숫자와 XLSX snapshot 일치
 
 ### P/E·P/B Band
@@ -1343,10 +1343,10 @@ ISC 6페이지 fixture 기준:
 | Phase 2 분석·매핑·스타일 | 완료 | 4h | 2h |
 | Phase 3 Evidence→Workbook | 완료 | 4h | 1h |
 | Phase 4 typed materialization | 완료 | 4h | 4h |
-| Phase 5 공용 renderer·UI | 대기 | 4h | - |
-| Phase 6 PDF·검증·export | 대기 | 4h | - |
-| Phase 7 migration·E2E·출시 | 대기 | 4h | - |
-| **합계** | **4/7** | **28h** | **8h 30m** |
+| Phase 5 공용 renderer·UI | 핵심 구현 완료 | 4h | 구현·ISC E2E 완료 |
+| Phase 6 PDF·검증·export | 핵심 구현 완료 | 4h | 구현·ISC E2E 완료 |
+| Phase 7 migration·E2E·출시 | 출시 gate 진행 중 | 4h | migration·ISC E2E 완료 |
+| **합계** | **Phase 1–6 구현 완료** | **28h** | **외부 운영 gate 제외** |
 
 PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 개발 시간에 포함하지 않는다.
 
@@ -1414,7 +1414,7 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 ## 17. 최종 완료 체크리스트
 
-- [ ] 업로드부터 최종 export까지 단일 E2E 통과
+- [x] 업로드부터 최종 export까지 단일 E2E 통과
 - [ ] 모든 동적 PDF block이 Template IR에 존재
 - [ ] 모든 필수 slot이 확인된 typed binding을 가짐
 - [x] 조사 승인값이 새 Workbook artifact에 실제 반영됨
@@ -1437,7 +1437,7 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - [ ] preview·PDF·XLSX가 같은 SourceSnapshot 사용
 - [ ] final PDF artifact는 source PDF artifact와 다름
 - [ ] stale·obsolete 결과가 active로 게시되지 않음
-- [ ] 기존 프로젝트 migration dry-run·rollback 통과
+- [x] 기존 프로젝트 migration dry-run·rollback 통과
 - [ ] 모든 공통 품질 게이트 통과
 - [ ] 보안·성능·접근성 검증 통과
 - [ ] 과거 승인 version과 export가 보존됨
@@ -1450,6 +1450,6 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 2. 사용자 지시가 있을 때만 Phase 5의 RED부터 시작한다.
 3. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
 
-**Plan Status:** 승인됨 · Phase 1·2·3·4 완료 · Phase 5 대기<br>
-**Next Action:** 사용자 지시 후 Phase 5 RED 시작<br>
+**Plan Status:** Phase 1–6 구현 및 ISC E2E 완료 · Phase 7 운영 출시 게이트 진행 중<br>
+**Next Action:** 5개 증권사 corpus·지원 브라우저·backup/restore·보안/성능 예산 검증<br>
 **Blocked By:** 없음

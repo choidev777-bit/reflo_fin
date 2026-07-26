@@ -255,6 +255,10 @@ function PdfEditorPage({
                     <ReportChartPreview
                       type={displayedChartType}
                       data={chartSnapshot}
+                      asset={
+                        block.renderAssets?.[displayedChartType] ??
+                        block.renderAssets?.default
+                      }
                     />
                   </span>
                 )}

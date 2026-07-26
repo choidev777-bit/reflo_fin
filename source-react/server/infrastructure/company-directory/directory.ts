@@ -85,7 +85,7 @@ async function loadDirectory(): Promise<DirectoryState> {
   let provider: CompanyDirectoryProvider = "krx-kind";
   let companies: Omit<DirectoryCompany, "companyId">[];
 
-  if (process.env.REFLO_TEST_AUTH_ENABLED === "1") {
+  if (process.env.REFLO_COMPANY_DIRECTORY_TEST_FIXTURE === "1") {
     companies = testDirectory();
   } else if (hasKiwoomCredentials()) {
     try {
