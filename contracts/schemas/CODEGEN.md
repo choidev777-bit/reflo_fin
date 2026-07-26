@@ -10,6 +10,8 @@ npm ci
 npm test
 ```
 
+`npm test`는 schema·fixture 검증 뒤 생성 결과를 다시 계산해 저장된 파일과 byte 단위로 비교한다. 차이가 나면 `npm run generate`로 세 언어 경계를 함께 갱신한다.
+
 ## 공통 규칙
 
 1. `schema-registry.json`의 `roots`만 public root type으로 생성한다.
@@ -44,20 +46,41 @@ npm test
 - required field 누락과 unknown field를 contract test에서 거부한다.
 - 출력 위치: `workers/dotnet/Reflo.Contracts/Generated/Worker/V1/`.
 
-## Generator 고정
+## 생성기
 
-실제 worker repository skeleton을 만들 때 language별 generator와 exact version을 각 package lock/tool manifest에 고정한다. generator 교체는 생성 결과 diff, valid·invalid fixture와 round-trip test를 모두 통과해야 한다.
+`scripts/generate-boundaries.mjs`는 외부 생성기 의존성 없이 다음 두 단일 원본을 읽는다.
+
+- `v1/worker-result-envelope.schema.json`: `schemaVersion`, envelope 필드, `WorkerResultType`
+- `schema-registry.json`: 각 `resultType`의 `payloadRef`
+
+명령:
+
+```powershell
+npm --prefix contracts/schemas run generate
+npm --prefix contracts/schemas run generate:check
+```
+
+생성 범위는 Internal Worker API 결과 경계다. payload 전체 모델은 각 JSON Schema가 계속 검증하며, 생성 경계는 exact `resultType`, 공통 envelope·result ref·tool 필드와 payload schema 위치를 제공한다.
+
+| 언어 | 생성 파일 | strict 경계 |
+|---|---|---|
+| TypeScript | `packages/contracts/generated/typescript/worker/v1/worker-result-boundary.ts` | literal discriminator union, readonly envelope |
+| TypeScript runtime | `source-react/server/domain/generated/worker-result-boundary.ts`, `worker-result-schemas.json` | 서버가 직접 소비하는 동일 타입과 strict JSON Schema bundle |
+| Python | `workers/python/reflo_contracts/generated/worker/v1/worker_result_boundary.py` | Pydantic v2 strict scalar, `extra="forbid"` |
+| C# | `workers/dotnet/Reflo.Contracts/Generated/Worker/V1/WorkerResultBoundary.g.cs` | exact string converter, required member, unknown field 거부 |
+
+생성 파일 header의 generator version, input hash와 option hash가 생성 근거를 고정한다. 생성기 동작을 바꾸면 `GENERATOR_VERSION`을 올리고 세 파일을 재생성한다. 생성 파일은 직접 수정하지 않는다.
 
 ## CI gate
 
 ```text
 schema parse + meta-validation
   → fixture validation
-  → TypeScript/Python/C# generation
+  → TypeScript/Python/C# 경계 재계산
   → generated diff check
-  → language compile
-  → cross-language canonical fixture round-trip
-  → OpenAPI lint
+  → TypeScript compile + Python canonical fixture round-trip
 ```
+
+`source-react`는 generated runtime schema bundle을 직접 소비한다. Python 경계는 Pydantic v2 round-trip으로 검증하고, C# 경계는 `workers/excel/Reflo.ExcelWorker.csproj`의 `ProjectReference`를 통해 공통 .NET build gate에서 함께 compile한다.
 
 JSON object hash가 필요한 경우 RFC 8785 JSON Canonicalization Scheme을 사용한다. hash 계산 전에 schema validation을 통과해야 한다.

@@ -1,0 +1,381 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/validated-value-set.schema.json",
+  "title": "REFLO Validated Value Set v1",
+  "description": "Immutable approved values with evidence, authority, conversion, and conflict decisions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "validatedValueSetId",
+    "validationVersion",
+    "sourceSnapshotId",
+    "sourceFingerprint",
+    "status",
+    "values",
+    "contentHash",
+    "createdAt",
+    "tool"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "validatedValueSetId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "validationVersion": {
+      "$ref": "common.schema.json#/$defs/VersionNumber"
+    },
+    "sourceSnapshotId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "sourceFingerprint": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "obsolete"
+      ]
+    },
+    "values": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ValidatedValue"
+      }
+    },
+    "contentHash": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "tool": {
+      "$ref": "common.schema.json#/$defs/ToolDescriptor"
+    }
+  },
+  "$defs": {
+    "TypedValue": {
+      "title": "ValidatedTypedValue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valueType",
+        "value"
+      ],
+      "properties": {
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "money",
+            "percent",
+            "integer",
+            "date",
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "enum": [
+                  "decimal",
+                  "money",
+                  "percent"
+                ]
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "common.schema.json#/$defs/DecimalString"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^-?(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "date"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "common.schema.json#/$defs/Date"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "null"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "AuthoritySource": {
+      "title": "ValidatedAuthoritySource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceType",
+        "sourceId"
+      ],
+      "properties": {
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "filing",
+            "company",
+            "market_data",
+            "workbook",
+            "user_decision"
+          ]
+        },
+        "sourceId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "locator": {
+          "$ref": "common.schema.json#/$defs/SourceLocator"
+        }
+      }
+    },
+    "ConversionRule": {
+      "title": "ValidatedValueConversionRule",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "scale",
+        "offset",
+        "roundingMode"
+      ],
+      "properties": {
+        "rule": {
+          "type": "string",
+          "enum": [
+            "identity",
+            "unit_scale",
+            "currency_conversion",
+            "ratio_conversion",
+            "manual"
+          ]
+        },
+        "scale": {
+          "$ref": "common.schema.json#/$defs/DecimalString"
+        },
+        "offset": {
+          "$ref": "common.schema.json#/$defs/DecimalString"
+        },
+        "roundingMode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "half_up",
+            "half_even",
+            "floor",
+            "ceiling",
+            "truncate"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "ConflictResolutionDecision": {
+      "title": "ValidatedConflictResolutionDecision",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason",
+        "discardedEvidenceIds"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "no_conflict",
+            "selected_authority",
+            "manual_resolution"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "discardedEvidenceIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        }
+      }
+    },
+    "ValidatedValue": {
+      "title": "ValidatedValue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "semanticKey",
+        "originalValue",
+        "normalizedValue",
+        "selectedEvidenceIds",
+        "authoritySource",
+        "cutoffDate",
+        "conversionRule",
+        "conflictResolutionDecision",
+        "validationVersion"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "semanticKey": {
+          "$ref": "mapping-set.schema.json#/$defs/BindingSemanticKey"
+        },
+        "originalValue": {
+          "$ref": "#/$defs/TypedValue"
+        },
+        "normalizedValue": {
+          "$ref": "#/$defs/TypedValue"
+        },
+        "selectedEvidenceIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "authoritySource": {
+          "$ref": "#/$defs/AuthoritySource"
+        },
+        "cutoffDate": {
+          "$ref": "common.schema.json#/$defs/Date"
+        },
+        "conversionRule": {
+          "$ref": "#/$defs/ConversionRule"
+        },
+        "conflictResolutionDecision": {
+          "$ref": "#/$defs/ConflictResolutionDecision"
+        },
+        "validationVersion": {
+          "$ref": "common.schema.json#/$defs/VersionNumber"
+        }
+      }
+    }
+  }
+}

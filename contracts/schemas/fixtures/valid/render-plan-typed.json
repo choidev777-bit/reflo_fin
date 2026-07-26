@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "1.0",
+  "artifactType": "render_plan",
+  "renderPlanId": "render_plan_01",
+  "renderPlanVersion": 1,
+  "inputs": {
+    "templateIrVersionId": "template_01",
+    "templateIrHash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "mappingSetVersionId": "mapping_01",
+    "mappingSetHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "workbookCalculationVersionId": "workbook_01",
+    "workbookCalculationHash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "evidenceVersionIds": [
+      "evidence_01"
+    ],
+    "reportVersionId": "report_01",
+    "validatedValueSetVersionId": "validated_values_01"
+  },
+  "values": [
+    {
+      "slotId": "slot_scalar_01",
+      "valueType": "money",
+      "rawValue": "92500",
+      "formattedValue": "92,500원",
+      "sourceKind": "mapping",
+      "sourceVersionIds": [
+        "mapping_01",
+        "workbook_01"
+      ],
+      "materializationItemHash": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "commands": [
+    {
+      "commandId": "command_01",
+      "pageId": "page_01",
+      "blockId": "block_01",
+      "slotId": "slot_scalar_01",
+      "strategy": "block_vector_replace",
+      "targetObjectIds": [
+        "object_01"
+      ],
+      "expectedTokenHashes": [
+        "5555555555555555555555555555555555555555555555555555555555555555"
+      ],
+      "vectorAssetHash": "6666666666666666666666666666666666666666666666666666666666666666",
+      "validationMaskIds": [
+        "mask_01"
+      ],
+      "expectedStructureHash": "7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  ],
+  "lineage": {
+    "sourceSnapshotId": "snapshot_01",
+    "sourceFingerprint": "8888888888888888888888888888888888888888888888888888888888888888",
+    "materializationId": "materialization_01",
+    "materializationHash": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "vectorAssets": [
+    {
+      "slotId": "slot_scalar_01",
+      "assetKind": "scalar",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "mediaType": "image/svg+xml"
+    }
+  ],
+  "validationMaskIds": [
+    "mask_01"
+  ],
+  "rendererProfile": {
+    "renderer": {
+      "name": "reflo-vector-renderer",
+      "version": "1.0.0"
+    },
+    "fontProfileId": "font_profile_01",
+    "fontProfileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "renderProfileId": "render_profile_01",
+    "renderProfileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "createdAt": "2026-07-26T10:02:00+09:00",
+  "warnings": []
+}

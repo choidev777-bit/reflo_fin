@@ -26,6 +26,7 @@ export type FileInspectionWorkflowInput = {
   jobAttempt: number;
   projectId: string;
   inspectionId: string;
+  setupResourceVersionId: string;
   pdf: InspectionFileInput;
   workbook: InspectionFileInput;
   marketData: {
@@ -43,6 +44,7 @@ export type HypothesisGenerationWorkflowInput = {
   projectId: string;
   generationId: string;
   inputResourceVersionId: string;
+  sourceInputVersionIds: string[];
   inputDraftVersion: number;
   inputContentHash: string;
   inputRevision: string;
@@ -79,6 +81,7 @@ export type ResearchValidationWorkflowInput = {
   projectId: string;
   researchRunId: string;
   approvedPlanResourceVersionId: string;
+  sourceInputVersionIds: string[];
   companyMasterId: string;
   companyName: string;
   corpCode: string | null;

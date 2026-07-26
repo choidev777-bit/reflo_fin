@@ -1,0 +1,34 @@
+{
+  "bindingId": "binding_table_01",
+  "slotId": "slot_income_table_01",
+  "kind": "table",
+  "source": {
+    "sheetId": "sheet_01",
+    "sheet": "Income",
+    "range": "A1:D8",
+    "authority": "authoritative",
+    "structureFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "readMode": "raw_and_formatted"
+  },
+  "rowKeyColumn": "A",
+  "columnHeaderRow": 1,
+  "expectedRows": 8,
+  "expectedColumns": 4,
+  "status": "confirmed",
+  "purpose": "report_output",
+  "semanticKey": {
+    "metric": "income_statement",
+    "period": "4Q25",
+    "unit": "KRW million",
+    "scope": "consolidated"
+  },
+  "estimateType": "mixed",
+  "styleTemplateRef": "style_table_01",
+  "detectionConfidence": 0.97,
+  "reasonCodes": [
+    "RANGE_TOPOLOGY_MATCH"
+  ],
+  "review": {
+    "status": "approved"
+  }
+}

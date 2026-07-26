@@ -38,6 +38,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
+      REFLO_NEXT_DIST_DIR: ".runtime/next-e2e",
       REFLO_TEST_AUTH_ENABLED: "1",
       REFLO_KRX_TEST_FIXTURE: "1",
       REFLO_LLM_TEST_FIXTURE: "1",

@@ -504,6 +504,63 @@ paths:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
       x-error-codes: [WORKBOOK_VERSION_MISMATCH]
+  /api/projects/{projectId}/validation/workbook-applications:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [Validation]
+      operationId: createValidationWorkbookApplication
+      summary: Apply one approved value set to an exact workbook source snapshot
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkbookApplicationRequest"
+      responses:
+        "202":
+          description: Workbook application task accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookApplicationAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [VALIDATED_VALUE_SET_NOT_APPROVED, WORKBOOK_VERSION_MISMATCH, SOURCE_FINGERPRINT_MISMATCH, WORKBOOK_APPLICATION_ALREADY_RUNNING]
+  /api/projects/{projectId}/validation/workbook-applications/{taskId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [Validation]
+      operationId: getValidationWorkbookApplication
+      summary: Poll a workbook application pinned to one source snapshot
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Workbook application task projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookApplicationProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [TASK_NOT_FOUND]
   /api/projects/{projectId}/validation/results/{resultId}/decisions:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -981,6 +1038,33 @@ paths:
       x-job-polling: true
       x-project-owner-required: true
       x-error-codes: [TASK_NOT_FOUND]
+  /api/projects/{projectId}/report-materializations/{taskId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TaskId"
+    get:
+      tags: [Report]
+      operationId: getReportMaterialization
+      summary: Poll report materialization for an exact source snapshot and report version
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Report materialization task projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportMaterializationProjection"
+        "304":
+          $ref: "#/components/responses/NotModified"
+        default:
+          $ref: "#/components/responses/Error"
+      x-job-polling: true
+      x-project-owner-required: true
+      x-error-codes: [TASK_NOT_FOUND, SOURCE_FINGERPRINT_MISMATCH]
   /api/projects/{projectId}/evidence/{evidenceVersionId}:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -5821,6 +5905,121 @@ components:
         readOnlyReason:
           type: string
           const: validation_workspace
+    CreateWorkbookApplicationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - validatedValueSetVersionId
+        - expectedWorkbookVersion
+        - expectedProjectVersion
+        - sourceSnapshotId
+        - sourceFingerprint
+      properties:
+        validatedValueSetVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        expectedWorkbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        expectedProjectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    WorkbookApplicationAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - taskId
+        - operationStatus
+        - validity
+        - statusUrl
+        - sourceSnapshotId
+        - sourceFingerprint
+      properties:
+        taskId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          type: string
+          const: queued
+        validity:
+          type: string
+          const: current
+        statusUrl:
+          $ref: "#/components/schemas/RelativeRoute"
+        sourceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+    WorkbookApplicationProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          required:
+            - taskId
+            - sourceSnapshotId
+            - sourceFingerprint
+            - inputWorkbookVersion
+            - appliedCellCount
+            - blockedCellCount
+          properties:
+            taskId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceSnapshotId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceFingerprint:
+              type: string
+              pattern: "^[a-f0-9]{64}$"
+            inputWorkbookVersion:
+              $ref: "#/components/schemas/VersionNumber"
+            appliedCellCount:
+              type: integer
+              minimum: 0
+            blockedCellCount:
+              type: integer
+              minimum: 0
+            outputWorkbook:
+              oneOf:
+                - $ref: "#/components/schemas/VersionRef"
+                - type: "null"
+            obsoleteReason:
+              type: ["string", "null"]
+    ReportMaterializationProjection:
+      allOf:
+        - $ref: "#/components/schemas/JobProjection"
+        - type: object
+          required:
+            - taskId
+            - sourceSnapshotId
+            - sourceFingerprint
+            - reportVersionId
+            - materializedItemCount
+            - blockerCount
+          properties:
+            taskId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceSnapshotId:
+              $ref: "#/components/schemas/OpaqueId"
+            sourceFingerprint:
+              type: string
+              pattern: "^[a-f0-9]{64}$"
+            reportVersionId:
+              $ref: "#/components/schemas/OpaqueId"
+            materializationId:
+              type: ["string", "null"]
+            materializedItemCount:
+              type: integer
+              minimum: 0
+            blockerCount:
+              type: integer
+              minimum: 0
+            artifact:
+              oneOf:
+                - $ref: "#/components/schemas/VersionRef"
+                - type: "null"
+            obsoleteReason:
+              type: ["string", "null"]
     ValidationDecisionRequest:
       type: object
       additionalProperties: false

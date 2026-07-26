@@ -18,6 +18,9 @@ REFLO worker가 교환하는 activity input, typed result, artifact descriptor, 
 | Evidence 독립 검증 | `v1/evidence-validation-result.schema.json` |
 | PydanticAI structured output | `v1/agent-output.schema.json` |
 | 재계산·RenderPlan·PDF 검증·publish | `v1/report-worker-artifact.schema.json` |
+| 승인 검증값 집합 | `v1/validated-value-set.schema.json` |
+| scalar·table·chart 보고서 materialization | `v1/report-materialization.schema.json` |
+| 현재 composite worker payload | `v1/runtime-worker-result.schema.json` |
 | type·queue·payload registry | `schema-registry.json` |
 
 `hypothesis_questions`의 prompt·입력·domain validation 단일 원본은 [`../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md)다. 이 디렉터리는 structured output 형식만 소유한다.
@@ -87,6 +90,15 @@ Schema dialect는 JSON Schema 2020-12다. CI는 다음을 검사한다.
 3. `fixtures/manifest.json`의 valid·invalid 기대값
 4. OpenAPI external `$ref` resolution
 5. registry `resultType`와 `WorkerResultType` enum 양방향 일치
-6. 생성 코드 diff가 깨끗한지 확인
+6. registry·envelope에서 생성한 TypeScript·Python·C# 결과 경계의 drift
+7. generated TypeScript compile과 Python canonical fixture round-trip
+8. runtime이 소비하는 schema bundle과 canonical schema의 byte drift
+
+```powershell
+npm --prefix contracts/schemas test
+npm --prefix contracts/schemas run generate
+```
+
+`test`는 생성물을 수정하지 않고 drift가 있으면 실패한다. `generate`는 세 언어 생성물을 함께 갱신한다.
 
 Fixture와 검증 명령은 [`CODEGEN.md`](./CODEGEN.md)를 따른다.

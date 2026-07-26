@@ -1,0 +1,20 @@
+{
+  "templateType": "scalar",
+  "fontRef": "font_noto_sans_kr",
+  "fontSizePt": 10,
+  "color": "#111827",
+  "weight": 600,
+  "alignment": "right",
+  "baseline": "alphabetic",
+  "prefix": "",
+  "suffix": "원",
+  "numberFormat": "#,##0",
+  "bbox": [
+    100,
+    100,
+    180,
+    120
+  ],
+  "overflowPolicy": "shrink_to_fit",
+  "arbitraryCss": "position:fixed"
+}

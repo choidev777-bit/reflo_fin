@@ -1,0 +1,38 @@
+{
+  "bindingId": "binding_composite_01",
+  "slotId": "slot_margin_chart_01",
+  "kind": "composite_chart",
+  "purpose": "report_output",
+  "semanticKey": {
+    "metric": "revenue_and_margin"
+  },
+  "categories": {
+    "sheetId": "sheet_01",
+    "sheet": "Income",
+    "range": "B1:E1",
+    "authority": "authoritative",
+    "structureFingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "series": [
+    {
+      "seriesId": "series_revenue",
+      "source": {
+        "sheetId": "sheet_01",
+        "sheet": "Income",
+        "range": "B2:E2",
+        "authority": "authoritative",
+        "structureFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "role": "actual",
+      "chartType": "bar",
+      "estimateType": "actual"
+    }
+  ],
+  "styleTemplateRef": "style_chart_01",
+  "detectionConfidence": 0.96,
+  "reasonCodes": [],
+  "status": "confirmed",
+  "review": {
+    "status": "approved"
+  }
+}

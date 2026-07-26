@@ -237,6 +237,12 @@
         },
         "reportVersionId": {
           "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceSnapshot": {
+          "$ref": "report-materialization.schema.json#/$defs/SourceSnapshot"
+        },
+        "validatedValueSetVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
         }
       }
     },
@@ -267,6 +273,7 @@
             "boolean",
             "table",
             "chart",
+            "composite_chart",
             "decision"
           ]
         },
@@ -287,6 +294,9 @@
           "items": {
             "$ref": "common.schema.json#/$defs/OpaqueId"
           }
+        },
+        "materializationItemHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
         }
       }
     },
@@ -339,6 +349,104 @@
           "items": {
             "$ref": "template-ir.schema.json#/$defs/PatchStrategy"
           }
+        },
+        "vectorAssetHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "validationMaskIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "expectedStructureHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "RenderLineage": {
+      "title": "RenderLineage",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSnapshotId",
+        "sourceFingerprint",
+        "materializationId",
+        "materializationHash"
+      ],
+      "properties": {
+        "sourceSnapshotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "materializationId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "materializationHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "VectorAsset": {
+      "title": "RenderVectorAsset",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slotId",
+        "assetKind",
+        "sha256",
+        "mediaType"
+      ],
+      "properties": {
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "assetKind": {
+          "type": "string",
+          "enum": [
+            "scalar",
+            "table",
+            "chart",
+            "composite_chart"
+          ]
+        },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "mediaType": {
+          "const": "image/svg+xml"
+        }
+      }
+    },
+    "RendererProfile": {
+      "title": "RendererProfile",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "renderer",
+        "fontProfileId",
+        "fontProfileHash",
+        "renderProfileId",
+        "renderProfileHash"
+      ],
+      "properties": {
+        "renderer": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        },
+        "fontProfileId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "fontProfileHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "renderProfileId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "renderProfileHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
         }
       }
     },
@@ -383,6 +491,25 @@
           "items": {
             "$ref": "#/$defs/PatchCommand"
           }
+        },
+        "lineage": {
+          "$ref": "#/$defs/RenderLineage"
+        },
+        "vectorAssets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VectorAsset"
+          }
+        },
+        "validationMaskIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/OpaqueId"
+          }
+        },
+        "rendererProfile": {
+          "$ref": "#/$defs/RendererProfile"
         },
         "createdAt": {
           "$ref": "common.schema.json#/$defs/Timestamp"

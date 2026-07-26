@@ -1,0 +1,18 @@
+{
+  "bindingId": "binding_table_01",
+  "slotId": "slot_income_table_01",
+  "kind": "table",
+  "source": {
+    "sheetId": "sheet_01",
+    "sheet": "Income",
+    "range": "A1:D8",
+    "authority": "authoritative",
+    "structureFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "rowKeyColumn": "A",
+  "columnHeaderRow": 1,
+  "expectedRows": 8,
+  "expectedColumns": 4,
+  "status": "confirmed",
+  "purpose": "screen_only"
+}

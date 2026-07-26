@@ -3,6 +3,7 @@ import Decimal from "decimal.js";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, type StageKey } from "../../domain/project";
+import { resumeRouteForBlocker } from "../../domain/stage-blocker-policy";
 import {
   canonicalTargetPer,
   canonicalTargetPrice,
@@ -19,6 +20,11 @@ import {
   putImmutableObject,
   readObjectBytes,
 } from "../object-storage/s3";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+  recordResourceDependencies,
+} from "../services/dependency-invalidator";
 
 type CellChange = {
   sheetId: string;
@@ -142,6 +148,7 @@ type Context = {
   sourceFilename: string;
   sourceSha256: string;
   priceSnapshotId: string;
+  validationInputResourceVersionIds: string[];
   currentPrice: string;
   tradingDate: string;
   inputFingerprint: string;
@@ -400,6 +407,8 @@ async function projectContext(
     workbook_resource_version_id: string;
     mapping_set_resource_version_id: string;
     validation_approval_id: string;
+    validation_run_id: string;
+    approved_plan_resource_version_id: string;
     structure_hash: string;
     artifact_id: string;
     object_key: string;
@@ -414,6 +423,8 @@ async function projectContext(
        wv.resource_version_id AS workbook_resource_version_id,
        msv.resource_version_id AS mapping_set_resource_version_id,
        validation.approval_id AS validation_approval_id,
+       validation.validation_run_id,
+       validation.approved_plan_resource_version_id,
        wv.structure_hash, a.artifact_id, a.object_key, a.original_filename,
        a.sha256, price.resource_version_id AS price_snapshot_id,
        price.close_price::text, price.trading_date::text
@@ -518,7 +529,14 @@ async function projectContext(
       409,
       "VALUATION_PREREQUISITE_INCOMPLETE",
       "조사 결과 검증과 Excel 적합성 검사를 완료해주세요.",
-      { meta: { resumeRoute: processRoute(projectId, "validation") } },
+      {
+        meta: {
+          resumeRoute: resumeRouteForBlocker({
+            projectId,
+            fallbackStage: "validation",
+          }),
+        },
+      },
     );
   }
   if (!row.price_snapshot_id || !row.close_price || !row.trading_date) {
@@ -526,7 +544,14 @@ async function projectContext(
       409,
       "VALUATION_PREREQUISITE_INCOMPLETE",
       "기준일 현재주가를 확인할 수 없습니다.",
-      { meta: { resumeRoute: processRoute(projectId, "files") } },
+      {
+        meta: {
+          resumeRoute: resumeRouteForBlocker({
+            projectId,
+            fallbackStage: "files",
+          }),
+        },
+      },
     );
   }
   const mapping = await client.query<{
@@ -581,11 +606,39 @@ async function projectContext(
       409,
       "MAPPING_REVALIDATION_REQUIRED",
       "Forward EPS, Target PER, 목표주가 매핑을 다시 확인해주세요.",
-      { meta: { resumeRoute: processRoute(projectId, "files") } },
+      {
+        meta: {
+          resumeRoute: resumeRouteForBlocker({
+            projectId,
+            fallbackStage: "files",
+          }),
+        },
+      },
     );
   }
+  const validatedSources = await client.query<{
+    source_version_id: string;
+  }>(
+    `SELECT DISTINCT evidence.source_version_id
+     FROM evidence
+     JOIN validation_result result
+       ON result.validation_run_id = evidence.validation_run_id
+      AND evidence.evidence_id = ANY(result.evidence_ids)
+     WHERE evidence.project_id = $1
+       AND evidence.validation_run_id = $2
+       AND result.machine_status = 'passed'
+     ORDER BY evidence.source_version_id`,
+    [projectId, row.validation_run_id],
+  );
+  const validationInputResourceVersionIds = [
+    ...new Set([
+      row.approved_plan_resource_version_id,
+      ...validatedSources.rows.map((source) => source.source_version_id),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   const inputFingerprint = contentHash({
     validationApprovalId: row.validation_approval_id,
+    validationInputResourceVersionIds,
     workbookResourceVersionId: row.workbook_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     structureHash: row.structure_hash,
@@ -607,6 +660,7 @@ async function projectContext(
     sourceFilename: row.original_filename ?? "분석_workbook.xlsx",
     sourceSha256: row.sha256,
     priceSnapshotId: row.price_snapshot_id,
+    validationInputResourceVersionIds,
     currentPrice: row.close_price,
     tradingDate: row.trading_date,
     inputFingerprint,
@@ -780,7 +834,14 @@ async function ensureWorkbook(
         409,
         "VALUATION_PREREQUISITE_CHANGED",
         "선행 단계가 변경되었습니다. 최신 결과를 다시 불러와주세요.",
-        { meta: { resumeRoute: processRoute(projectId, "validation") } },
+        {
+          meta: {
+            resumeRoute: resumeRouteForBlocker({
+              projectId,
+              fallbackStage: "validation",
+            }),
+          },
+        },
       );
     }
     const metadataRefresh =
@@ -997,70 +1058,63 @@ async function invalidateValuationAndDownstream(
      WHERE project_id = $1 AND status <> 'revalidation_required'`,
     [context.projectId],
   );
-  await client.query(
+  const invalidatedApprovals = await client.query<{
+    resource_version_id: string;
+  }>(
     `UPDATE resource_version resource
      SET validity_status = 'revalidation_required',
          lifecycle_status = 'superseded'
      FROM valuation_approval approval
      WHERE approval.resource_version_id = resource.resource_version_id
        AND approval.project_id = $1
-       AND approval.status = 'approved'`,
+       AND approval.status = 'approved'
+     RETURNING resource.resource_version_id`,
     [context.projectId],
   );
+  await invalidateResourceDependents(client, {
+    projectId: context.projectId,
+    upstreamResourceVersionIds: invalidatedApprovals.rows.map(
+      (row) => row.resource_version_id,
+    ),
+  });
   await client.query(
     `UPDATE valuation_approval
      SET status = 'superseded'
      WHERE project_id = $1 AND status = 'approved'`,
     [context.projectId],
   );
-  await client.query(
-    `UPDATE stage_completion
-     SET validity_status = 'revalidation_required'
-     WHERE project_id = $1
-       AND stage_key IN ('valuation', 'report_outline')
-       AND validity_status = 'current'`,
-    [context.projectId],
-  );
-  await client.query(
-    `UPDATE project_stage_state
-     SET stage_status = 'in_progress', current_completion_id = NULL,
-         completed_at = NULL, invalidated_at = now(),
-         blocker_codes = ARRAY['VALUATION_REAPPROVAL_REQUIRED'],
-         updated_at = now()
-     WHERE project_id = $1 AND stage_key = 'valuation'
-       AND stage_status IN ('completed', 'revalidation_required')`,
-    [context.projectId],
-  );
-  await client.query(
-    `UPDATE project_stage_state
-     SET stage_status = 'revalidation_required',
-         current_completion_id = NULL, completed_at = NULL,
-         invalidated_at = now(),
-         blocker_codes = ARRAY['VALUATION_CHANGED'],
-         updated_at = now()
-     WHERE project_id = $1 AND stage_key = 'report_outline'
-       AND stage_status IN ('in_progress', 'completed', 'revalidation_required')`,
-    [context.projectId],
-  );
+  await invalidateProjectStages(client, {
+    projectId: context.projectId,
+    triggerVersionId: context.sourceWorkbookResourceVersionId,
+    startStageKey: "valuation",
+    reasonCode: reasonCodes.join("+"),
+    transitions: [
+      {
+        stageKey: "valuation",
+        stageStatus: "in_progress",
+        blockerCodes: ["VALUATION_REAPPROVAL_REQUIRED"],
+        clearCompletion: true,
+        eligibleStatuses: ["completed", "revalidation_required"],
+      },
+      {
+        stageKey: "report_outline",
+        stageStatus: "revalidation_required",
+        blockerCodes: ["VALUATION_CHANGED"],
+        clearCompletion: true,
+        eligibleStatuses: [
+          "in_progress",
+          "completed",
+          "revalidation_required",
+        ],
+      },
+    ],
+  });
   await client.query(
     `UPDATE project
      SET current_stage = 'valuation', row_version = row_version + 1,
          updated_at = now(), last_saved_at = now()
      WHERE project_id = $1 AND current_stage = 'report_outline'`,
     [context.projectId],
-  );
-  await client.query(
-    `INSERT INTO project_invalidation_event (
-       invalidation_id, project_id, trigger_version_id, start_stage_key,
-       reason_code, affected_stage_keys
-     ) VALUES ($1, $2, $3, 'valuation', $4, $5)`,
-    [
-      uuidv7(),
-      context.projectId,
-      context.sourceWorkbookResourceVersionId,
-      reasonCodes.join("+"),
-      ["valuation", "report_outline"],
-    ],
   );
 }
 
@@ -1797,7 +1851,14 @@ export async function updateValuationDraft(input: {
         409,
         "MAPPING_REVALIDATION_REQUIRED",
         "MappingSet과 Target PER 입력 구조를 다시 확인해주세요.",
-        { meta: { resumeRoute: processRoute(input.projectId, "files") } },
+        {
+          meta: {
+            resumeRoute: resumeRouteForBlocker({
+              projectId: input.projectId,
+              fallbackStage: "files",
+            }),
+          },
+        },
       );
     }
     const calculated = await calculateAndSave(client, {
@@ -2073,8 +2134,11 @@ export async function approveValuation(input: {
         "최신 Excel 계산을 다시 실행해주세요.",
       );
     }
-    const previous = await client.query<{ approval_version: string }>(
-      `SELECT approval_version FROM valuation_approval
+    const previous = await client.query<{
+      approval_version: string;
+      resource_version_id: string;
+    }>(
+      `SELECT approval_version, resource_version_id FROM valuation_approval
        WHERE project_id = $1 ORDER BY approval_version DESC LIMIT 1`,
       [input.projectId],
     );
@@ -2165,6 +2229,40 @@ export async function approveValuation(input: {
         context.inputFingerprint,
       ],
     );
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: previous.rows[0]
+        ? [previous.rows[0].resource_version_id]
+        : [],
+    });
+    await recordResourceDependencies(client, {
+      projectId: input.projectId,
+      dependencies: [
+        ...context.validationInputResourceVersionIds.map(
+          (upstreamResourceVersionId) => ({
+            upstreamResourceVersionId,
+            downstreamResourceVersionId: resourceVersionId,
+            dependencyKind: "validation_approval_input",
+          }),
+        ),
+        {
+          upstreamResourceVersionId:
+            context.sourceWorkbookResourceVersionId,
+          downstreamResourceVersionId: resourceVersionId,
+          dependencyKind: "workbook_analysis_to_valuation",
+        },
+        {
+          upstreamResourceVersionId: context.mappingSetResourceVersionId,
+          downstreamResourceVersionId: resourceVersionId,
+          dependencyKind: "mapping_set_to_valuation",
+        },
+        {
+          upstreamResourceVersionId: currentPriceSnapshotId,
+          downstreamResourceVersionId: resourceVersionId,
+          dependencyKind: "market_price_to_valuation",
+        },
+      ],
+    });
     await client.query(
       `UPDATE valuation_draft SET status = 'approved', updated_at = now()
        WHERE project_id = $1`,

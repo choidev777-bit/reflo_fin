@@ -43,6 +43,7 @@
     "results": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 1,
       "items": {
         "$ref": "#/$defs/ResultRef"
       }
@@ -50,7 +51,14 @@
     "artifacts": {
       "type": "array",
       "items": {
-        "$ref": "artifact-descriptor.schema.json"
+        "oneOf": [
+          {
+            "$ref": "artifact-descriptor.schema.json"
+          },
+          {
+            "$ref": "runtime-worker-result.schema.json#/$defs/RuntimeArtifactDescriptor"
+          }
+        ]
       }
     },
     "tool": {
@@ -72,7 +80,45 @@
       "then": {
         "properties": {
           "payload": {
-            "$ref": "file-inspection-result.schema.json"
+            "$ref": "runtime-worker-result.schema.json#/$defs/FileScanPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "file_inspection"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "runtime-worker-result.schema.json#/$defs/FileInspectionPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "research_validation"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "runtime-worker-result.schema.json#/$defs/ResearchValidationPayload"
           }
         }
       }
@@ -138,11 +184,7 @@
       "if": {
         "properties": {
           "resultType": {
-            "enum": [
-              "source_collection",
-              "research_candidates",
-              "news_discovery"
-            ]
+            "const": "source_collection"
           }
         },
         "required": [
@@ -152,7 +194,45 @@
       "then": {
         "properties": {
           "payload": {
-            "$ref": "research-result.schema.json"
+            "$ref": "research-result.schema.json#/$defs/SourceCollectionResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "research_candidates"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "research-result.schema.json#/$defs/ResearchCandidateResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "resultType": {
+            "const": "news_discovery"
+          }
+        },
+        "required": [
+          "resultType"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "research-result.schema.json#/$defs/NewsDiscoveryResult"
           }
         }
       }
@@ -392,12 +472,14 @@
       "type": "string",
       "enum": [
         "file_scan",
+        "file_inspection",
         "pdf_template_ir",
         "workbook_analysis",
         "mapping_set",
         "source_collection",
         "research_candidates",
         "news_discovery",
+        "research_validation",
         "evidence_validation",
         "hypothesis_questions",
         "valuation_proposal",

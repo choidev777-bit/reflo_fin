@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
-import { processRoute, STAGES } from "../../domain/project";
+import { processRoute, STAGES, type StageKey } from "../../domain/project";
+import { blockerMeta } from "../../domain/stage-blocker-policy";
+import type {
+  WorkerResultCommitMetadata,
+  WorkerResultCommitOutcome,
+} from "../../domain/worker-result-contract";
 import { ApiError } from "../../http/api-error";
 import type { TransactionClient } from "../database/transaction";
 import { withTransaction } from "../database/transaction";
@@ -12,6 +17,19 @@ import {
   putImmutableObject,
   verifyUploadedObject,
 } from "../object-storage/s3";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+  recordResourceDependencies,
+  type StageInvalidationTransition,
+} from "../services/dependency-invalidator";
+import {
+  decidePinnedWorkflowJobCommit,
+  lateResultRequiresAuditOnly,
+  lockWorkflowJobLineage,
+  pinWorkflowJobSourceSnapshot,
+  recordLateWorkflowJobResult,
+} from "../services/source-snapshot-service";
 
 export type FileRole = "previous_report_pdf" | "analysis_workbook";
 export type JobStatus =
@@ -21,6 +39,106 @@ export type JobStatus =
   | "failed"
   | "cancel_requested"
   | "cancelled";
+
+const FILE_DEPENDENT_STAGES: readonly StageKey[] = [
+  "hypothesis",
+  "research_plan",
+  "validation",
+  "valuation",
+  "report_outline",
+];
+
+export function fileStageInvalidationTransitions(
+  states: readonly {
+    stageKey: StageKey;
+    stageStatus: string;
+    blockerCodes?: readonly string[];
+  }[],
+): StageInvalidationTransition[] {
+  const filesNeedsReopen = states.some(
+    (state) =>
+      state.stageKey === "files" &&
+      ["completed", "revalidation_required"].includes(state.stageStatus),
+  );
+  const progressedDownstream = states.filter(
+    (state) =>
+      FILE_DEPENDENT_STAGES.includes(state.stageKey) &&
+      (["in_progress", "completed"].includes(state.stageStatus) ||
+        (state.stageStatus === "revalidation_required" &&
+          !(state.blockerCodes ?? []).includes("FILES_CHANGED")) ||
+        (state.stageStatus === "blocked" &&
+          !(state.blockerCodes ?? []).includes("PREREQUISITE_INCOMPLETE"))),
+  );
+  return [
+    ...(filesNeedsReopen
+      ? [
+          {
+            stageKey: "files" as const,
+            stageStatus: "in_progress" as const,
+            blockerCodes: [] as const,
+            clearCompletion: true,
+            eligibleStatuses: [
+              "completed",
+              "revalidation_required",
+            ] as const,
+          },
+        ]
+      : []),
+    ...progressedDownstream.map((state) => ({
+      stageKey: state.stageKey,
+      stageStatus: "revalidation_required" as const,
+      blockerCodes: ["FILES_CHANGED"] as const,
+      eligibleStatuses: [
+        "in_progress",
+        "completed",
+        "revalidation_required",
+        "blocked",
+      ] as const,
+    })),
+  ];
+}
+
+async function invalidateFilesStagesIfProgressed(
+  client: TransactionClient,
+  input: { projectId: string; triggerVersionId: string },
+): Promise<void> {
+  const states = await client.query<{
+    stage_key: StageKey;
+    stage_status: string;
+    blocker_codes: string[];
+  }>(
+    `SELECT stage_key, stage_status, blocker_codes
+     FROM project_stage_state
+     WHERE project_id = $1
+       AND stage_key = ANY($2::text[])`,
+    [input.projectId, ["files", ...FILE_DEPENDENT_STAGES]],
+  );
+  const transitions = fileStageInvalidationTransitions(
+    states.rows.map((row) => ({
+      stageKey: row.stage_key,
+      stageStatus: row.stage_status,
+      blockerCodes: row.blocker_codes,
+    })),
+  );
+  if (transitions.length === 0) return;
+
+  await invalidateProjectStages(client, {
+    projectId: input.projectId,
+    triggerVersionId: input.triggerVersionId,
+    startStageKey: "files",
+    reasonCode: "FILES_CHANGED",
+    transitions,
+    markProjectRevalidation: true,
+  });
+  await client.query(
+    `UPDATE project
+     SET current_stage = 'files', row_version = row_version + 1,
+         updated_at = now()
+     WHERE project_id = $1
+       AND current_stage <> 'files'`,
+    [input.projectId],
+  );
+}
 
 const ROLE_CONFIG: Record<
   FileRole,
@@ -57,6 +175,38 @@ export type ArtifactDescriptor = {
   byteSize: number;
   mediaType: string;
 };
+
+export type FileResultCommitAction =
+  | "publish"
+  | "store_obsolete"
+  | "ignore_duplicate";
+
+export function fileResultCommitAction(input: {
+  decision: "current" | "obsolete" | "duplicate";
+}): FileResultCommitAction {
+  if (input.decision === "duplicate") return "ignore_duplicate";
+  return input.decision === "current" ? "publish" : "store_obsolete";
+}
+
+export function analysisVersionPublication(
+  action: Extract<FileResultCommitAction, "publish" | "store_obsolete">,
+): {
+  lifecycleStatus: "approved" | "archived";
+  validityStatus: "current" | "obsolete";
+  publishCurrent: boolean;
+} {
+  return action === "publish"
+    ? {
+        lifecycleStatus: "approved",
+        validityStatus: "current",
+        publishCurrent: true,
+      }
+    : {
+        lifecycleStatus: "archived",
+        validityStatus: "obsolete",
+        publishCurrent: false,
+      };
+}
 
 function validateIdempotencyKey(value: string | null): string {
   const key = value?.trim() ?? "";
@@ -205,7 +355,7 @@ async function assertFilesPrerequisite(
       409,
       "FILES_PREREQUISITE_INCOMPLETE",
       "프로젝트 설정을 먼저 완료해 주세요.",
-      { meta: { requiredStage: "setup", resumeRoute: processRoute(projectId, "setup") } },
+      { meta: blockerMeta({ projectId, requiredStage: "setup" }) },
     );
   }
 }
@@ -615,6 +765,7 @@ export async function completeFileUpload(input: {
        VALUES ($1, 'uploaded_file', $2)`,
       [jobId, fileVersionId],
     );
+    await pinWorkflowJobSourceSnapshot(client, { jobId });
     const payload = {
       workflowType: "fileIngestWorkflow",
       jobId,
@@ -1272,13 +1423,14 @@ export async function createFileInspection(input: {
     if (replay) return replay;
     await getOwnedProject(client, input.projectId, input.userId);
     const setupResult = await client.query<{
+      resource_version_id: string;
       company_master_id: string;
       ticker: string;
       exchange_code: "KOSPI" | "KOSDAQ" | "KONEX" | "KRX";
       cutoff_date: string;
     }>(
-      `SELECT psv.company_master_id, cm.ticker, cm.exchange_code,
-         psv.cutoff_date::text
+      `SELECT rv.resource_version_id, psv.company_master_id, cm.ticker,
+         cm.exchange_code, psv.cutoff_date::text
        FROM versioned_resource vr
        JOIN resource_version rv ON rv.resource_id = vr.resource_id
        JOIN project_setup_version psv
@@ -1343,9 +1495,15 @@ export async function createFileInspection(input: {
     );
     await client.query(
       `INSERT INTO workflow_job_input (job_id, input_role, resource_version_id)
-       VALUES ($1, 'pdf_file', $2), ($1, 'workbook_file', $3)`,
-      [jobId, pdf.fileVersionId, workbook.fileVersionId],
+       VALUES ($1, 'setup', $2), ($1, 'pdf_file', $3), ($1, 'workbook_file', $4)`,
+      [
+        jobId,
+        setup.resource_version_id,
+        pdf.fileVersionId,
+        workbook.fileVersionId,
+      ],
     );
+    await pinWorkflowJobSourceSnapshot(client, { jobId });
     await client.query(
       `INSERT INTO file_inspection (
         inspection_id, project_id, job_id, pdf_file_version_id,
@@ -1365,6 +1523,7 @@ export async function createFileInspection(input: {
       jobAttempt: 1,
       projectId: input.projectId,
       inspectionId,
+      setupResourceVersionId: setup.resource_version_id,
       pdf,
       workbook,
       marketData: {
@@ -1700,6 +1859,12 @@ export async function recordWorkerProgress(
       throw new ApiError(409, "JOB_ATTEMPT_MISMATCH", "작업 시도가 일치하지 않습니다.");
     }
     if (["succeeded", "failed", "cancelled"].includes(job.operation_status)) return;
+    if (
+      job.operation_status === "cancel_requested" &&
+      command.operationStatus !== "cancelled"
+    ) {
+      return;
+    }
     if (command.sequence <= Number(job.progress_sequence)) return;
     const operationStatus =
       command.operationStatus === "cancelled" ? "cancelled" : "running";
@@ -1869,11 +2034,75 @@ export function buildMappingRevisionBinding(
   entry: MappingRevisionEntry,
   candidate: MappingRevisionEntry["candidates"][number],
 ) {
+  const reasonCodes = [...new Set(candidate.reasonCodes)];
+  const detectionConfidence = Number.isFinite(candidate.score)
+    ? Math.max(0, Math.min(1, candidate.score))
+    : 0;
+  const review = {
+    status: "approved",
+    reasonCodes,
+  };
   if (entry.kind === "chart") {
     const definition = candidate.chartDefinition;
     const categories = recordValue(definition?.categories);
+    const fallbackChartType = Array.isArray(definition?.chartTypes)
+      ? definition.chartTypes.find(
+          (value) =>
+            typeof value === "string" &&
+            /^[a-z][a-z0-9_]{1,99}$/.test(value),
+        )
+      : null;
     const series = Array.isArray(definition?.series)
-      ? definition.series.filter((item) => recordValue(item))
+      ? definition.series.flatMap((item) => {
+          const value = recordValue(item);
+          const source = recordValue(value?.source);
+          if (
+            !value ||
+            !source ||
+            typeof value.seriesId !== "string" ||
+            value.seriesId.length === 0
+          ) {
+            return [];
+          }
+          const axis =
+            value.axis === "secondary" ? "secondary" : "primary";
+          const role = [
+            "actual",
+            "forecast",
+            "target",
+            "band_upper",
+            "band_lower",
+            "benchmark",
+          ].includes(String(value.role))
+            ? String(value.role)
+            : "actual";
+          const chartType =
+            typeof value.chartType === "string" &&
+            /^[a-z][a-z0-9_]{1,99}$/.test(value.chartType)
+              ? value.chartType
+              : (fallbackChartType ?? "line");
+          const estimateType = [
+            "actual",
+            "forecast",
+            "mixed",
+            "not_applicable",
+          ].includes(String(value.estimateType))
+            ? String(value.estimateType)
+            : "mixed";
+          return [
+            {
+              seriesId: value.seriesId,
+              ...(typeof value.label === "string"
+                ? { label: value.label.slice(0, 500) }
+                : {}),
+              source,
+              axis,
+              role,
+              chartType,
+              estimateType,
+            },
+          ];
+        })
       : [];
     if (!categories || series.length === 0) {
       throw new ApiError(
@@ -1889,6 +2118,12 @@ export function buildMappingRevisionBinding(
       categories,
       series,
       status: "confirmed",
+      purpose: "report_output",
+      semanticKey: { metric: entry.metric },
+      estimateType: "mixed",
+      detectionConfidence,
+      reasonCodes,
+      review,
     };
   }
   if (entry.kind === "table") {
@@ -1906,6 +2141,12 @@ export function buildMappingRevisionBinding(
       unitRows: [],
       display: {},
       status: "confirmed",
+      purpose: "report_output",
+      semanticKey: { metric: entry.metric },
+      estimateType: "mixed",
+      detectionConfidence,
+      reasonCodes,
+      review,
     };
   }
   return {
@@ -1917,6 +2158,12 @@ export function buildMappingRevisionBinding(
     verificationSources: [],
     display: {},
     status: "confirmed",
+    purpose: "report_output",
+    semanticKey: { metric: entry.metric },
+    estimateType: "not_applicable",
+    detectionConfidence,
+    reasonCodes,
+    review,
   };
 }
 
@@ -2234,6 +2481,21 @@ export async function createMappingRevision(input: {
         mappingStatus === "confirmed" ? input.userId : null,
       ],
     );
+    await recordResourceDependencies(client, {
+      projectId: input.projectId,
+      dependencies: [
+        {
+          upstreamResourceVersionId: snapshot.template_ir_version_id,
+          downstreamResourceVersionId: created.resourceVersionId,
+          dependencyKind: "template_ir_to_mapping_set",
+        },
+        {
+          upstreamResourceVersionId: snapshot.workbook_version_id,
+          downstreamResourceVersionId: created.resourceVersionId,
+          dependencyKind: "workbook_analysis_to_mapping_set",
+        },
+      ],
+    });
     for (const entry of revisedEntries) {
       const entryId = uuidv7();
       const selected = entry.candidates.find(
@@ -2367,6 +2629,10 @@ export async function createMappingRevision(input: {
        WHERE job_id = $1 AND output_role = 'mapping_set'`,
       [snapshot.job_id, created.resourceVersionId],
     );
+    await invalidateFilesStagesIfProgressed(client, {
+      projectId: input.projectId,
+      triggerVersionId: created.resourceVersionId,
+    });
     const body = {
       mappingSet: {
         versionId: created.resourceVersionId,
@@ -2411,31 +2677,119 @@ type FileScanPayload = {
   inspectedAt: string;
 };
 
+function workerResultSummary(metadata: WorkerResultCommitMetadata) {
+  return {
+    hash: metadata.resultHash,
+    sequence: metadata.sequence,
+    inputVersionIds: metadata.inputVersionIds,
+    attempt: metadata.attempt,
+  };
+}
+
+async function recordLateFileResult(
+  client: TransactionClient,
+  input: {
+    jobId: string;
+    metadata: WorkerResultCommitMetadata;
+    eventType: "worker_result_obsolete" | "worker_result_late_attempt";
+    reason: string;
+  },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO workflow_job_event (
+       job_event_id, job_id, sequence_no, event_type, operation_status,
+       phase, metadata_json, occurred_at
+     )
+     SELECT $1, job.job_id,
+       9000000000000000000 + COALESCE((
+         SELECT COUNT(*)
+         FROM workflow_job_event event
+         WHERE event.job_id = job.job_id
+           AND event.sequence_no >= 9000000000000000000
+       ), 0) + 1,
+       $3, job.operation_status, job.current_phase, $4::jsonb, now()
+     FROM workflow_job job
+     WHERE job.job_id = $2
+       AND NOT EXISTS (
+         SELECT 1
+         FROM workflow_job_event event
+         WHERE event.job_id = job.job_id
+           AND event.metadata_json #>> '{workerResult,hash}' = $5
+           AND event.metadata_json #>> '{workerResult,attempt}' = $6::text
+           AND event.metadata_json #>> '{workerResult,sequence}' = $7::text
+       )`,
+    [
+      uuidv7(),
+      input.jobId,
+      input.eventType,
+      JSON.stringify({
+        reason: input.reason,
+        workerResult: workerResultSummary(input.metadata),
+      }),
+      input.metadata.resultHash,
+      input.metadata.attempt,
+      input.metadata.sequence,
+    ],
+  );
+}
+
 export async function commitFileScanResult(
   jobId: string,
   payload: FileScanPayload,
-): Promise<void> {
-  await withTransaction(async (client) => {
+  metadata: WorkerResultCommitMetadata,
+): Promise<WorkerResultCommitOutcome> {
+  return withTransaction(async (client) => {
+    await lockWorkflowJobLineage(client, { jobId });
     const result = await client.query<{
       artifact_id: string;
       resource_version_id: string;
       upload_session_id: string;
       project_id: string;
       file_role: FileRole;
+      operation_status: JobStatus;
     }>(
       `SELECT pf.artifact_id, pf.resource_version_id, us.upload_session_id,
-         us.project_id, pf.file_role
-       FROM workflow_job_input wi
-       JOIN project_file_version pf ON pf.resource_version_id = wi.resource_version_id
+         us.project_id, pf.file_role, job.operation_status
+       FROM workflow_job job
+       JOIN workflow_job_input wi ON wi.job_id = job.job_id
+       JOIN project_file_version pf
+         ON pf.resource_version_id = wi.resource_version_id
        JOIN upload_session us ON us.file_version_id = pf.resource_version_id
-       WHERE wi.job_id = $1 AND wi.input_role = 'uploaded_file'
-       FOR UPDATE OF pf, us`,
+       WHERE job.job_id = $1 AND wi.input_role = 'uploaded_file'
+       FOR UPDATE OF job, pf, us`,
       [jobId],
     );
     const row = result.rows[0];
     if (!row) {
       throw new ApiError(404, "JOB_NOT_FOUND", "작업 입력을 찾을 수 없습니다.");
     }
+    const decision = await decidePinnedWorkflowJobCommit(client, {
+      jobId,
+      attempt: metadata.attempt,
+      sequence: metadata.sequence,
+      resultInputVersionIds: metadata.inputVersionIds,
+      resultHash: metadata.resultHash,
+    });
+    if (decision.decision === "duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+    if (lateResultRequiresAuditOnly(decision)) {
+      await recordLateWorkflowJobResult(client, {
+        jobId,
+        metadata,
+        reason: decision.attemptMatches
+          ? `WORKFLOW_JOB_${decision.operationStatus.toUpperCase()}`
+          : "WORKFLOW_JOB_ATTEMPT_MISMATCH",
+      });
+      return { applied: false, disposition: "obsolete" };
+    }
+    const action = fileResultCommitAction({
+      decision: decision.decision,
+    });
+    if (action === "ignore_duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+
     const passed = payload.supportStatus === "accepted";
     await client.query(
       `INSERT INTO artifact_scan_result (
@@ -2462,17 +2816,32 @@ export async function commitFileScanResult(
         }),
       ],
     );
-    if (passed) {
-      await client.query(
+    if (action === "publish" && passed) {
+      const superseded = await client.query<{
+        resource_version_id: string;
+      }>(
         `UPDATE resource_version
          SET lifecycle_status = 'superseded'
          WHERE resource_id = (
            SELECT resource_id FROM resource_version WHERE resource_version_id = $1
          )
            AND resource_version_id <> $1
-           AND lifecycle_status = 'approved'`,
+           AND lifecycle_status = 'approved'
+         RETURNING resource_version_id`,
         [row.resource_version_id],
       );
+      await invalidateResourceDependents(client, {
+        projectId: row.project_id,
+        upstreamResourceVersionIds: superseded.rows.map(
+          (version) => version.resource_version_id,
+        ),
+      });
+      if (superseded.rows.length > 0) {
+        await invalidateFilesStagesIfProgressed(client, {
+          projectId: row.project_id,
+          triggerVersionId: row.resource_version_id,
+        });
+      }
       await client.query(
         `UPDATE project_file_version pf
          SET inspection_status = 'superseded'
@@ -2485,26 +2854,39 @@ export async function commitFileScanResult(
         [row.resource_version_id],
       );
       await client.query(
-        `UPDATE resource_version SET lifecycle_status = 'approved'
+        `UPDATE resource_version
+         SET lifecycle_status = 'approved', validity_status = 'current'
          WHERE resource_version_id = $1`,
         [row.resource_version_id],
       );
     } else {
       await client.query(
-        `UPDATE resource_version SET lifecycle_status = 'archived'
+        `UPDATE resource_version
+         SET lifecycle_status = 'archived',
+             validity_status = CASE
+               WHEN $2::boolean THEN 'obsolete'
+               ELSE validity_status
+             END
          WHERE resource_version_id = $1`,
-        [row.resource_version_id],
+        [row.resource_version_id, action === "store_obsolete"],
       );
     }
     await client.query(
       `UPDATE artifact SET storage_status = $2 WHERE artifact_id = $1`,
-      [row.artifact_id, passed ? "accepted" : "quarantined"],
+      [
+        row.artifact_id,
+        action === "publish" && passed ? "accepted" : "quarantined",
+      ],
     );
     await client.query(
       `UPDATE project_file_version
        SET inspection_status = $2, detected_media_type = $3
        WHERE resource_version_id = $1`,
-      [row.resource_version_id, passed ? "accepted" : "rejected", payload.detectedMediaType],
+      [
+        row.resource_version_id,
+        action === "publish" && passed ? "accepted" : "rejected",
+        payload.detectedMediaType,
+      ],
     );
     await client.query(
       `UPDATE upload_session
@@ -2512,18 +2894,51 @@ export async function commitFileScanResult(
        WHERE upload_session_id = $1`,
       [
         row.upload_session_id,
-        passed ? "accepted" : "rejected",
-        passed ? null : payload.rejectionCodes[0] ?? "FILE_REJECTED",
+        action === "publish" && passed ? "accepted" : "rejected",
+        action === "store_obsolete"
+          ? "SOURCE_SNAPSHOT_OBSOLETE"
+          : passed
+            ? null
+            : payload.rejectionCodes[0] ?? "FILE_REJECTED",
       ],
     );
+    if (action === "store_obsolete") {
+      await recordLateFileResult(client, {
+        jobId,
+        metadata,
+        eventType: "worker_result_obsolete",
+        reason: "SOURCE_SNAPSHOT_OBSOLETE",
+      });
+    }
+    const outcome =
+      action === "store_obsolete"
+        ? "obsolete"
+        : passed
+          ? "accepted"
+          : "rejected";
     await client.query(
       `UPDATE workflow_job
-       SET operation_status = 'succeeded', current_phase = 'complete',
-           progress_percent = 100, finished_at = now(), heartbeat_at = now(),
-           result_summary_json = $2::jsonb
+       SET operation_status = 'succeeded', current_phase = $4,
+           progress_percent = 100,
+           progress_sequence = GREATEST(progress_sequence, $5),
+           finished_at = now(), heartbeat_at = now(),
+           validity_status = $2, result_summary_json = $3::jsonb
        WHERE job_id = $1`,
-      [jobId, JSON.stringify({ outcome: passed ? "accepted" : "rejected" })],
+      [
+        jobId,
+        action === "publish" ? "current" : "obsolete",
+        JSON.stringify({
+          outcome,
+          workerResult: workerResultSummary(metadata),
+        }),
+        action === "publish" ? "complete" : "obsolete",
+        metadata.sequence,
+      ],
     );
+    return {
+      applied: action === "publish",
+      disposition: action === "publish" ? "current" : "obsolete",
+    };
   });
 }
 
@@ -2672,6 +3087,8 @@ async function createAnalysisVersion(
     resourceKey: string;
     payload: unknown;
     artifact: ArtifactDescriptor;
+    inputFingerprint?: string;
+    publication?: ReturnType<typeof analysisVersionPublication>;
   },
 ): Promise<{
   resourceVersionId: string;
@@ -2687,12 +3104,23 @@ async function createAnalysisVersion(
   const resourceVersionId = uuidv7();
   const artifactId = uuidv7();
   const versionNo = resource.versionNo + 1;
-  await client.query(
-    `UPDATE resource_version
-     SET lifecycle_status = 'superseded'
-     WHERE resource_id = $1 AND lifecycle_status = 'approved'`,
-    [resource.resourceId],
-  );
+  const publication =
+    input.publication ?? analysisVersionPublication("publish");
+  if (publication.publishCurrent) {
+    const superseded = await client.query<{ resource_version_id: string }>(
+      `UPDATE resource_version
+       SET lifecycle_status = 'superseded'
+       WHERE resource_id = $1 AND lifecycle_status = 'approved'
+       RETURNING resource_version_id`,
+      [resource.resourceId],
+    );
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: superseded.rows.map(
+        (row) => row.resource_version_id,
+      ),
+    });
+  }
   await client.query(
     `INSERT INTO artifact (
       artifact_id, project_id, artifact_kind, storage_status, bucket_name,
@@ -2715,9 +3143,19 @@ async function createAnalysisVersion(
   await client.query(
     `INSERT INTO resource_version (
       resource_version_id, resource_id, version_no, lifecycle_status,
-      input_fingerprint, content_hash, created_by_user_id, created_by_actor_type
-    ) VALUES ($1, $2, $3, 'approved', $4, $4, $5, 'system')`,
-    [resourceVersionId, resource.resourceId, versionNo, hash, input.userId],
+      validity_status, input_fingerprint, content_hash, created_by_user_id,
+      created_by_actor_type
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'system')`,
+    [
+      resourceVersionId,
+      resource.resourceId,
+      versionNo,
+      publication.lifecycleStatus,
+      publication.validityStatus,
+      input.inputFingerprint ?? hash,
+      hash,
+      input.userId,
+    ],
   );
   await client.query(
     `INSERT INTO resource_artifact (resource_version_id, artifact_role, artifact_id)
@@ -2730,27 +3168,59 @@ async function createAnalysisVersion(
 export async function commitInspectionResult(
   jobId: string,
   payload: InspectionResultPayload,
-): Promise<void> {
-  await withTransaction(async (client) => {
+  metadata: WorkerResultCommitMetadata,
+): Promise<WorkerResultCommitOutcome> {
+  return withTransaction(async (client) => {
+    await lockWorkflowJobLineage(client, { jobId });
     const result = await client.query<{
       project_id: string;
       requested_by_user_id: string | null;
       inspection_id: string;
+      setup_resource_version_id: string;
       pdf_file_version_id: string;
       workbook_file_version_id: string;
       operation_status: JobStatus;
     }>(
       `SELECT wj.project_id, wj.requested_by_user_id, wj.operation_status,
-         fi.inspection_id, fi.pdf_file_version_id, fi.workbook_file_version_id
+         fi.inspection_id, setup.resource_version_id AS setup_resource_version_id,
+         fi.pdf_file_version_id, fi.workbook_file_version_id
        FROM workflow_job wj
        JOIN file_inspection fi ON fi.job_id = wj.job_id
+       JOIN workflow_job_input setup
+         ON setup.job_id = wj.job_id AND setup.input_role = 'setup'
        WHERE wj.job_id = $1
        FOR UPDATE OF wj, fi`,
       [jobId],
     );
     const job = result.rows[0];
     if (!job) throw new ApiError(404, "JOB_NOT_FOUND", "검사 작업을 찾을 수 없습니다.");
-    if (job.operation_status === "succeeded") return;
+    const decision = await decidePinnedWorkflowJobCommit(client, {
+      jobId,
+      attempt: metadata.attempt,
+      sequence: metadata.sequence,
+      resultInputVersionIds: metadata.inputVersionIds,
+      resultHash: metadata.resultHash,
+    });
+    if (decision.decision === "duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+    if (lateResultRequiresAuditOnly(decision)) {
+      await recordLateWorkflowJobResult(client, {
+        jobId,
+        metadata,
+        reason: decision.attemptMatches
+          ? `WORKFLOW_JOB_${decision.operationStatus.toUpperCase()}`
+          : "WORKFLOW_JOB_ATTEMPT_MISMATCH",
+      });
+      return { applied: false, disposition: "obsolete" };
+    }
+    const action = fileResultCommitAction({
+      decision: decision.decision,
+    });
+    if (action === "ignore_duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+    const publication = analysisVersionPublication(action);
     if (job.operation_status === "cancel_requested" || job.operation_status === "cancelled") {
       throw new ApiError(409, "JOB_TERMINAL", "취소된 작업 결과는 반영할 수 없습니다.");
     }
@@ -2761,6 +3231,8 @@ export async function commitInspectionResult(
       resourceKey: "main",
       payload: payload.pdf.templateIr ?? payload.pdf.summary,
       artifact: payload.pdf.artifact,
+      inputFingerprint: decision.pinnedFingerprint,
+      publication,
     });
     const workbook = await createAnalysisVersion(client, {
       projectId: job.project_id,
@@ -2769,6 +3241,8 @@ export async function commitInspectionResult(
       resourceKey: "main",
       payload: payload.workbook.workbookAnalysis ?? payload.workbook.summary,
       artifact: payload.workbook.artifact,
+      inputFingerprint: decision.pinnedFingerprint,
+      publication,
     });
     const marketPrice = await createAnalysisVersion(client, {
       projectId: job.project_id,
@@ -2777,6 +3251,8 @@ export async function commitInspectionResult(
       resourceKey: "krx-close",
       payload: payload.marketPrice,
       artifact: payload.marketPrice.artifact,
+      inputFingerprint: decision.pinnedFingerprint,
+      publication,
     });
     const mapping = await createAnalysisVersion(client, {
       projectId: job.project_id,
@@ -2788,6 +3264,48 @@ export async function commitInspectionResult(
         issues: payload.mapping.issues,
       },
       artifact: payload.mapping.artifact,
+      inputFingerprint: decision.pinnedFingerprint,
+      publication,
+    });
+    await recordResourceDependencies(client, {
+      projectId: job.project_id,
+      dependencies: [
+        {
+          upstreamResourceVersionId: job.setup_resource_version_id,
+          downstreamResourceVersionId: pdf.resourceVersionId,
+          dependencyKind: "setup_to_template_ir",
+        },
+        {
+          upstreamResourceVersionId: job.pdf_file_version_id,
+          downstreamResourceVersionId: pdf.resourceVersionId,
+          dependencyKind: "source_pdf_to_template_ir",
+        },
+        {
+          upstreamResourceVersionId: job.setup_resource_version_id,
+          downstreamResourceVersionId: workbook.resourceVersionId,
+          dependencyKind: "setup_to_workbook_analysis",
+        },
+        {
+          upstreamResourceVersionId: job.workbook_file_version_id,
+          downstreamResourceVersionId: workbook.resourceVersionId,
+          dependencyKind: "source_workbook_to_workbook_analysis",
+        },
+        {
+          upstreamResourceVersionId: job.setup_resource_version_id,
+          downstreamResourceVersionId: marketPrice.resourceVersionId,
+          dependencyKind: "setup_to_market_price",
+        },
+        {
+          upstreamResourceVersionId: pdf.resourceVersionId,
+          downstreamResourceVersionId: mapping.resourceVersionId,
+          dependencyKind: "template_ir_to_mapping_set",
+        },
+        {
+          upstreamResourceVersionId: workbook.resourceVersionId,
+          downstreamResourceVersionId: mapping.resourceVersionId,
+          dependencyKind: "workbook_analysis_to_mapping_set",
+        },
+      ],
     });
     await client.query(
       `INSERT INTO template_ir_version (
@@ -3002,7 +3520,8 @@ export async function commitInspectionResult(
       payload.workbook.compatible &&
       payload.mapping.status === "confirmed" &&
       !issues.some((issue) => issue.severity === "blocking");
-    await client.query(
+    if (publication.publishCurrent) {
+      await client.query(
       `UPDATE file_inspection
        SET outcome = $2, issues_json = $3::jsonb,
            template_version_no = $4, workbook_version_no = $5,
@@ -3025,7 +3544,26 @@ export async function commitInspectionResult(
         payload.mapping.status,
         marketPrice.resourceVersionId,
       ],
-    );
+      );
+    } else {
+      await client.query(
+        `UPDATE file_inspection
+         SET outcome = 'blocked', issues_json = $2::jsonb,
+             mapping_status = 'blocked', completed_at = now()
+         WHERE job_id = $1`,
+        [
+          jobId,
+          JSON.stringify([
+            ...issues,
+            {
+              code: "SOURCE_SNAPSHOT_OBSOLETE",
+              severity: "blocking",
+              message: "검사 중 입력 파일 또는 설정이 변경되었습니다.",
+            },
+          ]),
+        ],
+      );
+    }
     await client.query(
       `INSERT INTO workflow_job_output (job_id, output_role, resource_version_id)
        VALUES
@@ -3041,53 +3579,161 @@ export async function commitInspectionResult(
         marketPrice.resourceVersionId,
       ],
     );
+    if (publication.publishCurrent) {
+      await invalidateFilesStagesIfProgressed(client, {
+        projectId: job.project_id,
+        triggerVersionId: mapping.resourceVersionId,
+      });
+    }
+    if (!publication.publishCurrent) {
+      await recordLateFileResult(client, {
+        jobId,
+        metadata,
+        eventType: "worker_result_obsolete",
+        reason: "SOURCE_SNAPSHOT_OBSOLETE",
+      });
+    }
+    const outcome = publication.publishCurrent
+      ? passed
+        ? "passed"
+        : "blocked"
+      : "obsolete";
     await client.query(
       `UPDATE workflow_job
-       SET operation_status = 'succeeded', current_phase = 'complete',
-           progress_percent = 100, heartbeat_at = now(), finished_at = now(),
-           retryable = false, result_summary_json = $2::jsonb
+       SET operation_status = 'succeeded', current_phase = $4,
+           progress_percent = 100,
+           progress_sequence = GREATEST(progress_sequence, $5),
+           heartbeat_at = now(), finished_at = now(),
+           retryable = false, validity_status = $2,
+           result_summary_json = $3::jsonb
        WHERE job_id = $1`,
-      [jobId, JSON.stringify({ outcome: passed ? "passed" : "blocked" })],
+      [
+        jobId,
+        publication.publishCurrent ? "current" : "obsolete",
+        JSON.stringify({
+          outcome,
+          workerResult: workerResultSummary(metadata),
+        }),
+        publication.publishCurrent ? "complete" : "obsolete",
+        metadata.sequence,
+      ],
     );
+    return {
+      applied: publication.publishCurrent,
+      disposition: publication.publishCurrent ? "current" : "obsolete",
+    };
   });
 }
 
 export async function failWorkerJob(
   jobId: string,
-  input: { errorCode: string; message: string; retryable: boolean },
+  input: {
+    attempt: number;
+    errorCode: string;
+    message: string;
+    retryable: boolean;
+  },
 ): Promise<void> {
   await withTransaction(async (client) => {
+    await lockWorkflowJobLineage(client, { jobId });
     const job = await client.query<{
       project_id: string;
       job_type: string;
+      attempt: number;
+      operation_status: JobStatus;
     }>(
-      `SELECT project_id, job_type
+      `SELECT project_id, job_type, attempt, operation_status
        FROM workflow_job
        WHERE job_id = $1
        FOR UPDATE`,
       [jobId],
     );
-    await client.query(
+    const current = job.rows[0];
+    if (!current) {
+      throw new ApiError(404, "JOB_NOT_FOUND", "작업을 찾을 수 없습니다.");
+    }
+    if (
+      current.attempt !== input.attempt ||
+      !["queued", "running"].includes(current.operation_status)
+    ) {
+      await client.query(
+        `INSERT INTO workflow_job_event (
+           job_event_id, job_id, sequence_no, event_type, operation_status,
+           phase, error_code, metadata_json, occurred_at
+         )
+         SELECT $1, job.job_id,
+           9000000000000000000 + COALESCE((
+             SELECT COUNT(*)
+             FROM workflow_job_event event
+             WHERE event.job_id = job.job_id
+               AND event.sequence_no >= 9000000000000000000
+           ), 0) + 1,
+           CASE
+             WHEN job.attempt <> $3 THEN 'worker_terminal_late_attempt'
+             ELSE 'worker_terminal_ignored_state'
+           END,
+           job.operation_status, job.current_phase, $4, $5::jsonb, now()
+         FROM workflow_job job
+         WHERE job.job_id = $2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM workflow_job_event event
+             WHERE event.job_id = job.job_id
+               AND event.event_type = CASE
+                 WHEN job.attempt <> $3 THEN 'worker_terminal_late_attempt'
+                 ELSE 'worker_terminal_ignored_state'
+               END
+               AND event.metadata_json #>> '{workerTerminal,attempt}' = $3::text
+               AND event.metadata_json #>> '{workerTerminal,errorCode}' = $4
+           )`,
+        [
+          uuidv7(),
+          jobId,
+          input.attempt,
+          input.errorCode,
+          JSON.stringify({
+            workerTerminal: {
+              attempt: input.attempt,
+              errorCode: input.errorCode,
+              retryable: input.retryable,
+            },
+          }),
+        ],
+      );
+      return;
+    }
+    const updated = await client.query(
       `UPDATE workflow_job
        SET operation_status = 'failed', current_phase = 'failed',
            retryable = $2, error_code = $3, error_summary = $4,
            heartbeat_at = now(), finished_at = now()
        WHERE job_id = $1
-         AND operation_status NOT IN ('succeeded', 'cancelled')`,
-      [jobId, input.retryable, input.errorCode, input.message.slice(0, 1000)],
+         AND attempt = $5
+         AND operation_status IN ('queued', 'running')
+       RETURNING job_id`,
+      [
+        jobId,
+        input.retryable,
+        input.errorCode,
+        input.message.slice(0, 1000),
+        input.attempt,
+      ],
     );
-    if (job.rows[0]?.job_type === "evidence_reinvestigation") {
+    if (
+      updated.rows[0] &&
+      current.job_type === "evidence_reinvestigation"
+    ) {
       await client.query(
         `UPDATE validation_result
          SET exception_status = 'AVAILABLE'
          WHERE project_id = $1 AND exception_status = 'REINVESTIGATING'`,
-        [job.rows[0].project_id],
+        [current.project_id],
       );
       await client.query(
         `UPDATE validation_workspace
          SET workspace_status = 'REVIEW_BLOCKED', updated_at = now()
          WHERE project_id = $1`,
-        [job.rows[0].project_id],
+        [current.project_id],
       );
     }
   });

@@ -1,0 +1,59 @@
+{
+  "bindingId": "binding_composite_01",
+  "slotId": "slot_margin_chart_01",
+  "kind": "composite_chart",
+  "purpose": "report_output",
+  "semanticKey": {
+    "metric": "revenue_and_margin",
+    "period": "FY22-FY25",
+    "scope": "consolidated"
+  },
+  "categories": {
+    "sheetId": "sheet_01",
+    "sheet": "Income",
+    "range": "B1:E1",
+    "authority": "authoritative",
+    "structureFingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "series": [
+    {
+      "seriesId": "series_revenue",
+      "label": "Revenue",
+      "source": {
+        "sheetId": "sheet_01",
+        "sheet": "Income",
+        "range": "B2:E2",
+        "authority": "authoritative",
+        "structureFingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "axis": "primary",
+      "role": "actual",
+      "chartType": "bar",
+      "estimateType": "mixed"
+    },
+    {
+      "seriesId": "series_margin",
+      "label": "Margin",
+      "source": {
+        "sheetId": "sheet_01",
+        "sheet": "Income",
+        "range": "B3:E3",
+        "authority": "authoritative",
+        "structureFingerprint": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "axis": "secondary",
+      "role": "forecast",
+      "chartType": "line",
+      "estimateType": "mixed"
+    }
+  ],
+  "styleTemplateRef": "style_chart_01",
+  "detectionConfidence": 0.96,
+  "reasonCodes": [
+    "COMPOSITE_AXIS_MATCH"
+  ],
+  "status": "confirmed",
+  "review": {
+    "status": "approved"
+  }
+}

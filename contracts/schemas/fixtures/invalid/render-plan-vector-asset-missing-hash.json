@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "artifactType": "render_plan",
+  "renderPlanId": "render_plan_01",
+  "renderPlanVersion": 1,
+  "inputs": {
+    "templateIrVersionId": "template_01",
+    "templateIrHash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "mappingSetVersionId": "mapping_01",
+    "mappingSetHash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "workbookCalculationVersionId": "workbook_01",
+    "workbookCalculationHash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "evidenceVersionIds": [],
+    "reportVersionId": "report_01"
+  },
+  "values": [],
+  "commands": [],
+  "vectorAssets": [
+    {
+      "slotId": "slot_scalar_01",
+      "assetKind": "scalar",
+      "mediaType": "image/svg+xml"
+    }
+  ],
+  "createdAt": "2026-07-26T10:02:00+09:00"
+}

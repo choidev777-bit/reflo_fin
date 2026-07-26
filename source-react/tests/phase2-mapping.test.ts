@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import { buildMappingSet } from "../workers/control/mapping";
+import workerResultSchemas from "../server/domain/generated/worker-result-schemas.json";
 import {
   buildMappingRevisionBinding,
   deserializeMappingCandidateSource,
@@ -15,6 +18,24 @@ import type {
   WorkbookChartAnalysis,
   WorkbookChartDataReference,
 } from "../workers/control/types";
+
+const contractAjv = new Ajv2020({
+  allErrors: true,
+  strict: true,
+  strictRequired: false,
+});
+addFormats(contractAjv);
+for (const schema of workerResultSchemas) contractAjv.addSchema(schema);
+const validateMappingSet = contractAjv.getSchema(
+  "https://schemas.reflo.dev/worker/v1/mapping-set.schema.json",
+);
+if (!validateMappingSet) throw new Error("MappingSet contract schema unavailable.");
+const validateChartBinding = contractAjv.getSchema(
+  "https://schemas.reflo.dev/worker/v1/mapping-set.schema.json#/$defs/ChartBinding",
+);
+if (!validateChartBinding) {
+  throw new Error("ChartBinding contract schema unavailable.");
+}
 
 function cell(
   sheetId: string,
@@ -239,7 +260,7 @@ function rangeCandidate(input: {
     ...input,
     rowCount: end.row - start.row + 1,
     columnCount: end.column - start.column + 1,
-    structureFingerprint: input.candidateId.padEnd(64, "b").slice(0, 64),
+    structureFingerprint: "b".repeat(64),
     unitHints: [],
     subtotalRows: [],
   };
@@ -281,6 +302,11 @@ test("confirms documented and period-specific model sources", () => {
   assert.equal(result.summary.status, "confirmed");
   assert.equal(result.summary.unmappedRequiredCount, 0);
   assert.deepEqual(sourceAddresses(result), ["B15", "F6"]);
+  assert.equal(
+    validateMappingSet(result.mappingSet),
+    true,
+    JSON.stringify(validateMappingSet.errors),
+  );
 });
 
 test("keeps a required slot blocked when candidates are ambiguous", () => {
@@ -338,11 +364,23 @@ test("uses the KRX cutoff close as the authoritative current price", () => {
   assert.equal(result.mappingSet.candidates[0].kind, "market_data");
   assert.equal(result.mappingSet.candidates[0].selected, true);
   const binding = result.mappingSet.bindings[0];
-  assert.equal(binding.kind, "scalar");
-  if (binding.kind !== "scalar") throw new Error("Expected scalar binding.");
+  assert.equal(binding.kind, "market_data");
+  if (binding.kind !== "market_data") {
+    throw new Error("Expected market-data binding.");
+  }
   assert.equal(binding.source.provider, "KRX_OPEN_API");
   assert.equal(binding.source.closePrice, 88_700);
-  assert.equal(binding.verificationSources?.length, 1);
+  assert.equal(
+    result.mappingSet.candidates.some(
+      (candidate) => candidate.kind === "cell" && !candidate.selected,
+    ),
+    true,
+  );
+  assert.equal(
+    validateMappingSet(result.mappingSet),
+    true,
+    JSON.stringify(validateMappingSet.errors),
+  );
 });
 
 test("prefers the embedded chart whose title and series match the PDF figure scope", () => {
@@ -399,6 +437,11 @@ test("prefers the embedded chart whose title and series match the PDF figure sco
   if (binding.kind !== "chart") throw new Error("Expected chart binding.");
   assert.equal(binding.categories.range, "B16:M16");
   assert.equal(binding.series[0].axis, "primary");
+  assert.equal(
+    validateMappingSet(result.mappingSet),
+    true,
+    JSON.stringify(validateMappingSet.errors),
+  );
 });
 
 test("keeps equally plausible embedded charts unselected", () => {
@@ -721,6 +764,11 @@ test("maps the four page-5 financial tables independently", () => {
     ),
     false,
   );
+  assert.equal(
+    validateMappingSet(result.mappingSet),
+    true,
+    JSON.stringify(validateMappingSet.errors),
+  );
 });
 
 test("round-trips each chart candidate definition through mapping revision storage", () => {
@@ -787,4 +835,9 @@ test("round-trips each chart candidate definition through mapping revision stora
   assert.equal(binding.categories.range, "B16:M16");
   assert.equal(binding.series[0].source.range, "B17:M17");
   assert.equal(binding.series[0].axis, "primary");
+  assert.equal(
+    validateChartBinding(binding),
+    true,
+    JSON.stringify(validateChartBinding.errors),
+  );
 });

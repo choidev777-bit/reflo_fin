@@ -1,0 +1,1324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/runtime-worker-result.schema.json",
+  "title": "REFLO Runtime Worker Result Payloads v1",
+  "description": "Strict payloads emitted by the current composite file inspection and research validation activities.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/FileScanPayload"
+    },
+    {
+      "$ref": "#/$defs/FileInspectionPayload"
+    },
+    {
+      "$ref": "#/$defs/ResearchValidationPayload"
+    }
+  ],
+  "$defs": {
+    "RuntimeArtifactDescriptor": {
+      "title": "RuntimeArtifactDescriptor",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactRole",
+        "artifactKind",
+        "objectKey",
+        "objectVersion",
+        "sha256",
+        "byteSize",
+        "mediaType"
+      ],
+      "properties": {
+        "artifactRole": {
+          "type": "string",
+          "enum": [
+            "template_ir",
+            "workbook_analysis",
+            "market_price_snapshot",
+            "mapping_set"
+          ]
+        },
+        "artifactKind": {
+          "const": "analysis"
+        },
+        "objectKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^immutable/"
+        },
+        "objectVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "byteSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mediaType": {
+          "const": "application/json"
+        }
+      }
+    },
+    "LightweightFileScanResult": {
+      "title": "LightweightFileScanResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supportStatus",
+        "detectedMediaType",
+        "magicBytes",
+        "encrypted",
+        "macroDetected",
+        "malwareStatus",
+        "rejectionCodes",
+        "checks",
+        "tool",
+        "inspectedAt"
+      ],
+      "properties": {
+        "supportStatus": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "detectedMediaType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "magicBytes": {
+          "type": "string",
+          "pattern": "^(?:[A-Fa-f0-9]{2}){1,16}$"
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "macroDetected": {
+          "type": "boolean"
+        },
+        "malwareStatus": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "infected",
+            "scan_unavailable"
+          ]
+        },
+        "rejectionCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{2,99}$"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/InspectionIssueCheck"
+          }
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/ToolDescriptor"
+        },
+        "inspectedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "FileScanPayload": {
+      "title": "FileScanPayload",
+      "oneOf": [
+        {
+          "$ref": "file-inspection-result.schema.json"
+        },
+        {
+          "$ref": "#/$defs/LightweightFileScanResult"
+        }
+      ]
+    },
+    "InspectionIssueCheck": {
+      "title": "RuntimeInspectionCheck",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "status"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        }
+      }
+    },
+    "InspectionIssue": {
+      "title": "RuntimeInspectionIssue",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "blocking"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "AnalysisSummary": {
+      "title": "RuntimeAnalysisSummary",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blockCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slotCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requiredSlotCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "objectCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "textObjectCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pathCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fontCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "imageCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tableCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chartCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warningCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sheetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hiddenSheetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usedCellCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "formulaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "editableCellCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mergedRangeCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "externalLinkCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "namedRangeCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calculationErrorCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "functionCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "PdfInspectionPayload": {
+      "title": "RuntimePdfInspectionPayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pageCount",
+        "textLayer",
+        "compatible",
+        "issues",
+        "parserName",
+        "parserVersion",
+        "templateIr",
+        "summary",
+        "artifact"
+      ],
+      "properties": {
+        "pageCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "textLayer": {
+          "type": "boolean"
+        },
+        "compatible": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InspectionIssue"
+          }
+        },
+        "parserName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "parserVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "templateIr": {
+          "oneOf": [
+            {
+              "$ref": "template-ir.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/AnalysisSummary"
+        },
+        "artifact": {
+          "$ref": "#/$defs/RuntimeArtifactDescriptor"
+        }
+      }
+    },
+    "WorkbookInspectionPayload": {
+      "title": "RuntimeWorkbookInspectionPayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetCount",
+        "usedCellCount",
+        "structureHash",
+        "originalSha256",
+        "compatible",
+        "issues",
+        "engineName",
+        "engineVersion",
+        "workbookAnalysis",
+        "summary",
+        "artifact"
+      ],
+      "properties": {
+        "sheetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usedCellCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "structureHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "originalSha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "compatible": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InspectionIssue"
+          }
+        },
+        "engineName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "engineVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "workbookAnalysis": {
+          "oneOf": [
+            {
+              "$ref": "workbook-analysis.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/AnalysisSummary"
+        },
+        "artifact": {
+          "$ref": "#/$defs/RuntimeArtifactDescriptor"
+        }
+      }
+    },
+    "MarketPricePayload": {
+      "title": "RuntimeMarketPricePayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "provider",
+        "status",
+        "companyMasterId",
+        "ticker",
+        "exchange",
+        "requestedDate",
+        "tradingDate",
+        "closePrice",
+        "currency",
+        "sourceApiId",
+        "retrievedAt",
+        "sourcePayloadHash",
+        "errorCode",
+        "errorMessage",
+        "artifact"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "common.schema.json#/$defs/SchemaVersion"
+        },
+        "provider": {
+          "const": "KRX_OPEN_API"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "available",
+            "unavailable"
+          ]
+        },
+        "companyMasterId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "ticker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "exchange": {
+          "type": "string",
+          "enum": [
+            "KOSPI",
+            "KOSDAQ",
+            "KONEX",
+            "KRX"
+          ]
+        },
+        "requestedDate": {
+          "$ref": "common.schema.json#/$defs/Date"
+        },
+        "tradingDate": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closePrice": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "currency": {
+          "const": "KRW"
+        },
+        "sourceApiId": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retrievedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "sourcePayloadHash": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorCode": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorMessage": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "artifact": {
+          "$ref": "#/$defs/RuntimeArtifactDescriptor"
+        }
+      }
+    },
+    "MappingInspectionPayload": {
+      "title": "RuntimeMappingInspectionPayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "slotCount",
+        "requiredSlotCount",
+        "bindingCount",
+        "confirmedBindingCount",
+        "unmappedRequiredCount",
+        "mappingSet",
+        "issues",
+        "artifact"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "blocked"
+          ]
+        },
+        "slotCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requiredSlotCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bindingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confirmedBindingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmappedRequiredCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mappingSet": {
+          "oneOf": [
+            {
+              "$ref": "mapping-set.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InspectionIssue"
+          }
+        },
+        "artifact": {
+          "$ref": "#/$defs/RuntimeArtifactDescriptor"
+        }
+      }
+    },
+    "FileInspectionPayload": {
+      "title": "FileInspectionPayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pdf",
+        "workbook",
+        "marketPrice",
+        "mapping"
+      ],
+      "properties": {
+        "pdf": {
+          "$ref": "#/$defs/PdfInspectionPayload"
+        },
+        "workbook": {
+          "$ref": "#/$defs/WorkbookInspectionPayload"
+        },
+        "marketPrice": {
+          "$ref": "#/$defs/MarketPricePayload"
+        },
+        "mapping": {
+          "$ref": "#/$defs/MappingInspectionPayload"
+        }
+      }
+    },
+    "RuntimeResearchSource": {
+      "title": "RuntimeResearchSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "sourceType",
+        "title",
+        "publisher",
+        "canonicalUrl",
+        "publishedAt",
+        "collectedAt",
+        "responseHash",
+        "locator",
+        "content",
+        "collectorVersion"
+      ],
+      "properties": {
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "DART",
+            "COMPANY_IR",
+            "NEWS",
+            "KRX",
+            "ECOS",
+            "FNGUIDE_CONSENSUS",
+            "USER_MATERIAL"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "publisher": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "canonicalUrl": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "uri"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publishedAt": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modifiedAt": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availableAt": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "datePrecision": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "second",
+                "minute",
+                "day"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collectedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        },
+        "responseHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "locator": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "content": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "artifactObjectKey": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parserVersion": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eligibilityPolicyVersion": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collectorVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "RuntimeResearchCandidate": {
+      "title": "RuntimeResearchCandidate",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateKey",
+        "category",
+        "questionId",
+        "targetId",
+        "sourceKey",
+        "title",
+        "quoteExact",
+        "oneLineValue",
+        "valueOriginal",
+        "valueNormalized",
+        "unit",
+        "currency",
+        "period",
+        "scope",
+        "valueKind",
+        "stance",
+        "required",
+        "criticalNumeric"
+      ],
+      "properties": {
+        "candidateKey": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "hypothesis",
+            "excel"
+          ]
+        },
+        "questionId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/OpaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "targetId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/OpaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "quoteExact": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "oneLineValue": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "valueOriginal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valueNormalized": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "currency": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "valueKind": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stance": {
+          "type": "string",
+          "enum": [
+            "supporting",
+            "contradicting",
+            "neutral"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "criticalNumeric": {
+          "type": "boolean"
+        }
+      }
+    },
+    "RuntimeValidatedEvidence": {
+      "title": "RuntimeValidatedEvidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateKey",
+        "category",
+        "questionId",
+        "targetId",
+        "sourceKey",
+        "title",
+        "quoteExact",
+        "oneLineValue",
+        "valueOriginal",
+        "valueNormalized",
+        "unit",
+        "currency",
+        "period",
+        "scope",
+        "valueKind",
+        "stance",
+        "required",
+        "criticalNumeric",
+        "machineStatus",
+        "checks",
+        "locator"
+      ],
+      "properties": {
+        "candidateKey": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "hypothesis",
+            "excel"
+          ]
+        },
+        "questionId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/OpaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "targetId": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/OpaqueId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "quoteExact": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "oneLineValue": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "valueOriginal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valueNormalized": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "currency": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "valueKind": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stance": {
+          "type": "string",
+          "enum": [
+            "supporting",
+            "contradicting",
+            "neutral"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "criticalNumeric": {
+          "type": "boolean"
+        },
+        "machineStatus": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "status",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            }
+          }
+        },
+        "locator": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "RuntimeNewsDiscovery": {
+      "title": "RuntimeNewsDiscovery",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "queryId",
+        "queryText",
+        "providerCode",
+        "providerResultId",
+        "resultRank",
+        "url",
+        "titleHint",
+        "publisherHint",
+        "publishedAtHint",
+        "publicationWindow",
+        "policyVersion"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "queryId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "queryText": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "providerCode": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "providerResultId": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resultRank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "titleHint": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publisherHint": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publishedAtHint": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "publicationWindow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "startAt",
+            "endAt"
+          ],
+          "properties": {
+            "startAt": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            "endAt": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            }
+          }
+        },
+        "policyVersion": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "ResearchValidationPayload": {
+      "title": "ResearchValidationPayload",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "candidates",
+        "evidence",
+        "warnings",
+        "metadata"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RuntimeResearchSource"
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RuntimeResearchCandidate"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RuntimeValidatedEvidence"
+          }
+        },
+        "newsDiscovery": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeNewsDiscovery"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Warning"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "researchAgentProfile",
+            "validationAgentProfile",
+            "validationRuleVersion",
+            "startedAt",
+            "finishedAt"
+          ],
+          "properties": {
+            "researchAgentProfile": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "validationAgentProfile": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "validationRuleVersion": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "startedAt": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            "finishedAt": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            }
+          }
+        }
+      }
+    }
+  }
+}

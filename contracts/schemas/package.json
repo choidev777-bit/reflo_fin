@@ -5,10 +5,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node scripts/validate.mjs"
+    "generate": "node scripts/generate-boundaries.mjs --write",
+    "generate:check": "node scripts/generate-boundaries.mjs --check",
+    "test:typescript": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext ../../packages/contracts/generated/typescript/worker/v1/worker-result-boundary.ts",
+    "test:python": "python scripts/verify-generated-python.py",
+    "test": "node scripts/validate.mjs && npm run generate:check && npm run test:typescript && npm run test:python"
   },
   "devDependencies": {
     "ajv": "8.17.1",
-    "ajv-formats": "3.0.1"
+    "ajv-formats": "3.0.1",
+    "typescript": "5.9.3"
   }
 }

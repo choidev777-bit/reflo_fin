@@ -3,6 +3,14 @@ import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import {
+  blockerMeta,
+  resumeRouteForBlocker,
+} from "../../domain/stage-blocker-policy";
+import type {
+  WorkerResultCommitMetadata,
+  WorkerResultCommitOutcome,
+} from "../../domain/worker-result-contract";
+import {
   RESEARCH_SOURCE_TYPES,
   attachNewsSearchPolicies,
   calculateQuestionSufficiency,
@@ -29,6 +37,18 @@ import {
   putImmutableObject,
 } from "../object-storage/s3";
 import { inspectResearchPdf } from "../security/research-material";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+  recordResourceDependencies,
+} from "../services/dependency-invalidator";
+import {
+  decidePinnedWorkflowJobCommit,
+  lateResultRequiresAuditOnly,
+  lockWorkflowJobLineage,
+  pinWorkflowJobSourceSnapshot,
+  recordLateWorkflowJobResult,
+} from "../services/source-snapshot-service";
 
 type IdempotentResult = { status: number; body: unknown };
 const MAX_RESEARCH_PDF_REFERENCES = 10;
@@ -54,6 +74,7 @@ type ProjectContext = {
   workbookResourceVersionId: string;
   workbookStructureHash: string;
   mappingSetResourceVersionId: string;
+  setupResourceVersionId: string;
 };
 
 type PlanRow = {
@@ -240,6 +261,7 @@ async function projectContext(
     workbook_resource_version_id: string;
     structure_hash: string;
     mapping_set_resource_version_id: string;
+    setup_resource_version_id: string;
     hypothesis_status: string;
     files_status: string;
   }>(
@@ -252,6 +274,7 @@ async function projectContext(
        msv.workbook_version_id AS workbook_resource_version_id,
        wv.structure_hash,
        msv.resource_version_id AS mapping_set_resource_version_id,
+       setup_completion.primary_version_id AS setup_resource_version_id,
        hypothesis_state.stage_status AS hypothesis_status,
        files_state.stage_status AS files_status
      FROM project p
@@ -298,9 +321,10 @@ async function projectContext(
       "PREREQUISITE_INCOMPLETE",
       "파일 검사와 조사 질문 승인을 먼저 완료해주세요.",
       {
-        meta: {
-          resumeRoute: processRoute(projectId, "hypothesis"),
-        },
+        meta: blockerMeta({
+          projectId,
+          requiredStage: "hypothesis",
+        }),
       },
     );
   }
@@ -313,7 +337,7 @@ async function projectContext(
       409,
       "PREREQUISITE_INCOMPLETE",
       "필수 선행 단계를 먼저 완료해주세요.",
-      { meta: { resumeRoute: processRoute(projectId, stage) } },
+      { meta: blockerMeta({ projectId, requiredStage: stage }) },
     );
   }
   return {
@@ -336,6 +360,7 @@ async function projectContext(
     workbookResourceVersionId: row.workbook_resource_version_id,
     workbookStructureHash: row.structure_hash,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
+    setupResourceVersionId: row.setup_resource_version_id,
   };
 }
 
@@ -546,6 +571,32 @@ async function insertPlanSnapshot(
       input.userId,
     ],
   );
+  await recordResourceDependencies(client, {
+    projectId: input.context.projectId,
+    dependencies: [
+      {
+        upstreamResourceVersionId:
+          input.context.questionSetResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "question_set_to_research_plan",
+      },
+      {
+        upstreamResourceVersionId: input.context.workbookResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "workbook_analysis_to_research_plan",
+      },
+      {
+        upstreamResourceVersionId: input.context.mappingSetResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "mapping_set_to_research_plan",
+      },
+      {
+        upstreamResourceVersionId: input.context.setupResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "setup_to_research_plan",
+      },
+    ],
+  });
   for (const question of input.snapshot.questions) {
     await client.query(
       `INSERT INTO research_plan_question (
@@ -750,6 +801,10 @@ async function ensurePlan(
       userId,
     ],
   );
+  await invalidateResourceDependents(client, {
+    projectId: context.projectId,
+    upstreamResourceVersionIds: [existing.resourceVersionId],
+  });
   return created;
 }
 
@@ -1195,22 +1250,45 @@ async function replacePlanSnapshot(
       input.userId,
     ],
   );
+  await invalidateResourceDependents(client, {
+    projectId: input.context.projectId,
+    upstreamResourceVersionIds: [input.plan.resourceVersionId],
+  });
   if (input.plan.status === "approved") {
-    await client.query(
-      `UPDATE project_stage_state
-       SET stage_status = 'in_progress', current_completion_id = NULL,
-           blocker_codes = '{}', completed_at = NULL, updated_at = now()
-       WHERE project_id = $1 AND stage_key = 'research_plan'`,
-      [input.context.projectId],
-    );
-    await client.query(
-      `UPDATE project_stage_state
-       SET stage_status = 'blocked',
-           blocker_codes = ARRAY['PLAN_REVALIDATION_REQUIRED']::text[],
-           updated_at = now()
-       WHERE project_id = $1 AND stage_key = 'validation'`,
-      [input.context.projectId],
-    );
+    await invalidateProjectStages(client, {
+      projectId: input.context.projectId,
+      triggerVersionId: created.resourceVersionId,
+      startStageKey: "research_plan",
+      reasonCode: "PLAN_REVALIDATION_REQUIRED",
+      transitions: [
+        {
+          stageKey: "research_plan",
+          stageStatus: "in_progress",
+          blockerCodes: [],
+          clearCompletion: true,
+          eligibleStatuses: [
+            "not_started",
+            "in_progress",
+            "completed",
+            "revalidation_required",
+            "blocked",
+          ],
+        },
+        {
+          stageKey: "validation",
+          stageStatus: "blocked",
+          blockerCodes: ["PLAN_REVALIDATION_REQUIRED"],
+          eligibleStatuses: [
+            "not_started",
+            "in_progress",
+            "completed",
+            "revalidation_required",
+            "blocked",
+          ],
+        },
+      ],
+      markProjectRevalidation: true,
+    });
     await client.query(
       `UPDATE validation_workspace
        SET workspace_status = 'REVIEW_BLOCKED', updated_at = now()
@@ -1482,6 +1560,13 @@ function workflowPayload(input: {
     projectId: input.context.projectId,
     researchRunId: input.runId,
     approvedPlanResourceVersionId: input.plan.resourceVersionId,
+    sourceInputVersionIds: [
+      input.plan.resourceVersionId,
+      input.context.questionSetResourceVersionId,
+      input.context.workbookResourceVersionId,
+      input.context.mappingSetResourceVersionId,
+      input.context.setupResourceVersionId,
+    ],
     companyMasterId: input.context.companyMasterId,
     companyName: input.context.companyName,
     corpCode: input.context.corpCode,
@@ -1591,9 +1676,22 @@ async function createResearchJob(
   );
   await client.query(
     `INSERT INTO workflow_job_input (job_id, input_role, resource_version_id)
-     VALUES ($1, 'approved_research_plan', $2)`,
-    [jobId, input.plan.resourceVersionId],
+     VALUES
+       ($1, 'approved_research_plan', $2),
+       ($1, 'hypothesis_questions', $3),
+       ($1, 'source_workbook', $4),
+       ($1, 'mapping_set', $5),
+       ($1, 'project_setup', $6)`,
+    [
+      jobId,
+      input.plan.resourceVersionId,
+      input.context.questionSetResourceVersionId,
+      input.context.workbookResourceVersionId,
+      input.context.mappingSetResourceVersionId,
+      input.context.setupResourceVersionId,
+    ],
   );
+  await pinWorkflowJobSourceSnapshot(client, { jobId });
   await client.query(
     `INSERT INTO research_run (
        research_run_id, project_id, job_id,
@@ -1974,8 +2072,9 @@ async function insertSourceVersion(
     projectId: string;
     runId: string;
     source: ResearchSourceSnapshot;
+    obsolete: boolean;
   },
-): Promise<string> {
+): Promise<{ resourceVersionId: string; created: boolean }> {
   const existing = await client.query<{ source_id: string }>(
     `SELECT source_id FROM research_source
      WHERE project_id = $1 AND source_type = $2 AND source_key = $3`,
@@ -1995,7 +2094,12 @@ async function insertSourceVersion(
      WHERE source_id = $1 AND response_hash = $2`,
     [sourceId, input.source.responseHash],
   );
-  if (duplicate.rows[0]) return duplicate.rows[0].resource_version_id;
+  if (duplicate.rows[0]) {
+    return {
+      resourceVersionId: duplicate.rows[0].resource_version_id,
+      created: false,
+    };
+  }
   const resource = await client.query<{
     resource_id: string;
     version_no: string;
@@ -2027,12 +2131,14 @@ async function insertSourceVersion(
   await client.query(
     `INSERT INTO resource_version (
        resource_version_id, resource_id, version_no, lifecycle_status,
-       supersedes_version_id, input_fingerprint, content_hash
-     ) VALUES ($1, $2, $3, 'approved', $4, $5, $6)`,
+       validity_status, supersedes_version_id, input_fingerprint, content_hash
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       resourceVersionId,
       resourceId,
       version,
+      input.obsolete ? "archived" : "approved",
+      input.obsolete ? "obsolete" : "current",
       resource.rows[0]?.resource_version_id ?? null,
       contentHash({
         runId: input.runId,
@@ -2074,7 +2180,7 @@ async function insertSourceVersion(
       input.source.eligibilityPolicyVersion ?? null,
     ],
   );
-  return resourceVersionId;
+  return { resourceVersionId, created: true };
 }
 
 function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
@@ -2334,9 +2440,11 @@ async function recomputeStageGate(
 export async function commitResearchValidationResult(
   jobId: string,
   payload: PhaseFourWorkerPayload,
-): Promise<void> {
+  metadata: WorkerResultCommitMetadata,
+): Promise<WorkerResultCommitOutcome> {
   validateWorkerPayload(payload);
-  await withTransaction(async (client) => {
+  return withTransaction(async (client) => {
+    await lockWorkflowJobLineage(client, { jobId });
     const runResult = await client.query<{
       research_run_id: string;
       project_id: string;
@@ -2357,15 +2465,40 @@ export async function commitResearchValidationResult(
     if (!run) {
       throw new ApiError(404, "JOB_NOT_FOUND", "자료 수집 작업을 찾을 수 없습니다.");
     }
-    if (run.operation_status === "succeeded") return;
+    const snapshotDecision = await decidePinnedWorkflowJobCommit(client, {
+      jobId,
+      attempt: metadata.attempt,
+      sequence: metadata.sequence,
+      resultInputVersionIds: metadata.inputVersionIds,
+      resultHash: metadata.resultHash,
+    });
+    if (snapshotDecision.decision === "duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+    if (lateResultRequiresAuditOnly(snapshotDecision)) {
+      await recordLateWorkflowJobResult(client, {
+        jobId,
+        metadata,
+        reason: snapshotDecision.attemptMatches
+          ? `WORKFLOW_JOB_${snapshotDecision.operationStatus.toUpperCase()}`
+          : "WORKFLOW_JOB_ATTEMPT_MISMATCH",
+      });
+      return { applied: false, disposition: "obsolete" };
+    }
+    const obsolete = snapshotDecision.decision === "obsolete";
     const sourceVersionByKey = new Map<string, string>();
+    const createdSourceVersionIds: string[] = [];
     for (const source of payload.sources) {
-      const sourceVersionId = await insertSourceVersion(client, {
+      const inserted = await insertSourceVersion(client, {
         projectId: run.project_id,
         runId: run.research_run_id,
         source,
+        obsolete,
       });
-      sourceVersionByKey.set(source.sourceKey, sourceVersionId);
+      sourceVersionByKey.set(source.sourceKey, inserted.resourceVersionId);
+      if (inserted.created) {
+        createdSourceVersionIds.push(inserted.resourceVersionId);
+      }
     }
     const sourceVersionByProviderResultId = new Map<string, string>();
     const sourceVersionByCanonicalUrl = new Map<string, string>();
@@ -2441,13 +2574,14 @@ export async function commitResearchValidationResult(
       `INSERT INTO validation_run (
          validation_run_id, project_id, research_run_id, rule_version,
          agent_profile_version, status, started_at, finished_at
-       ) VALUES ($1, $2, $3, $4, $5, 'succeeded', $6, $7)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         validationRunId,
         run.project_id,
         run.research_run_id,
         payload.metadata.validationRuleVersion,
         payload.metadata.validationAgentProfile,
+        obsolete ? "obsolete" : "succeeded",
         payload.metadata.startedAt,
         payload.metadata.finishedAt,
       ],
@@ -2536,6 +2670,46 @@ export async function commitResearchValidationResult(
         ],
       );
     }
+    for (const sourceVersionId of createdSourceVersionIds) {
+      await recordResourceDependencies(client, {
+        projectId: run.project_id,
+        dependencies: metadata.inputVersionIds.map((inputVersionId) => ({
+          upstreamResourceVersionId: inputVersionId,
+          downstreamResourceVersionId: sourceVersionId,
+          dependencyKind: "research_validation_input",
+        })),
+      });
+    }
+    if (obsolete) {
+      await client.query(
+        `UPDATE workflow_job
+         SET operation_status = 'succeeded', validity_status = 'obsolete',
+             current_phase = 'stored_obsolete', progress_percent = 100,
+             progress_sequence = GREATEST(progress_sequence, $2),
+             heartbeat_at = now(), finished_at = now(), retryable = false,
+             result_summary_json = $3::jsonb
+         WHERE job_id = $1`,
+        [
+          jobId,
+          metadata.sequence,
+          JSON.stringify({
+            sourceCount: payload.sources.length,
+            evidenceCount: payload.evidence.filter(
+              (item) => item.machineStatus === "passed",
+            ).length,
+            warningCount: payload.warnings.length,
+            validationRunId,
+            workerResult: {
+              attempt: metadata.attempt,
+              sequence: metadata.sequence,
+              inputVersionIds: metadata.inputVersionIds,
+              hash: metadata.resultHash,
+            },
+          }),
+        ],
+      );
+      return { applied: true, disposition: "obsolete" };
+    }
     const current = await client.query<{ validation_version: string }>(
       `SELECT validation_version FROM validation_workspace
        WHERE project_id = $1 FOR UPDATE`,
@@ -2605,7 +2779,8 @@ export async function commitResearchValidationResult(
     await client.query(
       `UPDATE workflow_job
        SET operation_status = 'succeeded', current_phase = 'publishing_projection',
-           progress_percent = 100, progress_sequence = progress_sequence + 1,
+           progress_percent = 100,
+           progress_sequence = GREATEST(progress_sequence, $3),
            heartbeat_at = now(), finished_at = now(), retryable = false,
            result_summary_json = $2::jsonb
        WHERE job_id = $1`,
@@ -2617,7 +2792,15 @@ export async function commitResearchValidationResult(
             (item) => item.machineStatus === "passed",
           ).length,
           warningCount: payload.warnings.length,
+          validationRunId,
+          workerResult: {
+            attempt: metadata.attempt,
+            sequence: metadata.sequence,
+            inputVersionIds: metadata.inputVersionIds,
+            hash: metadata.resultHash,
+          },
         }),
+        metadata.sequence,
       ],
     );
     const previous = await client.query<{
@@ -2662,6 +2845,7 @@ export async function commitResearchValidationResult(
         gate.blockers.map((blocker) => blocker.code),
       ],
     );
+    return { applied: true, disposition: "current" };
   });
 }
 
@@ -2747,7 +2931,12 @@ export async function getValidationWorkspace(
           "PREREQUISITE_INCOMPLETE",
           "조사 계획을 승인하고 자료 수집을 시작해주세요.",
           {
-            meta: { resumeRoute: processRoute(projectId, "research_plan") },
+            meta: {
+              resumeRoute: resumeRouteForBlocker({
+                projectId,
+                fallbackStage: "research_plan",
+              }),
+            },
           },
         );
       }

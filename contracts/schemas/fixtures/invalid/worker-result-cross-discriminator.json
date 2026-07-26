@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "attempt": 1,
+  "sequence": 1,
+  "inputVersionIds": [
+    "plan_version_01"
+  ],
+  "resultType": "source_collection",
+  "payload": {
+    "schemaVersion": "1.0",
+    "resultType": "news_discovery",
+    "planVersionId": "plan_version_01",
+    "results": [],
+    "searchedAt": "2026-07-26T10:00:00+09:00"
+  },
+  "results": [
+    {
+      "entityType": "source_collection",
+      "entityId": "collection_01",
+      "version": 1,
+      "hash": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "artifacts": [],
+  "tool": {
+    "name": "reflo-control",
+    "version": "1.0.0"
+  }
+}

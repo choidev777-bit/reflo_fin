@@ -15,9 +15,104 @@
     "valid": true
   },
   {
+    "data": "valid/worker-result-file-scan-lightweight.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": true
+  },
+  {
+    "data": "valid/worker-result-file-scan-short.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": true
+  },
+  {
     "data": "valid/template-ir-minimal.json",
     "schema": "../v1/template-ir.schema.json",
     "valid": true
+  },
+  {
+    "data": "valid/scalar-binding-typed.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/ScalarBinding",
+    "valid": true
+  },
+  {
+    "data": "invalid/scalar-binding-missing-purpose.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/ScalarBinding",
+    "valid": false
+  },
+  {
+    "data": "valid/table-binding-typed.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/TableBinding",
+    "valid": true
+  },
+  {
+    "data": "invalid/table-binding-bad-purpose.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/TableBinding",
+    "valid": false
+  },
+  {
+    "data": "valid/chart-binding-typed.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/ChartBinding",
+    "valid": true
+  },
+  {
+    "data": "invalid/chart-binding-bad-confidence.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/ChartBinding",
+    "valid": false
+  },
+  {
+    "data": "valid/composite-chart-binding.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/CompositeChartBinding",
+    "valid": true
+  },
+  {
+    "data": "invalid/composite-chart-binding-missing-axis.json",
+    "schema": "../v1/mapping-set.schema.json#/$defs/CompositeChartBinding",
+    "valid": false
+  },
+  {
+    "data": "valid/scalar-style-template.json",
+    "schema": "../v1/template-ir.schema.json#/$defs/ScalarStyleTemplate",
+    "valid": true
+  },
+  {
+    "data": "invalid/scalar-style-template-unknown-field.json",
+    "schema": "../v1/template-ir.schema.json#/$defs/ScalarStyleTemplate",
+    "valid": false
+  },
+  {
+    "data": "valid/validated-value-set.json",
+    "schema": "../v1/validated-value-set.schema.json",
+    "valid": true
+  },
+  {
+    "data": "invalid/validated-value-set-no-evidence.json",
+    "schema": "../v1/validated-value-set.schema.json",
+    "valid": false
+  },
+  {
+    "data": "invalid/validated-value-set-type-mismatch.json",
+    "schema": "../v1/validated-value-set.schema.json",
+    "valid": false
+  },
+  {
+    "data": "valid/report-materialization.json",
+    "schema": "../v1/report-materialization.schema.json",
+    "valid": true
+  },
+  {
+    "data": "invalid/report-materialization-missing-provenance.json",
+    "schema": "../v1/report-materialization.schema.json",
+    "valid": false
+  },
+  {
+    "data": "valid/render-plan-typed.json",
+    "schema": "../v1/report-worker-artifact.schema.json#/$defs/RenderPlan",
+    "valid": true
+  },
+  {
+    "data": "invalid/render-plan-vector-asset-missing-hash.json",
+    "schema": "../v1/report-worker-artifact.schema.json#/$defs/RenderPlan",
+    "valid": false
   },
   {
     "data": "valid/agent-hypothesis-output.json",
@@ -26,6 +121,16 @@
   },
   {
     "data": "invalid/worker-result-wrong-payload.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": false
+  },
+  {
+    "data": "invalid/worker-result-cross-discriminator.json",
+    "schema": "../v1/worker-result-envelope.schema.json",
+    "valid": false
+  },
+  {
+    "data": "invalid/worker-result-multiple-results.json",
     "schema": "../v1/worker-result-envelope.schema.json",
     "valid": false
   }

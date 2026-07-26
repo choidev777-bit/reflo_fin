@@ -1,0 +1,23 @@
+{
+  "bindingId": "binding_scalar_01",
+  "slotId": "slot_eps_01",
+  "kind": "scalar",
+  "valueType": "money",
+  "source": {
+    "sheetId": "sheet_01",
+    "sheet": "Valuation",
+    "address": "D12",
+    "readMode": "calculated_value",
+    "authority": "authoritative",
+    "structureFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "verificationSources": [],
+  "display": {},
+  "status": "confirmed",
+  "semanticKey": {
+    "metric": "eps"
+  },
+  "review": {
+    "status": "approved"
+  }
+}

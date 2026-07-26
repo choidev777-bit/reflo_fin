@@ -6,6 +6,8 @@
 
 # Dependency and build output directories
 **/node_modules/
+**/bin/
+**/obj/
 **/.next/
 **/.next-stale-*/
 **/dist/

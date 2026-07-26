@@ -4,6 +4,10 @@ import { contentHash, randomToken, sha256 } from "../../domain/hash";
 import { processRoute } from "../../domain/project";
 import { uuidv7 } from "../../domain/ids";
 import {
+  blockerMeta,
+  resumeRouteForBlocker,
+} from "../../domain/stage-blocker-policy";
+import {
   applyReportOperations,
   attachTemplateGeometry,
   buildInitialOutline,
@@ -39,6 +43,11 @@ import {
   putImmutableObject,
   readObjectBytes,
 } from "../object-storage/s3";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+  recordResourceDependencies,
+} from "../services/dependency-invalidator";
 
 type IdempotentResult = { status: number; body: unknown };
 
@@ -167,6 +176,71 @@ type ReportRow = {
   content_json: ReportDocument;
   outline_approval_id: string;
 };
+
+async function recordReportOutlineDependencies(
+  client: TransactionClient,
+  context: Context,
+  downstreamResourceVersionId: string,
+): Promise<void> {
+  await recordResourceDependencies(client, {
+    projectId: context.projectId,
+    dependencies: [
+      {
+        upstreamResourceVersionId: context.templateResourceVersionId,
+        downstreamResourceVersionId,
+        dependencyKind: "template_ir_to_report_outline",
+      },
+      {
+        upstreamResourceVersionId: context.mappingSetResourceVersionId,
+        downstreamResourceVersionId,
+        dependencyKind: "mapping_set_to_report_outline",
+      },
+      {
+        upstreamResourceVersionId: context.valuationResourceVersionId,
+        downstreamResourceVersionId,
+        dependencyKind: "valuation_approval_to_report_outline",
+      },
+      {
+        upstreamResourceVersionId: context.hypothesisResourceVersionId,
+        downstreamResourceVersionId,
+        dependencyKind: "hypothesis_to_report_outline",
+      },
+    ],
+  });
+}
+
+async function recordReportVersionDependency(
+  client: TransactionClient,
+  input: {
+    projectId: string;
+    outlineApprovalId: string;
+    downstreamResourceVersionId: string;
+  },
+): Promise<void> {
+  const approval = await client.query<{
+    outline_resource_version_id: string;
+  }>(
+    `SELECT outline_resource_version_id
+     FROM report_outline_approval
+     WHERE approval_id = $1 AND project_id = $2`,
+    [input.outlineApprovalId, input.projectId],
+  );
+  const outlineResourceVersionId =
+    approval.rows[0]?.outline_resource_version_id;
+  if (!outlineResourceVersionId) {
+    throw new Error("REPORT_OUTLINE_APPROVAL_NOT_FOUND");
+  }
+  await recordResourceDependencies(client, {
+    projectId: input.projectId,
+    dependencies: [
+      {
+        upstreamResourceVersionId: outlineResourceVersionId,
+        downstreamResourceVersionId: input.downstreamResourceVersionId,
+        dependencyKind: "outline_to_report",
+      },
+    ],
+  });
+}
 
 async function callPdfWorker<T>(path: string, body: unknown): Promise<T> {
   const base =
@@ -720,7 +794,7 @@ async function projectContext(
       409,
       "REPORT_PREREQUISITE_INCOMPLETE",
       "밸류에이션 승인과 선행 검증을 완료해주세요.",
-      { meta: { requiredStage: "valuation", resumeRoute: processRoute(projectId, "valuation") } },
+      { meta: blockerMeta({ projectId, requiredStage: "valuation" }) },
     );
   }
   const evidence = await loadEvidence(
@@ -733,7 +807,7 @@ async function projectContext(
       409,
       "REPORT_PREREQUISITE_INCOMPLETE",
       "보고서에 사용할 검증 근거를 확인해주세요.",
-      { meta: { requiredStage: "validation", resumeRoute: processRoute(projectId, "validation") } },
+      { meta: blockerMeta({ projectId, requiredStage: "validation" }) },
     );
   }
   const mappingResult = await client.query<{
@@ -952,6 +1026,30 @@ async function ensureOutline(
   const existing = await readOutline(client, context.projectId);
   if (existing) {
     if (!refsMatch(existing, context)) {
+      await invalidateResourceDependents(client, {
+        projectId: context.projectId,
+        upstreamResourceVersionIds: [existing.current_resource_version_id],
+      });
+      await invalidateProjectStages(client, {
+        projectId: context.projectId,
+        triggerVersionId: existing.current_resource_version_id,
+        startStageKey: "report_outline",
+        reasonCode: "REPORT_OUTLINE_CHANGED",
+        transitions: [
+          {
+            stageKey: "report_outline",
+            stageStatus: "revalidation_required",
+            blockerCodes: ["REPORT_OUTLINE_CHANGED"],
+            clearCompletion: true,
+            eligibleStatuses: [
+              "in_progress",
+              "completed",
+              "revalidation_required",
+            ],
+          },
+        ],
+        markProjectRevalidation: true,
+      });
       await client.query(
         `UPDATE report_outline
          SET status = 'revalidation_required' WHERE project_id = $1`,
@@ -961,9 +1059,21 @@ async function ensureOutline(
         409,
         "OUTLINE_REVALIDATION_REQUIRED",
         "선행 데이터가 변경되어 페이지 구성을 다시 확인해야 합니다.",
-        { meta: { resumeRoute: processRoute(context.projectId, "report_outline") } },
+        {
+          meta: {
+            resumeRoute: resumeRouteForBlocker({
+              projectId: context.projectId,
+              fallbackStage: "report_outline",
+            }),
+          },
+        },
       );
     }
+    await recordReportOutlineDependencies(
+      client,
+      context,
+      existing.current_resource_version_id,
+    );
     return existing;
   }
 
@@ -1018,6 +1128,11 @@ async function ensureOutline(
       JSON.stringify(content),
       userId,
     ],
+  );
+  await recordReportOutlineDependencies(
+    client,
+    context,
+    resourceVersionId,
   );
   return (await readOutline(client, context.projectId))!;
 }
@@ -1290,6 +1405,15 @@ export async function patchReportOutline(input: {
         input.userId,
       ],
     );
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [outline.current_resource_version_id],
+    });
+    await recordReportOutlineDependencies(
+      client,
+      context,
+      resourceVersionId,
+    );
     const saved = await client.query<{ saved_at: Date }>(
       `UPDATE report_outline SET current_resource_version_id = $2,
          current_version = $3, saved_at = now()
@@ -1459,7 +1583,8 @@ export async function regenerateReportOutline(input: {
     const resourceVersionId = uuidv7();
     await client.query(
       `UPDATE resource_version SET lifecycle_status = 'superseded'
-       WHERE resource_version_id = $1 AND lifecycle_status = 'draft'`,
+       WHERE resource_version_id = $1
+         AND lifecycle_status IN ('draft', 'approved')`,
       [outline.current_resource_version_id],
     );
     await client.query(
@@ -1501,6 +1626,37 @@ export async function regenerateReportOutline(input: {
         input.userId,
       ],
     );
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [outline.current_resource_version_id],
+    });
+    await recordReportOutlineDependencies(
+      client,
+      context,
+      resourceVersionId,
+    );
+    if (outline.status === "approved") {
+      await invalidateProjectStages(client, {
+        projectId: input.projectId,
+        triggerVersionId: resourceVersionId,
+        startStageKey: "report_outline",
+        reasonCode: "REPORT_OUTLINE_CHANGED",
+        transitions: [
+          {
+            stageKey: "report_outline",
+            stageStatus: "in_progress",
+            blockerCodes: [],
+            clearCompletion: true,
+            eligibleStatuses: [
+              "in_progress",
+              "completed",
+              "revalidation_required",
+            ],
+          },
+        ],
+        markProjectRevalidation: true,
+      });
+    }
     const saved = await client.query<{ saved_at: Date }>(
       `UPDATE report_outline SET current_resource_version_id = $2,
          current_version = $3, status = 'editing', saved_at = now()
@@ -1566,7 +1722,14 @@ async function createReport(
   },
 ): Promise<ReportRow> {
   const existing = await readReport(client, input.context.projectId);
-  if (existing) return existing;
+  if (existing) {
+    await recordReportVersionDependency(client, {
+      projectId: input.context.projectId,
+      outlineApprovalId: existing.outline_approval_id,
+      downstreamResourceVersionId: existing.active_resource_version_id,
+    });
+    return existing;
+  }
   const reportId = uuidv7();
   const resourceId = uuidv7();
   const resourceVersionId = uuidv7();
@@ -1650,6 +1813,11 @@ async function createReport(
     `UPDATE report SET active_resource_version_id = $2 WHERE project_id = $1`,
     [input.context.projectId, resourceVersionId],
   );
+  await recordReportVersionDependency(client, {
+    projectId: input.context.projectId,
+    outlineApprovalId: input.outlineApprovalId,
+    downstreamResourceVersionId: resourceVersionId,
+  });
   return (await readReport(client, input.context.projectId))!;
 }
 
@@ -1901,7 +2069,14 @@ async function latestReportState(
       409,
       "REPORT_PREREQUISITE_INCOMPLETE",
       "페이지 구성을 승인하고 보고서 초안을 생성해주세요.",
-      { meta: { resumeRoute: processRoute(projectId, "report_outline") } },
+      {
+        meta: {
+          resumeRoute: resumeRouteForBlocker({
+            projectId,
+            fallbackStage: "report_outline",
+          }),
+        },
+      },
     );
   }
   return report;
@@ -2489,6 +2664,10 @@ export async function patchReportVersion(input: {
     }
     const nextVersion = expectedVersion + 1;
     const nextResourceVersionId = uuidv7();
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [report.active_resource_version_id],
+    });
     await client.query(
       `UPDATE resource_version SET lifecycle_status = 'superseded'
        WHERE resource_version_id = $1 AND lifecycle_status = 'draft'`,
@@ -2539,6 +2718,11 @@ export async function patchReportVersion(input: {
        WHERE project_id = $1`,
       [input.projectId, nextResourceVersionId, nextVersion],
     );
+    await recordReportVersionDependency(client, {
+      projectId: input.projectId,
+      outlineApprovalId: report.outline_approval_id,
+      downstreamResourceVersionId: nextResourceVersionId,
+    });
     await client.query(
       `UPDATE report_edit_session SET report_resource_version_id = $2,
          heartbeat_at = now(), lease_expires_at = now() + interval '120 seconds'
@@ -2617,6 +2801,22 @@ export async function restoreReportVersion(input: {
     }
     const nextVersion = Number(report.current_version) + 1;
     const nextId = uuidv7();
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [report.active_resource_version_id],
+    });
+    await client.query(
+      `UPDATE resource_version SET lifecycle_status = 'superseded'
+       WHERE resource_version_id = $1
+         AND lifecycle_status IN ('draft', 'approved')`,
+      [report.active_resource_version_id],
+    );
+    await client.query(
+      `UPDATE report_version SET version_status = 'superseded'
+       WHERE resource_version_id = $1
+         AND version_status IN ('working', 'approved')`,
+      [report.active_resource_version_id],
+    );
     await client.query(
       `INSERT INTO resource_version (
          resource_version_id, resource_id, version_no, lifecycle_status,
@@ -2652,10 +2852,16 @@ export async function restoreReportVersion(input: {
     );
     await client.query(
       `UPDATE report SET active_resource_version_id = $2,
+         approved_resource_version_id = NULL,
          current_version = $3, status = 'working', updated_at = now()
        WHERE project_id = $1`,
       [input.projectId, nextId, nextVersion],
     );
+    await recordReportVersionDependency(client, {
+      projectId: input.projectId,
+      outlineApprovalId: report.outline_approval_id,
+      downstreamResourceVersionId: nextId,
+    });
     const body = { reportVersionId: nextId, version: nextVersion, status: "working" };
     await storeReplay(client, {
       userId: input.userId,

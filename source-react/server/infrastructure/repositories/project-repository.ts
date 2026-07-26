@@ -17,7 +17,15 @@ import {
   type ValuationMethod,
   type StageKey,
 } from "../../domain/project";
+import {
+  resumeRouteForBlocker,
+  uniformRevalidationTransitions,
+} from "../../domain/stage-blocker-policy";
 import { ApiError } from "../../http/api-error";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+} from "../services/dependency-invalidator";
 
 export type SetupInput = {
   companyId: string | null;
@@ -359,7 +367,10 @@ export async function listProjects(input: {
           completedStageCount,
           totalStageCount: 7,
           progressPercent,
-          resumeRoute: processRoute(row.project_id, row.current_stage),
+          resumeRoute: resumeRouteForBlocker({
+            projectId: row.project_id,
+            fallbackStage: row.current_stage,
+          }),
         },
         primaryStatusCode:
           row.current_stage === "setup"
@@ -887,30 +898,16 @@ async function applyInvalidation(
   },
 ): Promise<void> {
   if (input.affectedStages.length === 0) return;
-  await client.query(
-    `INSERT INTO project_invalidation_event (
-      invalidation_id, project_id, trigger_version_id, start_stage_key,
-      reason_code, affected_stage_keys
-    ) VALUES ($1, $2, $3, 'files', 'SETUP_CHANGED', $4)`,
-    [uuidv7(), input.projectId, input.triggerVersionId, input.affectedStages],
-  );
-  await client.query(
-    `UPDATE project_stage_state
-     SET stage_status = 'revalidation_required',
-         invalidated_at = now(),
-         blocker_codes = ARRAY['SETUP_CHANGED'],
-         updated_at = now()
-     WHERE project_id = $1 AND stage_key = ANY($2::text[])`,
-    [input.projectId, input.affectedStages],
-  );
-  await client.query(
-    `UPDATE stage_completion
-     SET validity_status = 'revalidation_required'
-     WHERE project_id = $1
-       AND stage_key = ANY($2::text[])
-       AND validity_status = 'current'`,
-    [input.projectId, input.affectedStages],
-  );
+  await invalidateProjectStages(client, {
+    projectId: input.projectId,
+    triggerVersionId: input.triggerVersionId,
+    startStageKey: "files",
+    reasonCode: "SETUP_CHANGED",
+    transitions: uniformRevalidationTransitions(
+      input.affectedStages,
+      "SETUP_CHANGED",
+    ),
+  });
 }
 
 export async function saveSetup(input: {
@@ -934,7 +931,10 @@ export async function saveSetup(input: {
         {
           meta: {
             currentVersion: project.rowVersion,
-            resumeRoute: processRoute(input.projectId, "setup"),
+            resumeRoute: resumeRouteForBlocker({
+              projectId: input.projectId,
+              fallbackStage: "setup",
+            }),
           },
         },
       );
@@ -976,6 +976,10 @@ export async function saveSetup(input: {
       setup,
       userId: input.userId,
       status: "draft",
+    });
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [latest.resourceVersionId],
     });
     await applyInvalidation(client, {
       projectId: input.projectId,
@@ -1058,7 +1062,10 @@ export async function completeSetup(input: {
         {
           meta: {
             currentVersion: project.rowVersion,
-            resumeRoute: processRoute(input.projectId, "setup"),
+            resumeRoute: resumeRouteForBlocker({
+              projectId: input.projectId,
+              fallbackStage: "setup",
+            }),
           },
         },
       );
@@ -1115,6 +1122,10 @@ export async function completeSetup(input: {
       setup,
       userId: input.userId,
       status: "complete",
+    });
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [latest.resourceVersionId],
     });
     await applyInvalidation(client, {
       projectId: input.projectId,

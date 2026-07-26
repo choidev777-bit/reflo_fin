@@ -20,8 +20,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs && node --import tsx --test tests/*.test.ts",
-    "test:e2e": "playwright test",
-    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:prepare": "node scripts/prepare-e2e-runtime.mjs",
+    "test:e2e": "npm run test:e2e:prepare && playwright test",
+    "test:e2e:update": "npm run test:e2e:prepare && playwright test --update-snapshots",
     "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e"
   },
   "dependencies": {
@@ -33,6 +34,8 @@
     "@tiptap/core": "3.29.0",
     "@tiptap/react": "3.29.0",
     "@tiptap/starter-kit": "3.29.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "decimal.js": "10.6.0",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",

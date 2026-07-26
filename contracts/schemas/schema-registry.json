@@ -63,6 +63,21 @@
       "name": "ReportWorkerArtifact",
       "file": "v1/report-worker-artifact.schema.json",
       "id": "https://schemas.reflo.dev/worker/v1/report-worker-artifact.schema.json"
+    },
+    {
+      "name": "ValidatedValueSet",
+      "file": "v1/validated-value-set.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/validated-value-set.schema.json"
+    },
+    {
+      "name": "ReportMaterialization",
+      "file": "v1/report-materialization.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/report-materialization.schema.json"
+    },
+    {
+      "name": "RuntimeWorkerResult",
+      "file": "v1/runtime-worker-result.schema.json",
+      "id": "https://schemas.reflo.dev/worker/v1/runtime-worker-result.schema.json"
     }
   ],
   "resultTypes": [
@@ -72,7 +87,13 @@
         "validate_upload"
       ],
       "taskQueue": "file-scan",
-      "payloadRef": "v1/file-inspection-result.schema.json"
+      "payloadRef": "v1/runtime-worker-result.schema.json#/$defs/FileScanPayload"
+    },
+    {
+      "resultType": "file_inspection",
+      "activityTypes": [],
+      "taskQueue": "file-scan",
+      "payloadRef": "v1/runtime-worker-result.schema.json#/$defs/FileInspectionPayload"
     },
     {
       "resultType": "pdf_template_ir",
@@ -112,8 +133,27 @@
       "activityTypes": [
         "extract_candidate"
       ],
-      "taskQueue": "research-network",
+      "taskQueue": "llm",
       "payloadRef": "v1/research-result.schema.json#/$defs/ResearchCandidateResult"
+    },
+    {
+      "resultType": "news_discovery",
+      "activityTypes": [
+        "capture_news",
+        "plan_news_search"
+      ],
+      "taskQueue": "research-network",
+      "activityTaskQueues": {
+        "capture_news": "research-network",
+        "plan_news_search": "llm"
+      },
+      "payloadRef": "v1/research-result.schema.json#/$defs/NewsDiscoveryResult"
+    },
+    {
+      "resultType": "research_validation",
+      "activityTypes": [],
+      "taskQueue": "evidence-validation",
+      "payloadRef": "v1/runtime-worker-result.schema.json#/$defs/ResearchValidationPayload"
     },
     {
       "resultType": "evidence_validation",

@@ -1,0 +1,760 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.reflo.dev/worker/v1/report-materialization.schema.json",
+  "title": "REFLO Report Materialization Artifact v1",
+  "description": "Immutable scalar, table, chart, and composite chart snapshots pinned to one report source lineage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "artifactType",
+    "materializationId",
+    "materializationVersion",
+    "sourceSnapshot",
+    "status",
+    "items",
+    "contentHash",
+    "createdAt",
+    "materializer",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "$ref": "common.schema.json#/$defs/SchemaVersion"
+    },
+    "artifactType": {
+      "const": "report_materialization"
+    },
+    "materializationId": {
+      "$ref": "common.schema.json#/$defs/OpaqueId"
+    },
+    "materializationVersion": {
+      "$ref": "common.schema.json#/$defs/VersionNumber"
+    },
+    "sourceSnapshot": {
+      "$ref": "#/$defs/SourceSnapshot"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "current",
+        "obsolete",
+        "failed"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/MaterializationSnapshot"
+      }
+    },
+    "contentHash": {
+      "$ref": "common.schema.json#/$defs/Sha256"
+    },
+    "createdAt": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "materializer": {
+      "$ref": "common.schema.json#/$defs/ToolDescriptor"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Warning"
+      }
+    }
+  },
+  "$defs": {
+    "SourceSnapshot": {
+      "title": "ReportSourceSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotId",
+        "sourceFingerprint",
+        "setup",
+        "pdf",
+        "xlsx",
+        "templateIr",
+        "workbookAnalysis",
+        "mappingSet",
+        "validationApproval",
+        "validatedWorkbook",
+        "valuationApproval",
+        "outlineApproval",
+        "styleTemplate",
+        "report",
+        "capturedAt"
+      ],
+      "properties": {
+        "snapshotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "sourceFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "setup": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "pdf": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "xlsx": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "templateIr": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "workbookAnalysis": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "mappingSet": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "validationApproval": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "validatedWorkbook": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "valuationApproval": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "outlineApproval": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "styleTemplate": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "report": {
+          "$ref": "common.schema.json#/$defs/ResourceVersionRef"
+        },
+        "capturedAt": {
+          "$ref": "common.schema.json#/$defs/Timestamp"
+        }
+      }
+    },
+    "MaterializationProvenance": {
+      "title": "ReportMaterializationProvenance",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSnapshotId",
+        "mappingSetVersionId",
+        "workbookArtifactId",
+        "workbookVersion",
+        "workbookHash",
+        "validationApprovalVersionId",
+        "valuationApprovalVersionId",
+        "pageId",
+        "blockId",
+        "slotId",
+        "materializerVersion"
+      ],
+      "properties": {
+        "sourceSnapshotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "mappingSetVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "workbookArtifactId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "workbookVersion": {
+          "$ref": "common.schema.json#/$defs/VersionNumber"
+        },
+        "workbookHash": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "validationApprovalVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "valuationApprovalVersionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "pageId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "blockId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "slotId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "materializerVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      }
+    },
+    "ScalarSnapshot": {
+      "title": "ReportScalarSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "provenance",
+        "rawValue",
+        "formattedValue",
+        "valueType",
+        "unit",
+        "period",
+        "authority",
+        "sourceDecision",
+        "displayRule",
+        "styleTemplateRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "scalar"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MaterializationProvenance"
+        },
+        "rawValue": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "formattedValue": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "valueType": {
+          "type": "string",
+          "enum": [
+            "decimal",
+            "money",
+            "percent",
+            "integer",
+            "date",
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "period": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "formula",
+            "workbook",
+            "validated_value",
+            "user_decision"
+          ]
+        },
+        "sourceDecision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "displayRule": {
+          "$ref": "mapping-set.schema.json#/$defs/DisplayRule"
+        },
+        "styleTemplateRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "enum": [
+                  "decimal",
+                  "money",
+                  "percent"
+                ]
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "$ref": "common.schema.json#/$defs/DecimalString"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "type": "string",
+                "pattern": "^-?(0|[1-9][0-9]*)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "date"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "$ref": "common.schema.json#/$defs/Date"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "valueType": {
+                "const": "null"
+              }
+            },
+            "required": [
+              "valueType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "rawValue": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "CellMatrix": {
+      "title": "ReportCellMatrix",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TableSnapshot": {
+      "title": "ReportTableSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "provenance",
+        "rawMatrix",
+        "formattedMatrix",
+        "formulaMatrix",
+        "headers",
+        "rowKeys",
+        "mergedRanges",
+        "rowHeightsPt",
+        "columnWidthsPt",
+        "subtotalRows",
+        "unitRows",
+        "forecastRows",
+        "styleTemplateRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "table"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MaterializationProvenance"
+        },
+        "rawMatrix": {
+          "$ref": "#/$defs/CellMatrix"
+        },
+        "formattedMatrix": {
+          "$ref": "#/$defs/CellMatrix"
+        },
+        "formulaMatrix": {
+          "$ref": "#/$defs/CellMatrix"
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rowKeys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mergedRanges": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+          }
+        },
+        "rowHeightsPt": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "columnWidthsPt": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "subtotalRows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "unitRows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "forecastRows": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "styleTemplateRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "ChartAxisSnapshot": {
+      "title": "ReportChartAxisSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "unit",
+        "numberFormat"
+      ],
+      "properties": {
+        "position": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "top",
+            "bottom"
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "numberFormat": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "ChartSeriesSnapshot": {
+      "title": "ReportChartSeriesSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seriesId",
+        "label",
+        "role",
+        "axis",
+        "chartType",
+        "unit",
+        "numberFormat",
+        "estimateType",
+        "values"
+      ],
+      "properties": {
+        "seriesId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "actual",
+            "forecast",
+            "target",
+            "band_upper",
+            "band_lower",
+            "benchmark"
+          ]
+        },
+        "axis": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary"
+          ]
+        },
+        "chartType": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,99}$"
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "numberFormat": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "estimateType": {
+          "$ref": "mapping-set.schema.json#/$defs/EstimateType"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ChartSnapshot": {
+      "title": "ReportChartSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "provenance",
+        "categories",
+        "series",
+        "primaryAxis",
+        "secondaryAxis",
+        "styleTemplateRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "chart"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MaterializationProvenance"
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ChartSeriesSnapshot"
+          }
+        },
+        "primaryAxis": {
+          "$ref": "#/$defs/ChartAxisSnapshot"
+        },
+        "secondaryAxis": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ChartAxisSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "styleTemplateRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "CompositeChartSnapshot": {
+      "title": "ReportCompositeChartSnapshot",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "provenance",
+        "categories",
+        "series",
+        "primaryAxis",
+        "secondaryAxis",
+        "styleTemplateRef"
+      ],
+      "properties": {
+        "kind": {
+          "const": "composite_chart"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MaterializationProvenance"
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/ChartSeriesSnapshot"
+          }
+        },
+        "primaryAxis": {
+          "$ref": "#/$defs/ChartAxisSnapshot"
+        },
+        "secondaryAxis": {
+          "$ref": "#/$defs/ChartAxisSnapshot"
+        },
+        "styleTemplateRef": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "MaterializationSnapshot": {
+      "title": "ReportMaterializationSnapshot",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ScalarSnapshot"
+        },
+        {
+          "$ref": "#/$defs/TableSnapshot"
+        },
+        {
+          "$ref": "#/$defs/ChartSnapshot"
+        },
+        {
+          "$ref": "#/$defs/CompositeChartSnapshot"
+        }
+      ]
+    }
+  }
+}

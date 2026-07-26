@@ -35,7 +35,10 @@ export type MappingChartSeries = {
   seriesId: string;
   label?: string;
   source: MappingSource;
-  axis?: "primary" | "secondary";
+  axis: "primary" | "secondary";
+  role: "actual" | "forecast" | "target" | "band_upper" | "band_lower" | "benchmark";
+  chartType: string;
+  estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
 };
 
 export type MappingChartDefinition = {
@@ -65,6 +68,15 @@ type ScalarMappingBinding = {
   verificationSources?: MappingSource[];
   display?: Record<string, unknown>;
   status: "suggested" | "confirmed" | "invalid";
+  purpose: "workbook_input" | "report_output";
+  semanticKey: TemplateSlot["semanticKey"];
+  estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
+  detectionConfidence: number;
+  reasonCodes: string[];
+  review: {
+    status: "unreviewed" | "approved" | "rejected" | "needs_review";
+    reasonCodes: string[];
+  };
 };
 
 type TableMappingBinding = {
@@ -80,6 +92,15 @@ type TableMappingBinding = {
   unitRows?: number[];
   display?: Record<string, unknown>;
   status: "suggested" | "confirmed" | "invalid";
+  purpose: "workbook_input" | "report_output";
+  semanticKey: TemplateSlot["semanticKey"];
+  estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
+  detectionConfidence: number;
+  reasonCodes: string[];
+  review: {
+    status: "unreviewed" | "approved" | "rejected" | "needs_review";
+    reasonCodes: string[];
+  };
 };
 
 type ChartMappingBinding = {
@@ -89,12 +110,37 @@ type ChartMappingBinding = {
   categories: MappingSource;
   series: MappingChartSeries[];
   status: "suggested" | "confirmed" | "invalid";
+  purpose: "workbook_input" | "report_output";
+  semanticKey: TemplateSlot["semanticKey"];
+  estimateType: "actual" | "forecast" | "mixed" | "not_applicable";
+  detectionConfidence: number;
+  reasonCodes: string[];
+  review: {
+    status: "unreviewed" | "approved" | "rejected" | "needs_review";
+    reasonCodes: string[];
+  };
+};
+
+type MarketDataMappingBinding = {
+  bindingId: string;
+  slotId: string;
+  kind: "market_data";
+  purpose: "report_output";
+  semanticKey: TemplateSlot["semanticKey"];
+  source: MappingSource;
+  display: Record<string, unknown>;
+  status: "confirmed";
+  review: {
+    status: "unreviewed";
+    reasonCodes: string[];
+  };
 };
 
 export type MappingBinding =
   | ScalarMappingBinding
   | TableMappingBinding
-  | ChartMappingBinding;
+  | ChartMappingBinding
+  | MarketDataMappingBinding;
 
 export type MappingSet = {
   schemaVersion: "1.0";
@@ -775,6 +821,9 @@ function explicitChartDefinition(
         ...(item.name ? { label: item.name.slice(0, 500) } : {}),
         source: values.source,
         axis: item.axis,
+        role: "actual" as const,
+        chartType: item.chartType,
+        estimateType: "mixed" as const,
       },
     ];
   });
@@ -975,6 +1024,10 @@ function denseChartDefinition(
           seriesRange,
           `${range.structureFingerprint}:series:${row}`,
         ),
+        axis: "primary",
+        role: "actual",
+        chartType: "line",
+        estimateType: "mixed",
       });
     }
     if (chartSeries.length === 0) return null;
@@ -1051,6 +1104,10 @@ function denseChartDefinition(
           seriesRange,
           `${range.structureFingerprint}:series:${column}`,
         ),
+        axis: "primary" as const,
+        role: "actual" as const,
+        chartType: "line",
+        estimateType: "mixed" as const,
       },
     ];
   });
@@ -1157,6 +1214,22 @@ function bindingFor(
   candidate: MappingCandidate,
   workbook: WorkbookAnalysis,
 ): MappingBinding {
+  if (candidate.kind === "market_data") {
+    return {
+      bindingId: opaque("binding", `${slot.slotId}:${candidate.candidateId}`),
+      slotId: slot.slotId,
+      kind: "market_data",
+      purpose: "report_output",
+      semanticKey: slot.semanticKey,
+      source: candidate.source,
+      display: {},
+      status: "confirmed",
+      review: {
+        status: "unreviewed",
+        reasonCodes: candidate.reasonCodes,
+      },
+    };
+  }
   if (slot.valueType === "chart") {
     if (
       candidate.kind !== "chart" ||
@@ -1170,8 +1243,17 @@ function bindingFor(
       slotId: slot.slotId,
       kind: "chart",
       categories: candidate.chartDefinition.categories,
-      series: candidate.chartDefinition.series,
+      series: candidate.chartDefinition.series.map((series) => ({ ...series })),
       status: "confirmed",
+      purpose: "report_output",
+      semanticKey: slot.semanticKey,
+      estimateType: "mixed",
+      detectionConfidence: candidate.score,
+      reasonCodes: candidate.reasonCodes,
+      review: {
+        status: "unreviewed",
+        reasonCodes: candidate.reasonCodes,
+      },
     };
   }
   if (slot.valueType === "table") {
@@ -1198,6 +1280,15 @@ function bindingFor(
       unitRows: [],
       display: {},
       status: "confirmed",
+      purpose: "report_output",
+      semanticKey: slot.semanticKey,
+      estimateType: "mixed",
+      detectionConfidence: candidate.score,
+      reasonCodes: candidate.reasonCodes,
+      review: {
+        status: "unreviewed",
+        reasonCodes: candidate.reasonCodes,
+      },
     };
   }
   return {
@@ -1209,6 +1300,15 @@ function bindingFor(
     verificationSources: [],
     display: {},
     status: "confirmed",
+    purpose: "report_output",
+    semanticKey: slot.semanticKey,
+    estimateType: "not_applicable",
+    detectionConfidence: candidate.score,
+    reasonCodes: candidate.reasonCodes,
+    review: {
+      status: "unreviewed",
+      reasonCodes: candidate.reasonCodes,
+    },
   };
 }
 
@@ -1244,17 +1344,7 @@ export function buildMappingSet(
       (candidate) => candidate.slotId === slot.slotId && candidate.selected,
     );
     if (!selected) return [];
-    const binding = bindingFor(slot, selected, workbook);
-    if (selected.kind === "market_data" && binding.kind === "scalar") {
-      binding.verificationSources = candidates
-        .filter(
-          (candidate) =>
-            candidate.slotId === slot.slotId && candidate.kind === "cell",
-        )
-        .slice(0, 1)
-        .map((candidate) => candidate.source);
-    }
-    return [binding];
+    return [bindingFor(slot, selected, workbook)];
   });
   const boundSlotIds = new Set(bindings.map((binding) => binding.slotId));
   const unmappedRequiredSlots = slots

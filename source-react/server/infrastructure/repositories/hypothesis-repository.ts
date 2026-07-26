@@ -1,11 +1,29 @@
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
+import {
+  blockerMeta,
+  uniformRevalidationTransitions,
+} from "../../domain/stage-blocker-policy";
+import type {
+  WorkerResultCommitMetadata,
+  WorkerResultCommitOutcome,
+} from "../../domain/worker-result-contract";
 import { ApiError } from "../../http/api-error";
 import type { TransactionClient } from "../database/transaction";
 import { withTransaction } from "../database/transaction";
-import { objectStoreBucket, putImmutableObject } from "../object-storage/s3";
+import {
+  invalidateProjectStages,
+  invalidateResourceDependents,
+  recordResourceDependencies,
+} from "../services/dependency-invalidator";
+import {
+  decidePinnedWorkflowJobCommit,
+  lateResultRequiresAuditOnly,
+  lockWorkflowJobLineage,
+  pinWorkflowJobSourceSnapshot,
+  recordLateWorkflowJobResult,
+} from "../services/source-snapshot-service";
 
 export type InvestmentRating = "BUY" | "HOLD" | "SELL";
 export type SourceType =
@@ -66,10 +84,7 @@ export type HypothesisAgentResult = {
   };
 };
 
-export type HypothesisWorkerResult = {
-  output: HypothesisAgentResult;
-  rawTrace?: string;
-};
+export type HypothesisWorkerResult = HypothesisAgentResult;
 
 type ProjectContext = {
   projectId: string;
@@ -84,6 +99,8 @@ type ProjectContext = {
   reportType: string;
   setupCompletionId: string;
   filesCompletionId: string;
+  setupResourceVersionId: string;
+  filesResourceVersionId: string;
 };
 
 type HypothesisRow = {
@@ -181,6 +198,8 @@ async function projectContext(
     report_type: string;
     setup_completion_id: string | null;
     files_completion_id: string | null;
+    setup_resource_version_id: string;
+    files_resource_version_id: string;
     setup_status: string;
     files_status: string;
   }>(
@@ -190,6 +209,8 @@ async function projectContext(
        psv.report_type,
        setup_state.current_completion_id AS setup_completion_id,
        files_state.current_completion_id AS files_completion_id,
+       setup_completion.primary_version_id AS setup_resource_version_id,
+       files_completion.primary_version_id AS files_resource_version_id,
        setup_state.stage_status AS setup_status,
        files_state.stage_status AS files_status
      FROM project p
@@ -199,6 +220,8 @@ async function projectContext(
        ON files_state.project_id = p.project_id AND files_state.stage_key = 'files'
      JOIN stage_completion setup_completion
        ON setup_completion.stage_completion_id = setup_state.current_completion_id
+     JOIN stage_completion files_completion
+       ON files_completion.stage_completion_id = files_state.current_completion_id
      JOIN project_setup_version psv
        ON psv.resource_version_id = setup_completion.primary_version_id
      JOIN company_master cm ON cm.company_master_id = psv.company_master_id
@@ -223,10 +246,7 @@ async function projectContext(
       "HYPOTHESIS_PREREQUISITE_INCOMPLETE",
       "프로젝트 설정과 파일 검사를 먼저 완료해주세요.",
       {
-        meta: {
-          requiredStage: "setup",
-          resumeRoute: processRoute(projectId, "setup"),
-        },
+        meta: blockerMeta({ projectId, requiredStage: "setup" }),
       },
     );
   }
@@ -242,10 +262,7 @@ async function projectContext(
       "HYPOTHESIS_PREREQUISITE_INCOMPLETE",
       "필수 선행 단계를 먼저 완료해주세요.",
       {
-        meta: {
-          requiredStage,
-          resumeRoute: processRoute(projectId, requiredStage),
-        },
+        meta: blockerMeta({ projectId, requiredStage }),
       },
     );
   }
@@ -262,6 +279,8 @@ async function projectContext(
     reportType: row.report_type,
     setupCompletionId: row.setup_completion_id,
     filesCompletionId: row.files_completion_id,
+    setupResourceVersionId: row.setup_resource_version_id,
+    filesResourceVersionId: row.files_resource_version_id,
   };
 }
 
@@ -348,6 +367,21 @@ async function ensureHypothesis(
       context.filesCompletionId,
     ],
   );
+  await recordResourceDependencies(client, {
+    projectId: context.projectId,
+    dependencies: [
+      {
+        upstreamResourceVersionId: context.setupResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "setup_to_hypothesis",
+      },
+      {
+        upstreamResourceVersionId: context.filesResourceVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "mapping_set_to_hypothesis",
+      },
+    ],
+  });
   return {
     resourceId,
     resourceVersionId,
@@ -582,25 +616,17 @@ async function markDownstreamRevalidation(
   );
   const affected = progressed.rows.map((row) => row.stage_key);
   if (affected.length === 0) return affected;
-  await client.query(
-    `UPDATE project_stage_state
-     SET stage_status = 'revalidation_required', invalidated_at = now(),
-         blocker_codes = ARRAY['HYPOTHESIS_CHANGED'], updated_at = now()
-     WHERE project_id = $1 AND stage_key = ANY($2::text[])`,
-    [projectId, affected],
-  );
-  await client.query(
-    `INSERT INTO project_invalidation_event (
-       invalidation_id, project_id, trigger_version_id, start_stage_key,
-       reason_code, affected_stage_keys
-     ) VALUES ($1, $2, $3, 'research_plan', 'HYPOTHESIS_CHANGED', $4)`,
-    [uuidv7(), projectId, triggerVersionId, affected],
-  );
-  await client.query(
-    `UPDATE project SET project_status = 'revalidation_required',
-       updated_at = now() WHERE project_id = $1`,
-    [projectId],
-  );
+  await invalidateProjectStages(client, {
+    projectId,
+    triggerVersionId,
+    startStageKey: "research_plan",
+    reasonCode: "HYPOTHESIS_CHANGED",
+    transitions: uniformRevalidationTransitions(
+      affected,
+      "HYPOTHESIS_CHANGED",
+    ),
+    markProjectRevalidation: true,
+  });
   return affected;
 }
 
@@ -722,6 +748,21 @@ export async function saveHypothesis(input: {
         context.filesCompletionId,
       ],
     );
+    await recordResourceDependencies(client, {
+      projectId: input.projectId,
+      dependencies: [
+        {
+          upstreamResourceVersionId: context.setupResourceVersionId,
+          downstreamResourceVersionId: nextResourceVersionId,
+          dependencyKind: "setup_to_hypothesis",
+        },
+        {
+          upstreamResourceVersionId: context.filesResourceVersionId,
+          downstreamResourceVersionId: nextResourceVersionId,
+          dependencyKind: "mapping_set_to_hypothesis",
+        },
+      ],
+    });
     await client.query(
       `UPDATE project_hypothesis
        SET current_resource_version_id = $2, draft_version = $3,
@@ -738,6 +779,10 @@ export async function saveHypothesis(input: {
         input.userId,
       ],
     );
+    await invalidateResourceDependents(client, {
+      projectId: input.projectId,
+      upstreamResourceVersionIds: [current.resourceVersionId],
+    });
     let questionSetBecameStale = false;
     if (current.currentQuestionSetId) {
       const changed = await client.query(
@@ -979,9 +1024,18 @@ export async function createHypothesisGeneration(input: {
     );
     await client.query(
       `INSERT INTO workflow_job_input (job_id, input_role, resource_version_id)
-       VALUES ($1, 'hypothesis_input', $2)`,
-      [jobId, hypothesis.resourceVersionId],
+       VALUES
+         ($1, 'hypothesis_input', $2),
+         ($1, 'project_setup', $3),
+         ($1, 'files_completion', $4)`,
+      [
+        jobId,
+        hypothesis.resourceVersionId,
+        context.setupResourceVersionId,
+        context.filesResourceVersionId,
+      ],
     );
+    await pinWorkflowJobSourceSnapshot(client, { jobId });
     await client.query(
       `INSERT INTO hypothesis_generation (
          generation_id, project_id, job_id, input_resource_version_id,
@@ -1008,6 +1062,11 @@ export async function createHypothesisGeneration(input: {
       projectId: input.projectId,
       generationId,
       inputResourceVersionId: hypothesis.resourceVersionId,
+      sourceInputVersionIds: [
+        hypothesis.resourceVersionId,
+        context.setupResourceVersionId,
+        context.filesResourceVersionId,
+      ],
       inputDraftVersion: hypothesis.draftVersion,
       inputContentHash: contentHash({
         provisionalRating: hypothesis.provisionalRating,
@@ -1205,102 +1264,15 @@ export function validateHypothesisAgentOutput(
   return [...result.questions].sort((a, b) => a.priority - b.priority);
 }
 
-function artifactEncryptionKey(): Buffer {
-  const configured = process.env.REFLO_AGENT_ARTIFACT_KEY?.trim();
-  if (configured) {
-    const decoded = Buffer.from(configured, "base64");
-    if (decoded.byteLength !== 32) {
-      throw new Error("REFLO_AGENT_ARTIFACT_KEY must be a 32-byte base64 key");
-    }
-    return decoded;
-  }
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("REFLO_AGENT_ARTIFACT_KEY is required in production");
-  }
-  return createHash("sha256")
-    .update(
-      process.env.REFLO_WORKER_TOKEN ||
-        "reflo-local-worker-token-change-me",
-    )
-    .digest();
-}
-
-async function storeRawTrace(
-  projectId: string,
-  generationId: string,
-  rawTrace: string | undefined,
-): Promise<null | {
-  artifactId: string;
-  objectKey: string;
-  objectVersion: string;
-  sha256: string;
-  byteSize: number;
-  keyRef: string;
-}> {
-  if (!rawTrace) return null;
-  const key = artifactEncryptionKey();
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(Buffer.from(rawTrace, "utf8")),
-    cipher.final(),
-  ]);
-  const body = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
-  const objectKey = `temporary/${projectId}/agent/${generationId}/raw-trace.enc`;
-  const stored = await putImmutableObject({
-    objectKey,
-    body,
-    mediaType: "application/octet-stream",
-    metadata: {
-      encryption: "AES-256-GCM",
-      retentionDays: "30",
-    },
-  });
-  return {
-    artifactId: uuidv7(),
-    objectKey,
-    objectVersion: stored.objectVersion,
-    sha256: createHash("sha256").update(body).digest("hex"),
-    byteSize: body.byteLength,
-    keyRef: process.env.REFLO_AGENT_ARTIFACT_KEY_REF || "local-derived-v1",
-  };
-}
-
 export async function commitHypothesisGenerationResult(
   jobId: string,
   workerResult: HypothesisWorkerResult,
-): Promise<void> {
-  const result = workerResult.output;
+  metadata: WorkerResultCommitMetadata,
+): Promise<WorkerResultCommitOutcome> {
+  const result = workerResult;
   const questions = validateHypothesisAgentOutput(result);
-  const lookup = await withTransaction(async (client) => {
-    const generation = await client.query<{
-      generation_id: string;
-      project_id: string;
-      input_revision: string;
-      input_resource_version_id: string;
-      operation_status: string;
-      validity_status: string;
-    }>(
-      `SELECT hg.generation_id, hg.project_id, hg.input_revision,
-         hg.input_resource_version_id, wj.operation_status, wj.validity_status
-       FROM hypothesis_generation hg
-       JOIN workflow_job wj ON wj.job_id = hg.job_id
-       WHERE hg.job_id = $1`,
-      [jobId],
-    );
-    const row = generation.rows[0];
-    if (!row) {
-      throw new ApiError(404, "JOB_NOT_FOUND", "생성 작업을 찾을 수 없습니다.");
-    }
-    return row;
-  });
-  if (lookup.operation_status === "succeeded") return;
-  const rawArtifact = await storeRawTrace(
-    lookup.project_id,
-    lookup.generation_id,
-    workerResult.rawTrace,
-  );
-  await withTransaction(async (client) => {
+  return withTransaction(async (client) => {
+    await lockWorkflowJobLineage(client, { jobId });
     const generation = await client.query<{
       generation_id: string;
       project_id: string;
@@ -1310,6 +1282,7 @@ export async function commitHypothesisGenerationResult(
       validity_status: string;
       current_input_revision: string;
       current_question_set_id: string | null;
+      current_question_set_resource_version_id: string | null;
       draft_version: string;
       input_content_hash: string;
     }>(
@@ -1317,12 +1290,19 @@ export async function commitHypothesisGenerationResult(
          hg.input_resource_version_id, wj.operation_status, wj.validity_status,
          ph.input_revision AS current_input_revision,
          ph.current_question_set_id, hg.draft_version,
-         rv.content_hash AS input_content_hash
+         rv.content_hash AS input_content_hash,
+         current_qsv.resource_version_id
+           AS current_question_set_resource_version_id
        FROM hypothesis_generation hg
        JOIN workflow_job wj ON wj.job_id = hg.job_id
        JOIN project_hypothesis ph ON ph.project_id = hg.project_id
        JOIN resource_version rv
          ON rv.resource_version_id = hg.input_resource_version_id
+       LEFT JOIN hypothesis_question_set current_qs
+         ON current_qs.question_set_id = ph.current_question_set_id
+       LEFT JOIN hypothesis_question_set_version current_qsv
+         ON current_qsv.question_set_id = current_qs.question_set_id
+        AND current_qsv.version_no = current_qs.current_version
        WHERE hg.job_id = $1 FOR UPDATE OF wj, ph`,
       [jobId],
     );
@@ -1330,7 +1310,26 @@ export async function commitHypothesisGenerationResult(
     if (!row) {
       throw new ApiError(404, "JOB_NOT_FOUND", "생성 작업을 찾을 수 없습니다.");
     }
-    if (row.operation_status === "succeeded") return;
+    const snapshotDecision = await decidePinnedWorkflowJobCommit(client, {
+      jobId,
+      attempt: metadata.attempt,
+      sequence: metadata.sequence,
+      resultInputVersionIds: metadata.inputVersionIds,
+      resultHash: metadata.resultHash,
+    });
+    if (snapshotDecision.decision === "duplicate") {
+      return { applied: false, disposition: "duplicate" };
+    }
+    if (lateResultRequiresAuditOnly(snapshotDecision)) {
+      await recordLateWorkflowJobResult(client, {
+        jobId,
+        metadata,
+        reason: snapshotDecision.attemptMatches
+          ? `WORKFLOW_JOB_${snapshotDecision.operationStatus.toUpperCase()}`
+          : "WORKFLOW_JOB_ATTEMPT_MISMATCH",
+      });
+      return { applied: false, disposition: "obsolete" };
+    }
     const inputRef = result.inputVersionRefs[0];
     if (
       inputRef.resourceVersionId !== row.input_resource_version_id ||
@@ -1344,30 +1343,9 @@ export async function commitHypothesisGenerationResult(
       );
     }
     const obsolete =
+      snapshotDecision.decision === "obsolete" ||
       row.validity_status === "obsolete" ||
       row.input_revision !== row.current_input_revision;
-    if (rawArtifact) {
-      await client.query(
-        `INSERT INTO artifact (
-           artifact_id, project_id, artifact_kind, storage_status,
-           bucket_name, object_key, object_version, sha256, byte_size,
-           media_type, retention_class, created_by_actor_type,
-           retention_expires_at, encryption_algorithm, encryption_key_ref
-         ) VALUES ($1, $2, 'agent_output', 'temporary', $3, $4, $5, $6, $7,
-           'application/octet-stream', 'temporary', 'worker',
-           now() + interval '30 days', 'AES-256-GCM', $8)`,
-        [
-          rawArtifact.artifactId,
-          row.project_id,
-          objectStoreBucket(),
-          rawArtifact.objectKey,
-          rawArtifact.objectVersion,
-          rawArtifact.sha256,
-          rawArtifact.byteSize,
-          rawArtifact.keyRef,
-        ],
-      );
-    }
     const questionSetId = uuidv7();
     const resourceId = uuidv7();
     const resourceVersionId = uuidv7();
@@ -1442,6 +1420,13 @@ export async function commitHypothesisGenerationResult(
       );
     }
     if (!obsolete) {
+      await invalidateResourceDependents(client, {
+        projectId: row.project_id,
+        upstreamResourceVersionIds:
+          row.current_question_set_resource_version_id === null
+            ? []
+            : [row.current_question_set_resource_version_id],
+      });
       if (row.current_question_set_id) {
         await client.query(
           `UPDATE hypothesis_question_set_version qsv
@@ -1463,6 +1448,7 @@ export async function commitHypothesisGenerationResult(
       `UPDATE workflow_job
        SET operation_status = 'succeeded', validity_status = $2,
            current_phase = 'completed', progress_percent = 100,
+           progress_sequence = GREATEST(progress_sequence, $4),
            finished_at = now(), heartbeat_at = now(), retryable = false,
            result_summary_json = $3
        WHERE job_id = $1`,
@@ -1470,6 +1456,23 @@ export async function commitHypothesisGenerationResult(
         jobId,
         obsolete ? "obsolete" : "current",
         JSON.stringify({ questionSetId, questionCount: questions.length }),
+        metadata.sequence,
+      ],
+    );
+    await client.query(
+      `UPDATE workflow_job
+       SET result_summary_json = result_summary_json || $2::jsonb
+       WHERE job_id = $1`,
+      [
+        jobId,
+        JSON.stringify({
+          workerResult: {
+            attempt: metadata.attempt,
+            sequence: metadata.sequence,
+            inputVersionIds: metadata.inputVersionIds,
+            hash: metadata.resultHash,
+          },
+        }),
       ],
     );
     const started = new Date(result.metadata.startedAt).getTime();
@@ -1485,7 +1488,7 @@ export async function commitHypothesisGenerationResult(
         result.metadata.usage.inputTokens,
         result.metadata.usage.outputTokens,
         Number.isFinite(finished - started) ? Math.max(0, finished - started) : 0,
-        rawArtifact?.artifactId ?? null,
+        null,
       ],
     );
     await client.query(
@@ -1493,6 +1496,14 @@ export async function commitHypothesisGenerationResult(
        VALUES ($1, 'hypothesis_questions', $2)`,
       [jobId, resourceVersionId],
     );
+    await recordResourceDependencies(client, {
+      projectId: row.project_id,
+      dependencies: metadata.inputVersionIds.map((inputVersionId) => ({
+        upstreamResourceVersionId: inputVersionId,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "hypothesis_generation_input",
+      })),
+    });
     await client.query(
       `INSERT INTO hypothesis_audit_event (
          audit_event_id, project_id, event_type, input_revision,
@@ -1511,6 +1522,10 @@ export async function commitHypothesisGenerationResult(
         }),
       ],
     );
+    return {
+      applied: true,
+      disposition: obsolete ? "obsolete" : "current",
+    };
   });
 }
 
@@ -1679,11 +1694,6 @@ async function createQuestionSetVersion(
     [input.projectId],
   );
   if (reopened.rows.length > 0) {
-    await markDownstreamRevalidation(
-      client,
-      input.projectId,
-      resourceVersionId,
-    );
     await client.query(
       `UPDATE project SET current_stage = 'hypothesis',
          row_version = row_version + 1, updated_at = now()
@@ -1753,6 +1763,39 @@ async function createQuestionSetVersion(
      WHERE question_set_id = $1`,
     [input.questionSetId, nextVersion],
   );
+  const hypothesis = await client.query<{
+    current_resource_version_id: string;
+  }>(
+    `SELECT current_resource_version_id
+     FROM project_hypothesis
+     WHERE project_id = $1`,
+    [input.projectId],
+  );
+  if (!hypothesis.rows[0]) {
+    throw new Error("HYPOTHESIS_RESOURCE_VERSION_MISSING");
+  }
+  await recordResourceDependencies(client, {
+    projectId: input.projectId,
+    dependencies: [
+      {
+        upstreamResourceVersionId:
+          hypothesis.rows[0].current_resource_version_id,
+        downstreamResourceVersionId: resourceVersionId,
+        dependencyKind: "hypothesis_to_question_set",
+      },
+    ],
+  });
+  await invalidateResourceDependents(client, {
+    projectId: input.projectId,
+    upstreamResourceVersionIds: [input.currentResourceVersionId],
+  });
+  if (reopened.rows.length > 0) {
+    await markDownstreamRevalidation(
+      client,
+      input.projectId,
+      resourceVersionId,
+    );
+  }
   await client.query(
     `INSERT INTO hypothesis_audit_event (
        audit_event_id, project_id, actor_user_id, event_type,

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "validatedValueSetId": "validated_values_01",
+  "validationVersion": 3,
+  "sourceSnapshotId": "snapshot_01",
+  "sourceFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "status": "approved",
+  "values": [
+    {
+      "targetId": "target_boolean_01",
+      "semanticKey": {
+        "metric": "is_profitable"
+      },
+      "originalValue": {
+        "valueType": "boolean",
+        "value": "definitely"
+      },
+      "normalizedValue": {
+        "valueType": "boolean",
+        "value": true
+      },
+      "selectedEvidenceIds": [
+        "evidence_01"
+      ],
+      "authoritySource": {
+        "sourceType": "filing",
+        "sourceId": "source_01"
+      },
+      "cutoffDate": "2026-07-26",
+      "conversionRule": {
+        "rule": "identity",
+        "scale": "1",
+        "offset": "0",
+        "roundingMode": "none"
+      },
+      "conflictResolutionDecision": {
+        "status": "no_conflict",
+        "reason": "Only one authoritative source.",
+        "discardedEvidenceIds": []
+      },
+      "validationVersion": 3
+    }
+  ],
+  "contentHash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "createdAt": "2026-07-26T10:00:00+09:00",
+  "tool": {
+    "name": "reflo-validation",
+    "version": "1.0.0"
+  }
+}

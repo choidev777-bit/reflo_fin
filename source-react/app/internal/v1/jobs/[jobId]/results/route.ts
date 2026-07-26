@@ -16,6 +16,12 @@ import {
   commitResearchValidationResult,
   type PhaseFourWorkerPayload,
 } from "@/server/infrastructure/repositories/phase4-repository";
+import {
+  parseWorkerResultEnvelope,
+  type WorkerResultCommitMetadata,
+} from "@/server/domain/worker-result-contract";
+import { contentHash } from "@/server/domain/hash";
+import { LineageInvariantError } from "@/server/infrastructure/services/source-snapshot-service";
 
 type Context = { params: Promise<{ jobId: string }> };
 
@@ -24,34 +30,81 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
     requireWorkerIdentity(request);
     const { jobId: rawJobId } = await context.params;
     const jobId = requireUuid(rawJobId);
-    const body = await readJson<{
-      resultType?: unknown;
-      payload?: unknown;
-    }>(request);
-    if (body.resultType === "file_scan") {
-      await commitFileScanResult(
-        jobId,
-        body.payload as Parameters<typeof commitFileScanResult>[1],
-      );
-    } else if (body.resultType === "file_inspection") {
-      await commitInspectionResult(jobId, body.payload as InspectionResultPayload);
-    } else if (body.resultType === "hypothesis_questions") {
-      await commitHypothesisGenerationResult(
-        jobId,
-        body.payload as HypothesisWorkerResult,
-      );
-    } else if (body.resultType === "research_validation") {
-      await commitResearchValidationResult(
-        jobId,
-        body.payload as PhaseFourWorkerPayload,
-      );
-    } else {
+    let body;
+    try {
+      body = parseWorkerResultEnvelope(await readJson<unknown>(request));
+    } catch {
       throw new ApiError(
         400,
         "RESULT_SCHEMA_INVALID",
-        "지원하지 않는 worker 결과입니다.",
+        "worker 결과 envelope 형식이 올바르지 않습니다.",
       );
     }
-    return jsonResponse({ accepted: true }, { status: 202 }, requestId);
+    const payloadHash = contentHash(body.payload);
+    if (body.results.length !== 1 || body.results[0].hash !== payloadHash) {
+      throw new ApiError(
+        409,
+        "WORKER_RESULT_HASH_MISMATCH",
+        "작업 결과 hash가 payload와 일치하지 않습니다.",
+      );
+    }
+    const metadata: WorkerResultCommitMetadata = {
+      attempt: body.attempt,
+      sequence: body.sequence,
+      inputVersionIds: body.inputVersionIds,
+      resultHash: payloadHash,
+    };
+    let outcome;
+    try {
+      if (body.resultType === "file_scan") {
+        outcome = await commitFileScanResult(
+          jobId,
+          body.payload as Parameters<typeof commitFileScanResult>[1],
+          metadata,
+        );
+      } else if (body.resultType === "file_inspection") {
+        outcome = await commitInspectionResult(
+          jobId,
+          body.payload as InspectionResultPayload,
+          metadata,
+        );
+      } else if (body.resultType === "hypothesis_questions") {
+        outcome = await commitHypothesisGenerationResult(
+          jobId,
+          body.payload as HypothesisWorkerResult,
+          metadata,
+        );
+      } else if (body.resultType === "research_validation") {
+        outcome = await commitResearchValidationResult(
+          jobId,
+          body.payload as PhaseFourWorkerPayload,
+          metadata,
+        );
+      } else {
+        throw new ApiError(
+          409,
+          "RESULT_HANDLER_UNAVAILABLE",
+          "이 작업 유형의 결과 처리기가 아직 연결되지 않았습니다.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof LineageInvariantError) {
+        throw new ApiError(
+          409,
+          error.code,
+          "작업 입력 계보와 결과 버전을 확인해주세요.",
+        );
+      }
+      throw error;
+    }
+    return jsonResponse(
+      {
+        jobId,
+        attempt: body.attempt,
+        applied: outcome.applied,
+      },
+      undefined,
+      requestId,
+    );
   });
 }

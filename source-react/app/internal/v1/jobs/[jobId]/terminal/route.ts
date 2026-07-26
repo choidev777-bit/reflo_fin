@@ -12,12 +12,15 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
     requireWorkerIdentity(request);
     const { jobId: rawJobId } = await context.params;
     const body = await readJson<{
+      attempt?: unknown;
       terminalStatus?: unknown;
       errorCode?: unknown;
       message?: unknown;
       retryable?: unknown;
     }>(request);
     if (
+      !Number.isInteger(body.attempt) ||
+      Number(body.attempt) < 1 ||
       body.terminalStatus !== "failed" ||
       typeof body.errorCode !== "string" ||
       typeof body.message !== "string"
@@ -29,6 +32,7 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
       );
     }
     await failWorkerJob(requireUuid(rawJobId), {
+      attempt: Number(body.attempt),
       errorCode: body.errorCode,
       message: body.message,
       retryable: body.retryable === true,

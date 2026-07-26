@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -72,6 +73,18 @@ const registryResultTypes = new Set(
 const setDifference = (left, right) =>
   [...left].filter((value) => !right.has(value)).sort();
 
+const stableJson = (value) => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    .join(",")}}`;
+};
+
+const payloadHash = (value) =>
+  crypto.createHash("sha256").update(stableJson(value), "utf8").digest("hex");
+
 const missingFromRegistry = setDifference(
   envelopeResultTypes,
   registryResultTypes,
@@ -87,6 +100,32 @@ if (missingFromRegistry.length || missingFromEnvelope.length) {
       ",",
     )}; missingFromEnvelope=${missingFromEnvelope.join(",")}`,
   );
+}
+
+const envelopePayloadRefs = new Map();
+for (const rule of envelope.allOf ?? []) {
+  const resultType = rule.if?.properties?.resultType?.const;
+  const payloadRef = rule.then?.properties?.payload?.$ref;
+  if (typeof resultType !== "string" || typeof payloadRef !== "string") {
+    throw new Error(
+      "worker-result-envelope.schema.json: every resultType must have one exact payload $ref",
+    );
+  }
+  if (envelopePayloadRefs.has(resultType)) {
+    throw new Error(
+      `worker-result-envelope.schema.json: duplicate payload rule for ${resultType}`,
+    );
+  }
+  envelopePayloadRefs.set(resultType, payloadRef);
+}
+for (const entry of registry.resultTypes) {
+  const expectedRef = entry.payloadRef.replace(/^v1\//, "");
+  const actualRef = envelopePayloadRefs.get(entry.resultType);
+  if (actualRef !== expectedRef) {
+    throw new Error(
+      `${entry.resultType}: envelope payload ${actualRef ?? "(missing)"} does not match registry ${expectedRef}`,
+    );
+  }
 }
 
 const activityInput = schemasByFile.get("activity-input.schema.json");
@@ -110,6 +149,48 @@ if (missingActivityMapping.length || unknownActivityMapping.length) {
       ",",
     )}; unknown=${unknownActivityMapping.join(",")}`,
   );
+}
+
+const resultTypeEntries = registry.resultTypes.map((entry) => entry.resultType);
+if (new Set(resultTypeEntries).size !== resultTypeEntries.length) {
+  throw new Error("schema-registry.json: duplicate resultType entry");
+}
+
+const activityEntries = registry.resultTypes.flatMap((entry) =>
+  entry.activityTypes.map((activityType) => ({
+    activityType,
+    taskQueue:
+      entry.activityTaskQueues?.[activityType] ?? entry.taskQueue,
+  })),
+);
+if (
+  new Set(activityEntries.map((entry) => entry.activityType)).size !==
+  activityEntries.length
+) {
+  throw new Error("schema-registry.json: duplicate activityType mapping");
+}
+
+const expectedActivityQueues = new Map();
+for (const rule of activityInput.allOf ?? []) {
+  const mappedActivities =
+    rule.if?.properties?.activityType?.enum ??
+    (rule.if?.properties?.activityType?.const
+      ? [rule.if.properties.activityType.const]
+      : []);
+  const expectedQueue = rule.then?.properties?.taskQueue?.const;
+  if (!expectedQueue) continue;
+  for (const activityType of mappedActivities) {
+    expectedActivityQueues.set(activityType, expectedQueue);
+  }
+}
+
+for (const { activityType, taskQueue } of activityEntries) {
+  const expectedQueue = expectedActivityQueues.get(activityType);
+  if (expectedQueue && taskQueue !== expectedQueue) {
+    throw new Error(
+      `${activityType}: registry task queue ${taskQueue} does not match ${expectedQueue}`,
+    );
+  }
 }
 
 const resolveJsonPointer = (document, pointer) => {
@@ -151,16 +232,39 @@ const manifest = readJson(path.join(fixtureDir, "manifest.json"));
 let fixtureFailures = 0;
 
 for (const fixture of manifest) {
-  const schemaFile = path.basename(fixture.schema);
+  const [schemaPath, schemaFragment = ""] = fixture.schema.split("#", 2);
+  const schemaFile = path.basename(schemaPath);
   const schema = schemasByFile.get(schemaFile);
   if (!schema) {
     throw new Error(`fixture schema not registered: ${fixture.schema}`);
   }
 
-  const validate = ajv.getSchema(schema.$id);
+  const schemaRef = `${schema.$id}${schemaFragment ? `#${schemaFragment}` : ""}`;
+  const validate = ajv.getSchema(schemaRef);
+  if (!validate) {
+    throw new Error(`fixture schema reference missing: ${fixture.schema}`);
+  }
   const dataPath = path.resolve(fixtureDir, fixture.data);
   const data = readJson(dataPath);
   const actual = validate(data);
+
+  if (
+    actual &&
+    fixture.valid &&
+    schemaFile === "worker-result-envelope.schema.json"
+  ) {
+    const expectedHash = payloadHash(data.payload);
+    if (
+      data.results.length !== 1 ||
+      data.results[0].hash !== expectedHash
+    ) {
+      fixtureFailures += 1;
+      console.error(
+        `${fixture.data}: result hash must equal the canonical payload hash ${expectedHash}`,
+      );
+      continue;
+    }
+  }
 
   if (actual !== fixture.valid) {
     fixtureFailures += 1;

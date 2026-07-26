@@ -1,0 +1,26 @@
+{
+  "bindingId": "binding_chart_01",
+  "slotId": "slot_revenue_chart_01",
+  "kind": "chart",
+  "categories": {
+    "sheetId": "sheet_01",
+    "sheet": "Income",
+    "range": "B1:E1",
+    "authority": "authoritative",
+    "structureFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "series": [
+    {
+      "seriesId": "series_revenue",
+      "source": {
+        "sheetId": "sheet_01",
+        "sheet": "Income",
+        "range": "B2:E2",
+        "authority": "authoritative",
+        "structureFingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    }
+  ],
+  "status": "confirmed",
+  "detectionConfidence": 1.5
+}

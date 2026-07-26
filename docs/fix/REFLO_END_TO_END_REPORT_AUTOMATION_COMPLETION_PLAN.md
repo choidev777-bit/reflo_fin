@@ -1,14 +1,14 @@
 # Implementation Plan: REFLO 종단간 리서치·Excel·보고서 자동화 완성
 
-**상태:** 검토 대기  
+**상태:** 승인됨 · Phase 1 완료 · Phase 2 미착수<br>
 **작성일:** 2026-07-26  
 **최종 수정일:** 2026-07-26  
 **예상 구현:** 7개 독립 Phase, 집중 개발 28시간 내외  
 **적용 범위:** 프로젝트 설정 → 파일 분석 → 조사·검증 → Excel 반영 → 밸류에이션 → 보고서 초안 → 검증·승인 → PDF/XLSX 내보내기  
 **기준 Fixture:** `fixtures/ISC_095340_4Q25_Valuation_하나증권_12.xlsx`와 대응 ISC PDF  
 
-> 이 문서는 기존의 부분 계획을 종단간 관점에서 통합한 **완성 실행 계획**이다.  
-> 승인 전에는 `docs/REFLO_IMPLEMENTATION_PLAN_v1.md`를 대체하지 않는다. 승인되면 해당 문서의 Phase 2·4·5·6·7이 이 계획을 참조하도록 갱신한다.
+> 이 문서는 기존의 부분 계획을 종단간 관점에서 통합한 **승인된 완성 실행 계획**이다.<br>
+> 2026-07-26에는 사용자 지시에 따라 Phase 1만 완료했으며 Phase 2 이후 범위는 미착수 상태로 보존한다.
 
 관련 부분 계획:
 
@@ -524,56 +524,94 @@ Phase 1에서는 현재 `.next-stale-*`가 전역 lint에 포함되는 문제와
 
 **목표:** 이후 구현이 공유할 타입, SourceSnapshot, dependency DAG, 실패하는 종단간 테스트를 먼저 고정한다.  
 **예상:** 4시간  
-**상태:** 대기  
+**실제:** 약 1시간 30분<br>
+**상태:** 완료<br>
 **의존성:** 현재 변경사항 백업, DB migration 기준선 확인
 
 ### RED — 테스트 먼저
 
-- [ ] `contracts/schemas`에 scalar/table/chart/composite/style/materialization/RenderPlan valid·invalid fixture 작성
-- [ ] `source-react/tests/report-source-lineage.test.ts` 작성
+- [x] `contracts/schemas`에 scalar/table/chart/composite/style/materialization/RenderPlan valid·invalid fixture 작성
+- [x] `source-react/tests/report-source-lineage.test.ts` 작성
   - setup/file/mapping/evidence/workbook/valuation/outline/report 계보 고정
   - 작업 중 입력 변경 시 결과 `obsolete`
-- [ ] `source-react/tests/report-current-gaps.test.ts` 작성
+- [x] `source-react/tests/report-current-gaps.test.ts` 작성
   - 조사값이 Workbook에 적용되어야 함
   - scalar가 원래 PDF slot에 materialize되어야 함
   - export PDF가 원본 artifact와 달라야 함
-- [ ] 현재 테스트가 의도한 이유로 실패하는지 확인
+- [x] 현재 테스트가 의도한 이유로 실패하는지 확인
 
 ### GREEN — 최소 구현
 
-- [ ] 다음 schema를 추가·확장
+- [x] 다음 schema를 추가·확장
   - `template-ir.schema.json`
   - `mapping-set.schema.json`
   - `workbook-analysis.schema.json`
   - `report-worker-artifact.schema.json`
   - 신규 `validated-value-set.schema.json`
   - 신규 `report-materialization.schema.json`
-- [ ] OpenAPI에 Workbook 적용 task와 report materialization task 계약 추가
-- [ ] `source_snapshot`, `resource_dependency`, materialization/render run migration 설계·적용
-- [ ] 공통 dependency invalidator와 source fingerprint service 구현
-- [ ] 모든 비동기 commit 경로에 late-result snapshot 재검사 추가
-- [ ] `.next-stale-*`, `tmp`, generated artifact를 lint 대상에서 제외
-- [ ] schema registry와 result type 불일치 해소
+- [x] OpenAPI에 Workbook 적용 task와 report materialization task 계약 추가
+- [x] `source_snapshot`, `resource_dependency`, materialization/render run migration 설계·적용
+- [x] 공통 dependency invalidator와 source fingerprint service 구현
+- [x] 모든 비동기 commit 경로에 late-result snapshot 재검사 추가
+- [x] `.next-stale-*`, `tmp`, generated artifact를 lint 대상에서 제외
+- [x] schema registry와 result type 불일치 해소
 
 ### REFACTOR
 
-- [ ] repository별 중복 invalidation SQL을 공통 service 호출로 교체
-- [ ] blocker code와 `resumeRoute` 계산을 중앙화
-- [ ] 계약 코드 생성 및 TS/Python/C# 타입 경계 정리
+- [x] repository별 중복 invalidation SQL을 공통 service 호출로 교체
+- [x] blocker code와 `resumeRoute` 계산을 중앙화
+- [x] 계약 코드 생성 및 TS/Python/C# 타입 경계 정리
 
 ### 품질 게이트
 
-- [ ] schema strict validation 통과
-- [ ] migration up/down 통과
-- [ ] dependency DAG unit test 90% 이상
-- [ ] late-result·idempotency·duplicate commit 통합 테스트 통과
-- [ ] 공통 검증 명령 통과
+- [x] schema strict validation 통과
+- [x] migration up/down 통과
+- [x] dependency DAG unit test 90% 이상
+- [x] late-result·idempotency·duplicate commit 통합 테스트 통과
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
 - 신규 테이블과 optional schema field만 추가한다.
 - 기존 active pointer는 변경하지 않는다.
 - 기능 flag를 끄면 기존 pipeline을 읽을 수 있어야 한다.
+
+### Phase 1 실행 기록 — 2026-07-26
+
+**RED**
+
+- schema registry에서 실제 worker result type인 `news_discovery` 누락을 재현했다.
+- nested payload·discriminator·typed binding 불일치, cross-project 참조, snapshot TOCTOU, late/duplicate commit 실패를 먼저 고정했다.
+- 현재 미구현 범위인 Evidence→Workbook, scalar materialization, 새 export PDF는 `report-current-gaps.test.ts`의 의도적 TODO 3건으로 남겼다.
+- 기준 ISC fixture는 선택 가능한 필수 매핑 7개와 Phase 2 후보 생성 전까지 차단되어야 하는 `figure_2_chart`, `figure_3_chart` 2개를 명시적으로 고정했다.
+
+**GREEN**
+
+- 16개 strict schema, 27개 valid·invalid fixture, 21개 worker result type과 단일-result/canonical-hash envelope를 적용했다.
+- SourceSnapshot, dependency DAG, materialization/render run migration과 project ownership·advisory lock을 적용했다.
+- file scan·inspection·hypothesis·research 비동기 commit 경로에 exact input snapshot, attempt/sequence/hash, obsolete/duplicate 판정을 연결했다.
+- setup/files→analysis→mapping→hypothesis/research→valuation→outline→report의 실제 `resource_dependency` 기록과 이전 버전 무효화를 연결했다.
+
+**REFACTOR**
+
+- repository별 stage 무효화와 blocker/resume 계산을 공통 service/policy로 통합했다.
+- schema codegen을 실제 TS parser와 Python/C# 경계에서 소비하고 drift 검사를 추가했다.
+- E2E용 Next 산출물을 별도 경로로 격리하고 실행 전 생성 디렉터리를 정리해 중단된 dev 산출물 재사용을 방지했다.
+
+| 검증 | 완료 결과 |
+|---|---|
+| Contract | 16 schemas, 27 fixtures, 21 result types, TS/Python codegen drift 0 |
+| Source tests | 86 total, 74 pass, 9 DB-env skip, 3 intentional future-phase TODO, 0 fail |
+| Explicit Postgres integration | 9/9 pass: ownership, lock, late/duplicate/obsolete, shared invalidator |
+| DAG coverage | `report-lineage.ts` line 100%, branch 92.86%, function 100% |
+| Migration | dry down → actual down → dry up → actual up 통과, 현재 up |
+| OpenAPI | Redocly strict lint 통과 |
+| Next | lint 0 errors, typecheck 통과, production build 통과 |
+| Browser | 10/10 통과; 기준 fixture는 Phase 2 책임의 후보 없는 차트 2개에서 정상 차단 |
+| Workers | PDF 7/7, Excel worker + C# contracts .NET 9 Docker build 0 warnings/errors |
+| Diff | `git diff --check` 통과 |
+
+Windows host에는 .NET runtime만 있고 SDK가 없어 공통 명령의 `dotnet build`는 실행할 수 없었다. 동일 csproj는 공식 .NET 9 SDK Docker 이미지에서 빌드해 대체 검증했다.
 
 ---
 
@@ -1180,14 +1218,14 @@ ISC 6페이지 fixture 기준:
 
 | Phase | 상태 | 예상 | 실제 |
 |---|---|---:|---:|
-| Phase 1 계약·버전 계보 | 대기 | 4h | - |
+| Phase 1 계약·버전 계보 | 완료 | 4h | 1h 30m |
 | Phase 2 분석·매핑·스타일 | 대기 | 4h | - |
 | Phase 3 Evidence→Workbook | 대기 | 4h | - |
 | Phase 4 typed materialization | 대기 | 4h | - |
 | Phase 5 공용 renderer·UI | 대기 | 4h | - |
 | Phase 6 PDF·검증·export | 대기 | 4h | - |
 | Phase 7 migration·E2E·출시 | 대기 | 4h | - |
-| **합계** | **0/7** | **28h** | **-** |
+| **합계** | **1/7** | **28h** | **1h 30m** |
 
 PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 개발 시간에 포함하지 않는다.
 
@@ -1214,6 +1252,15 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - false auto-match·false block 사례
 - visual regression false pass/false fail
 - migration 결과와 rollback 여부
+
+### Phase 1 학습
+
+- 개념적 DAG 테스트만으로는 부족하며 실제 producer가 `resource_dependency`를 저장해야 교체·복원·지연 결과가 안전하다.
+- 새 resource ID로 authoritative pointer가 바뀌는 경우도 기존 실행을 `obsolete`로 만드는 입력 변경이다.
+- 애플리케이션 사전 검사만으로는 TOCTOU를 닫을 수 없어 project advisory lock과 DB ownership trigger를 함께 사용해야 한다.
+- generated contract는 생성만 하지 않고 실제 서버 parser와 Python/C# 경계에서 소비해야 drift 검사가 의미가 있다.
+- 기준 ISC Workbook의 `figure_2_chart`, `figure_3_chart`는 현재 후보가 없으며 Phase 2가 해결하기 전에는 진행을 허용하지 않는 것이 올바른 기준선이다.
+- 중단된 Next dev 산출물을 재사용하면 route/type 생성물이 손상될 수 있어 E2E dist를 사용자 dev 서버와 분리하고 실행 전에 정리해야 한다.
 
 ---
 
@@ -1251,11 +1298,10 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 ## 18. 다음 행동
 
-1. 이 종합 계획을 사용자와 함께 검토한다.
-2. 범위와 구현 순서를 승인한다.
-3. Phase 1의 실패 테스트와 계약부터 시작한다.
-4. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
+1. Phase 1 완료 결과와 알려진 Phase 2 blocker 2건을 검토한다.
+2. 사용자 지시가 있을 때만 Phase 2의 RED부터 시작한다.
+3. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
 
-**Plan Status:** 검토 대기  
-**Next Action:** 사용자 승인 후 Phase 1 시작  
-**Blocked By:** 계획 승인
+**Plan Status:** 승인됨 · Phase 1 완료 · Phase 2 미착수<br>
+**Next Action:** 사용자 지시 후 Phase 2 RED 시작<br>
+**Blocked By:** 없음

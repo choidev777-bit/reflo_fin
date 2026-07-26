@@ -8,4 +8,7 @@
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\dotnet\Reflo.Contracts\Reflo.Contracts.csproj" />
+  </ItemGroup>
 </Project>

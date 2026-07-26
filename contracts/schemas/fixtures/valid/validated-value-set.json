@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1.0",
+  "validatedValueSetId": "validated_values_01",
+  "validationVersion": 3,
+  "sourceSnapshotId": "snapshot_01",
+  "sourceFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "approved",
+  "values": [
+    {
+      "targetId": "target_revenue_4q25",
+      "semanticKey": {
+        "metric": "revenue",
+        "period": "4Q25",
+        "unit": "KRW million",
+        "scope": "consolidated"
+      },
+      "originalValue": {
+        "valueType": "money",
+        "value": "125000000000",
+        "unit": "KRW"
+      },
+      "normalizedValue": {
+        "valueType": "money",
+        "value": "125000",
+        "unit": "KRW million"
+      },
+      "selectedEvidenceIds": [
+        "evidence_01"
+      ],
+      "authoritySource": {
+        "sourceType": "filing",
+        "sourceId": "filing_01"
+      },
+      "cutoffDate": "2026-01-31",
+      "conversionRule": {
+        "rule": "unit_scale",
+        "scale": "0.000001",
+        "offset": "0",
+        "roundingMode": "half_up"
+      },
+      "conflictResolutionDecision": {
+        "status": "no_conflict",
+        "reason": "Single authoritative filing value.",
+        "discardedEvidenceIds": []
+      },
+      "validationVersion": 3
+    }
+  ],
+  "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "createdAt": "2026-07-26T10:00:00+09:00",
+  "tool": {
+    "name": "reflo-validation",
+    "version": "1.0.0"
+  }
+}

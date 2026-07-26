@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "1.0",
+  "artifactType": "report_materialization",
+  "materializationId": "materialization_01",
+  "materializationVersion": 1,
+  "sourceSnapshot": {
+    "snapshotId": "snapshot_01",
+    "sourceFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "setup": {
+      "role": "setup",
+      "resourceVersionId": "setup_01",
+      "version": 1,
+      "contentHash": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "pdf": {
+      "role": "pdf",
+      "resourceVersionId": "pdf_01",
+      "version": 1,
+      "contentHash": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "xlsx": {
+      "role": "xlsx",
+      "resourceVersionId": "xlsx_01",
+      "version": 1,
+      "contentHash": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "templateIr": {
+      "role": "template_ir",
+      "resourceVersionId": "template_01",
+      "version": 1,
+      "contentHash": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "workbookAnalysis": {
+      "role": "workbook_analysis",
+      "resourceVersionId": "workbook_analysis_01",
+      "version": 1,
+      "contentHash": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "mappingSet": {
+      "role": "mapping_set",
+      "resourceVersionId": "mapping_01",
+      "version": 2,
+      "contentHash": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "validationApproval": {
+      "role": "validation_approval",
+      "resourceVersionId": "validation_01",
+      "version": 3,
+      "contentHash": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "validatedWorkbook": {
+      "role": "validated_workbook",
+      "resourceVersionId": "validated_workbook_01",
+      "version": 4,
+      "contentHash": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "valuationApproval": {
+      "role": "valuation_approval",
+      "resourceVersionId": "valuation_01",
+      "version": 5,
+      "contentHash": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    "outlineApproval": {
+      "role": "outline_approval",
+      "resourceVersionId": "outline_01",
+      "version": 6,
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "styleTemplate": {
+      "role": "style_template",
+      "resourceVersionId": "style_01",
+      "version": 1,
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "report": {
+      "role": "report",
+      "resourceVersionId": "report_01",
+      "version": 7,
+      "contentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "capturedAt": "2026-07-26T10:00:00+09:00"
+  },
+  "status": "current",
+  "items": [
+    {
+      "kind": "scalar",
+      "rawValue": "92500",
+      "formattedValue": "92,500원",
+      "valueType": "money",
+      "unit": "KRW",
+      "period": "4Q25",
+      "authority": "validated_value",
+      "sourceDecision": "Missing provenance.",
+      "displayRule": {},
+      "styleTemplateRef": "style_scalar_01"
+    }
+  ],
+  "contentHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "createdAt": "2026-07-26T10:01:00+09:00",
+  "materializer": {
+    "name": "reflo-report-materializer",
+    "version": "1.0.0"
+  },
+  "warnings": []
+}

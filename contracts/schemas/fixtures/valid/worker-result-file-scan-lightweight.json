@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "attempt": 1,
+  "sequence": 3,
+  "inputVersionIds": [
+    "file_version_01"
+  ],
+  "resultType": "file_scan",
+  "payload": {
+    "supportStatus": "accepted",
+    "detectedMediaType": "application/pdf",
+    "magicBytes": "255044462d312e37",
+    "encrypted": false,
+    "macroDetected": false,
+    "malwareStatus": "clean",
+    "rejectionCodes": [],
+    "checks": [
+      {
+        "code": "magic_bytes",
+        "status": "passed"
+      },
+      {
+        "code": "malware",
+        "status": "passed"
+      },
+      {
+        "code": "supported_features",
+        "status": "passed"
+      }
+    ],
+    "tool": {
+      "name": "reflo-file-scan",
+      "version": "1.0.0"
+    },
+    "inspectedAt": "2026-07-26T10:00:00+09:00"
+  },
+  "results": [
+    {
+      "entityType": "project_file_version",
+      "entityId": "file_version_01",
+      "version": 1,
+      "hash": "7ae45b329cf3a62ccb1b19bb6648f1720452da0cbe5d5f064f580eb620c03cb7"
+    }
+  ],
+  "artifacts": [],
+  "tool": {
+    "name": "reflo-control-worker",
+    "version": "1.0.0"
+  }
+}

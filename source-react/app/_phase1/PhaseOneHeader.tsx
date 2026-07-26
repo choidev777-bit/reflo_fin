@@ -55,8 +55,7 @@ export function PhaseOneHeader({
         headers: { "X-CSRF-Token": session.csrfToken },
       });
       setUserMenuOpen(false);
-      router.push("/");
-      router.refresh();
+      window.location.assign("/");
     } catch {
       setLogoutError(true);
       setLogoutPending(false);

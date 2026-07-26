@@ -17,6 +17,7 @@ import {
   type ResearchCandidate,
   type ValidatedEvidence,
 } from "../../server/domain/research-validation";
+import { createWorkerResultEnvelope } from "../../server/domain/worker-result-contract";
 import {
   collectResearchSources,
   type CollectionBundle,
@@ -36,16 +37,23 @@ const internalApiUrl =
   "http://127.0.0.1:3000";
 const workerToken =
   process.env.REFLO_WORKER_TOKEN?.trim() || "reflo-local-worker-token-change-me";
+const controlWorkerTool = { name: "reflo-control", version: "1.0.0" };
 
 async function internalPost(path: string, body: unknown): Promise<void> {
+  const serializedBody = JSON.stringify(body);
+  const idempotencyKey = createHash("sha256")
+    .update(path)
+    .update("\0")
+    .update(serializedBody)
+    .digest("hex");
   const response = await fetch(`${internalApiUrl}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${workerToken}`,
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
     },
-    body: JSON.stringify(body),
+    body: serializedBody,
     signal: Context.current().cancellationSignal,
   });
   if (!response.ok) {
@@ -197,37 +205,48 @@ export async function scanUpload(input: FileIngestWorkflowInput): Promise<void> 
   }
   await recordJobProgress(input.jobId, input.jobAttempt, 2, "quarantine_scan", 80, "보안 검사 결과를 반영하고 있습니다.");
   const accepted = base.rejectionCodes.length === 0;
-  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
-    schemaVersion: "1.0.0",
-    attempt: input.jobAttempt,
-    sequence: 3,
-    resultType: "file_scan",
-    payload: {
-      supportStatus: accepted ? "accepted" : "rejected",
-      detectedMediaType: base.detectedMediaType,
-      magicBytes: base.magicBytes,
-      encrypted: base.encrypted,
-      macroDetected: base.macroDetected,
-      malwareStatus,
-      rejectionCodes: base.rejectionCodes,
-      checks: [
-        {
-          code: "magic_bytes",
-          status: base.rejectionCodes.includes("FILE_MAGIC_MISMATCH") ? "failed" : "passed",
-        },
-        {
-          code: "malware",
-          status: malwareStatus === "clean" ? "passed" : "failed",
-        },
-        {
-          code: "supported_features",
-          status: accepted ? "passed" : "failed",
-        },
-      ],
-      tool: { name: "reflo-file-scan", version: "1.0.0" },
-      inspectedAt: new Date().toISOString(),
-    },
-  });
+  const payload = {
+    supportStatus: accepted ? ("accepted" as const) : ("rejected" as const),
+    detectedMediaType: base.detectedMediaType,
+    magicBytes: base.magicBytes,
+    encrypted: base.encrypted,
+    macroDetected: base.macroDetected,
+    malwareStatus,
+    rejectionCodes: base.rejectionCodes,
+    checks: [
+      {
+        code: "magic_bytes",
+        status: base.rejectionCodes.includes("FILE_MAGIC_MISMATCH") ? "failed" : "passed",
+      },
+      {
+        code: "malware",
+        status: malwareStatus === "clean" ? "passed" : "failed",
+      },
+      {
+        code: "supported_features",
+        status: accepted ? "passed" : "failed",
+      },
+    ],
+    tool: { name: "reflo-file-scan", version: "1.0.0" },
+    inspectedAt: new Date().toISOString(),
+  };
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    createWorkerResultEnvelope({
+      attempt: input.jobAttempt,
+      sequence: 3,
+      inputVersionIds: [input.fileVersionId],
+      resultType: "file_scan",
+      payload,
+      result: {
+        entityType: "file_scan",
+        entityId: input.jobId,
+        version: input.jobAttempt,
+      },
+      artifacts: [],
+      tool: controlWorkerTool,
+    }),
+  );
 }
 
 async function callIsolatedWorker<T>(
@@ -368,14 +387,30 @@ export async function generateHypothesisQuestions(
     80,
     "질문 형식과 조사 가능성을 검증하고 있습니다.",
   );
-  const payload = await response.json();
-  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
-    schemaVersion: "1.0.0",
-    attempt: input.jobAttempt,
-    sequence: 3,
-    resultType: "hypothesis_questions",
-    payload,
-  });
+  const responseBody = (await response.json()) as {
+    output?: unknown;
+  };
+  if (!responseBody.output) {
+    throw new Error("LLM worker response is missing output");
+  }
+  const payload = responseBody.output;
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    createWorkerResultEnvelope({
+      attempt: input.jobAttempt,
+      sequence: 3,
+      inputVersionIds: input.sourceInputVersionIds,
+      resultType: "hypothesis_questions",
+      payload,
+      result: {
+        entityType: "hypothesis_questions",
+        entityId: input.generationId,
+        version: input.jobAttempt,
+      },
+      artifacts: [],
+      tool: controlWorkerTool,
+    }),
+  );
 }
 
 async function callResearchAgent(
@@ -720,12 +755,7 @@ export async function validateAndPublishResearch(
     95,
     "검증된 근거와 원문 연결을 게시하고 있습니다.",
   );
-  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
-    schemaVersion: "1.0.0",
-    attempt: input.jobAttempt,
-    sequence: 8,
-    resultType: "research_validation",
-    payload: {
+  const payload = {
       sources: bundle.sources,
       candidates: researchCandidates,
       evidence,
@@ -738,8 +768,24 @@ export async function validateAndPublishResearch(
         startedAt,
         finishedAt: new Date().toISOString(),
       },
-    },
-  });
+    };
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    createWorkerResultEnvelope({
+      attempt: input.jobAttempt,
+      sequence: 8,
+      inputVersionIds: input.sourceInputVersionIds,
+      resultType: "research_validation",
+      payload,
+      result: {
+        entityType: "research_validation",
+        entityId: input.researchRunId,
+        version: input.jobAttempt,
+      },
+      artifacts: [],
+      tool: controlWorkerTool,
+    }),
+  );
 }
 
 export async function runResearchValidation(
@@ -868,50 +914,62 @@ export async function finalizeInspection(
     putInspectionArtifact(`${prefix}/mapping-set.json`, mappingBytes),
     putInspectionArtifact(`${prefix}/market-price-snapshot.json`, marketPriceBytes),
   ]);
-  await internalPost(`/internal/v1/jobs/${input.jobId}/results`, {
-    schemaVersion: "1.0.0",
-    attempt: input.jobAttempt,
-    sequence: 5,
-    resultType: "file_inspection",
-    payload: {
-      pdf: {
-        ...pdf,
-        artifact: descriptor(
-          "template_ir",
-          `${prefix}/template-ir.json`,
-          pdfBytes,
-          pdfObject.objectVersion,
-        ),
+  const pdfArtifact = descriptor(
+    "template_ir",
+    `${prefix}/template-ir.json`,
+    pdfBytes,
+    pdfObject.objectVersion,
+  );
+  const workbookArtifact = descriptor(
+    "workbook_analysis",
+    `${prefix}/workbook-analysis.json`,
+    workbookBytes,
+    workbookObject.objectVersion,
+  );
+  const marketPriceArtifact = descriptor(
+    "market_price_snapshot",
+    `${prefix}/market-price-snapshot.json`,
+    marketPriceBytes,
+    marketPriceObject.objectVersion,
+  );
+  const mappingArtifact = descriptor(
+    "mapping_set",
+    `${prefix}/mapping-set.json`,
+    mappingBytes,
+    mappingObject.objectVersion,
+  );
+  const payload = {
+    pdf: { ...pdf, artifact: pdfArtifact },
+    workbook: { ...workbook, artifact: workbookArtifact },
+    marketPrice: { ...marketPrice, artifact: marketPriceArtifact },
+    mapping: { ...mapping, artifact: mappingArtifact },
+  };
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    createWorkerResultEnvelope({
+      attempt: input.jobAttempt,
+      sequence: 5,
+      inputVersionIds: [
+        input.setupResourceVersionId,
+        input.pdf.fileVersionId,
+        input.workbook.fileVersionId,
+      ],
+      resultType: "file_inspection",
+      payload,
+      result: {
+        entityType: "file_inspection",
+        entityId: input.inspectionId,
+        version: input.jobAttempt,
       },
-      workbook: {
-        ...workbook,
-        artifact: descriptor(
-          "workbook_analysis",
-          `${prefix}/workbook-analysis.json`,
-          workbookBytes,
-          workbookObject.objectVersion,
-        ),
-      },
-      marketPrice: {
-        ...marketPrice,
-        artifact: descriptor(
-          "market_price_snapshot",
-          `${prefix}/market-price-snapshot.json`,
-          marketPriceBytes,
-          marketPriceObject.objectVersion,
-        ),
-      },
-      mapping: {
-        ...mapping,
-        artifact: descriptor(
-          "mapping_set",
-          `${prefix}/mapping-set.json`,
-          mappingBytes,
-          mappingObject.objectVersion,
-        ),
-      },
-    },
-  });
+      artifacts: [
+        pdfArtifact,
+        workbookArtifact,
+        marketPriceArtifact,
+        mappingArtifact,
+      ],
+      tool: controlWorkerTool,
+    }),
+  );
 }
 
 export async function reportFailure(
