@@ -150,6 +150,20 @@ export type ReportMaterializationWorkflowInput = {
   requestedByUserId: string;
 };
 
+export type ReportDeliveryWorkflowInput = {
+  workflowType: "reportDeliveryWorkflow";
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  operationKind: "preview" | "validation" | "export";
+  operationId: string;
+  reportVersionId: string;
+  sourceSnapshotId: string;
+  sourceFingerprint: string;
+  requestedByUserId: string;
+  validationRunId?: string;
+};
+
 export type InspectionIssue = {
   code: string;
   severity: "info" | "warning" | "blocking";

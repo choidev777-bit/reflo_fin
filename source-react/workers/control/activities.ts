@@ -26,6 +26,7 @@ import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ReportDeliveryWorkflowInput,
   ReportMaterializationWorkflowInput,
   ResearchValidationWorkflowInput,
   WorkbookApplicationWorkflowInput,
@@ -37,7 +38,11 @@ import type {
 } from "../../server/domain/workbook-application";
 import { buildMappingSet } from "./mapping";
 import {
+  executeReportPreview,
+  executeReportExport,
+  executeReportValidation,
   executeReportMaterialization,
+  failReportDelivery,
   failReportMaterialization,
 } from "../../server/infrastructure/repositories/report-repository";
 
@@ -487,6 +492,85 @@ export async function reportReportMaterializationFailure(
     attempt: input.jobAttempt,
     code,
     message,
+  });
+}
+
+export async function runReportDelivery(
+  input: ReportDeliveryWorkflowInput,
+): Promise<void> {
+  const activity = Context.current();
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    input.operationKind,
+    10,
+    "보고서 결과물을 생성하고 검증하고 있습니다.",
+  );
+  if (input.operationKind === "preview") {
+    await executeReportPreview({
+      projectId: input.projectId,
+      userId: input.requestedByUserId,
+      reportVersionId: input.reportVersionId,
+      previewId: input.operationId,
+      jobId: input.jobId,
+      jobAttempt: input.jobAttempt,
+      sourceSnapshotId: input.sourceSnapshotId,
+    });
+    return;
+  }
+  if (input.operationKind === "validation") {
+    await executeReportValidation({
+      projectId: input.projectId,
+      userId: input.requestedByUserId,
+      reportVersionId: input.reportVersionId,
+      validationRunId: input.operationId,
+      jobId: input.jobId,
+      jobAttempt: input.jobAttempt,
+      sourceSnapshotId: input.sourceSnapshotId,
+    });
+    return;
+  }
+  if (input.operationKind === "export") {
+    if (!input.validationRunId) {
+      throw new Error("REPORT_EXPORT_VALIDATION_MISSING");
+    }
+    await executeReportExport({
+      projectId: input.projectId,
+      userId: input.requestedByUserId,
+      approvedReportVersionId: input.reportVersionId,
+      validationRunId: input.validationRunId,
+      artifactTypes: ["pdf", "xlsx"],
+      idempotencyKey: `report-delivery:${input.operationId}:${input.jobAttempt}`,
+      exportId: input.operationId,
+      jobId: input.jobId,
+      jobAttempt: input.jobAttempt,
+      sourceSnapshotId: input.sourceSnapshotId,
+    });
+    return;
+  }
+  activity.heartbeat({
+    phase: input.operationKind,
+    progressPercent: 10,
+  });
+  throw new Error(`REPORT_DELIVERY_KIND_NOT_IMPLEMENTED:${input.operationKind}`);
+}
+
+export async function reportReportDeliveryFailure(
+  input: ReportDeliveryWorkflowInput,
+  code: string,
+  message: string,
+  cancelled: boolean,
+): Promise<void> {
+  await failReportDelivery({
+    projectId: input.projectId,
+    operationKind: input.operationKind,
+    operationId: input.operationId,
+    jobId: input.jobId,
+    jobAttempt: input.jobAttempt,
+    code,
+    message,
+    cancelled,
   });
 }
 

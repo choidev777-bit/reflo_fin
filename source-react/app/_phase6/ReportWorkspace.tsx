@@ -29,6 +29,7 @@ import styles from "./phase6.module.css";
 import type {
   EditSession,
   ExportJob,
+  PreviewJob,
   ProvenanceDetail,
   ReportBlock,
   ReportChartType,
@@ -126,6 +127,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [versions, setVersions] = useState<VersionList["versions"]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
   const [previewWarnings, setPreviewWarnings] = useState<
     Array<{ code: string; message: string }>
   >([]);
@@ -462,10 +464,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     setPanel("preview");
     setPending("preview");
     try {
-      const result = await apiJson<{
-        contentUrl: string;
-        warnings?: Array<{ code: string; message: string }>;
-      }>(
+      let result = await apiJson<PreviewJob>(
         `/api/projects/${projectId}/report/previews`,
         {
           method: "POST",
@@ -475,8 +474,25 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
           }),
         },
       );
+      for (
+        let attempt = 0;
+        ["queued", "rendering", "verifying"].includes(result.status) &&
+        attempt < 300;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        result = await apiJson<PreviewJob>(
+          `/api/projects/${projectId}/report/previews/${result.previewId}`,
+        );
+      }
+      if (result.status !== "ready" || !result.contentUrl) {
+        throw new Error("PDF 미리보기 생성에 실패했습니다.");
+      }
       setPreviewUrl(result.contentUrl);
-      setPreviewWarnings(result.warnings ?? []);
+      setPreviewWarnings(
+        (result.warnings ?? []) as Array<{ code: string; message: string }>,
+      );
+      await loadWorkspace();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -695,7 +711,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const createExport = async (validationRunId: string) => {
     const current = workspaceRef.current;
     if (!current || session.status !== "authenticated") return;
-    const result = await apiJson<ExportJob>(
+    let result = await apiJson<ExportJob>(
       `/api/projects/${projectId}/report/exports`,
       {
         method: "POST",
@@ -710,6 +726,20 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         }),
       },
     );
+    for (
+      let attempt = 0;
+      ["queued", "running"].includes(result.operationStatus) &&
+      attempt < 300;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      result = await apiJson<ExportJob>(
+        `/api/projects/${projectId}/report/exports/${result.exportId}`,
+      );
+    }
+    if (result.operationStatus !== "succeeded") {
+      throw new Error("보고서 내보내기에 실패했습니다.");
+    }
     setExportJob(result);
     setPanel("export");
   };
@@ -734,7 +764,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     setPending("validation");
     setPanel("validation");
     try {
-      const result = await apiJson<ValidationJob>(
+      let result = await apiJson<ValidationJob>(
         `/api/projects/${projectId}/report/validations`,
         {
           method: "POST",
@@ -744,6 +774,16 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
           }),
         },
       );
+      for (
+        let attempt = 0;
+        ["queued", "running"].includes(result.status) && attempt < 300;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        result = await apiJson<ValidationJob>(
+          `/api/projects/${projectId}/report/validations/${result.validationRunId}`,
+        );
+      }
       setValidation(result);
       if (result.status === "passed" || result.status === "passed_with_warnings") {
         setApprovalOpen(true);
@@ -862,6 +902,17 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
             <History size={15} />
             버전
           </button>
+          {workspace.jobs.preview?.status === "ready" &&
+            workspace.jobs.preview.contentUrl && (
+              <button
+                className={styles.toolbarButton}
+                aria-pressed={showOriginal}
+                onClick={() => setShowOriginal((current) => !current)}
+              >
+                <FileText size={15} />
+                {showOriginal ? "변경본 보기" : "원본 비교"}
+              </button>
+            )}
         </div>
         {workspace.report.status === "working" ? (
           <button
@@ -936,7 +987,12 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
               : "보고서 초안의 텍스트를 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 텍스트와 데이터 블록이 표시됩니다."}
           </div>
           <ReportPdfEditor
-            url={workspace.sourcePdf.contentUrl}
+            url={
+              showOriginal
+                ? workspace.sourcePdf.contentUrl
+                : workspace.jobs.preview?.contentUrl ??
+                  workspace.sourcePdf.contentUrl
+            }
             pages={workspace.pages}
             editable={editable}
             activeBlockId={activeBlockId}

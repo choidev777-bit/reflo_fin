@@ -1,4 +1,5 @@
 import type { DirectoryCompany, ExchangeCode } from "./types";
+import { itManufacturingEligibility } from "./it-manufacturing-policy";
 
 const KIND_LIST_URL =
   "https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13";
@@ -60,8 +61,7 @@ export function parseKindCompanyHtml(html: string): Omit<
       exchange,
       industry: industry || "업종 정보 없음",
       listed: true,
-      mvpEligible: true,
-      ineligibilityReason: null,
+      ...itManufacturingEligibility(ticker),
     });
   }
 

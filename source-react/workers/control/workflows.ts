@@ -9,6 +9,7 @@ import type {
   FileIngestWorkflowInput,
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
+  ReportDeliveryWorkflowInput,
   ReportMaterializationWorkflowInput,
   ResearchValidationWorkflowInput,
   WorkbookApplicationWorkflowInput,
@@ -95,6 +96,18 @@ const reportMaterializationActivities = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumInterval: "1 minute",
     maximumAttempts: 2,
+  },
+});
+
+const reportDeliveryActivities = proxyActivities<typeof activities>({
+  taskQueue: "report-delivery",
+  startToCloseTimeout: "10 minutes",
+  heartbeatTimeout: "1 minute",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 3,
   },
 });
 
@@ -374,6 +387,45 @@ export async function reportMaterializationWorkflow(
         input,
         code,
         message.slice(0, 1000),
+      );
+    });
+    throw error;
+  }
+}
+
+export async function reportDeliveryWorkflow(
+  input: ReportDeliveryWorkflowInput,
+): Promise<void> {
+  try {
+    await reportDeliveryActivities.runReportDelivery(input);
+  } catch (error) {
+    await CancellationScope.nonCancellable(async () => {
+      const message =
+        error instanceof Error ? error.message : "REPORT_DELIVERY_FAILED";
+      const cancelled = isCancellation(error);
+      const code = cancelled
+        ? "REPORT_DELIVERY_CANCELLED"
+        : (message.match(/([A-Z][A-Z0-9_]{4,})/)?.[1] ??
+          "REPORT_DELIVERY_FAILED");
+      if (cancelled) {
+        await scanActivities.reportCancellation(
+          input.jobId,
+          input.jobAttempt,
+        );
+      } else {
+        await scanActivities.reportFailure(
+          input.jobId,
+          input.jobAttempt,
+          code,
+          "보고서 결과물을 생성하지 못했습니다.",
+          true,
+        );
+      }
+      await reportDeliveryActivities.reportReportDeliveryFailure(
+        input,
+        code,
+        message.slice(0, 1000),
+        cancelled,
       );
     });
     throw error;

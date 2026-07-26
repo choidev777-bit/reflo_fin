@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pymupdf
 
-from app import inspect_pdf_bytes, render_pdf_bytes
+from app import (
+    digest,
+    inspect_pdf_bytes,
+    render_pdf_bytes,
+    render_plan_pdf_bytes,
+    source_region_token_hashes,
+)
 
 
 def fixture_pdf() -> bytes:
@@ -101,6 +107,120 @@ def image_only_pdf() -> bytes:
 
 
 class PdfWorkerRenderTest(unittest.TestCase):
+    def test_typed_render_plan_inserts_a_sanitized_vector_and_preserves_fixed_text(
+        self,
+    ) -> None:
+        source = fixture_pdf()
+        bbox = [60, 100, 240, 130]
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="60 100 180 30">'
+            '<rect x="60" y="100" width="180" height="30" fill="#ffffff"/>'
+            '<text x="70" y="120" font-size="12">Vector title</text></svg>'
+        )
+        asset_hash = digest(svg.encode("utf-8"))
+        token_hashes = source_region_token_hashes(source, 1, bbox)
+        result = render_plan_pdf_bytes(
+            source,
+            {
+                "schemaVersion": "1.0",
+                "artifactType": "render_plan",
+                "renderPlanId": "render-plan-test",
+                "renderPlanVersion": 1,
+                "commands": [
+                    {
+                        "commandId": "command-title",
+                        "pageId": "page-1",
+                        "blockId": "page-1.title",
+                        "slotId": "slot-title",
+                        "strategy": "block_vector_replace",
+                        "targetObjectIds": ["source-title"],
+                        "expectedTokenHashes": token_hashes,
+                        "vectorAssetHash": asset_hash,
+                    }
+                ],
+                "vectorAssets": [
+                    {
+                        "slotId": "slot-title",
+                        "assetKind": "scalar",
+                        "sha256": asset_hash,
+                        "mediaType": "image/svg+xml",
+                    }
+                ],
+            },
+            {
+                "page-1.title": {"pageNumber": 1, "bbox": bbox},
+            },
+            {asset_hash: svg},
+            [
+                {
+                    "blockId": "page-1.footer",
+                    "pageNumber": 1,
+                    "bbox": [20, 365, 120, 390],
+                    "text": "Updated footer",
+                    "sourceObjectIds": ["source-footer"],
+                }
+            ],
+        )
+        self.assertTrue(result["validation"]["passed"])
+        self.assertTrue(result["qpdfPassed"])
+        self.assertEqual(["command-title"], result["appliedCommandIds"])
+        rendered = base64.b64decode(result["pdfBase64"])
+        document = pymupdf.open(stream=rendered, filetype="pdf")
+        text = "\n".join(page.get_text() for page in document)
+        document.close()
+        self.assertIn("Vector title", text)
+        self.assertNotIn("Old report title", text)
+        self.assertIn("Updated footer", text)
+        self.assertNotIn("Fixed footer", text)
+        self.assertNotEqual(digest(source), result["sha256"])
+
+    def test_typed_render_plan_rejects_asset_and_token_hash_mismatch(self) -> None:
+        source = fixture_pdf()
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>'
+        plan = {
+            "renderPlanId": "render-plan-test",
+            "commands": [
+                {
+                    "commandId": "command-title",
+                    "pageId": "page-1",
+                    "blockId": "page-1.title",
+                    "slotId": "slot-title",
+                    "strategy": "block_vector_replace",
+                    "targetObjectIds": ["source-title"],
+                    "expectedTokenHashes": ["0" * 64],
+                    "vectorAssetHash": digest(svg.encode("utf-8")),
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "TOKEN_HASH_MISMATCH"):
+            render_plan_pdf_bytes(
+                source,
+                plan,
+                {
+                    "page-1.title": {
+                        "pageNumber": 1,
+                        "bbox": [60, 100, 240, 130],
+                    }
+                },
+                {digest(svg.encode("utf-8")): svg},
+            )
+
+        plan["commands"][0]["expectedTokenHashes"] = source_region_token_hashes(
+            source, 1, [60, 100, 240, 130]
+        )
+        with self.assertRaisesRegex(ValueError, "VECTOR_ASSET_HASH_MISMATCH"):
+            render_plan_pdf_bytes(
+                source,
+                plan,
+                {
+                    "page-1.title": {
+                        "pageNumber": 1,
+                        "bbox": [60, 100, 240, 130],
+                    }
+                },
+                {digest(svg.encode("utf-8")): svg + "tampered"},
+            )
+
     def test_inspection_still_builds_template_ir(self) -> None:
         payload = fixture_pdf()
         result = inspect_pdf_bytes(payload)
@@ -130,6 +250,7 @@ class PdfWorkerRenderTest(unittest.TestCase):
             ],
         )
         self.assertTrue(result["validation"]["passed"])
+        self.assertTrue(result["qpdfPassed"])
         self.assertEqual(
             "region_background_patch",
             result["renderPlan"]["operations"][0]["strategy"],

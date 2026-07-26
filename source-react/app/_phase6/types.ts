@@ -75,6 +75,14 @@ export type ReportMaterializedData =
   | ReportChartSnapshot
   | ReportFixedVisualSnapshot;
 
+export type ReportRenderAsset = {
+  rendererVersion: "reflo-svg-1";
+  mediaType: "image/svg+xml";
+  sceneHash: string;
+  assetHash: string;
+  svg: string;
+};
+
 export type OutlineTitle = {
   blockId: string;
   value: string;
@@ -218,6 +226,7 @@ export type ReportBlock = {
   } | null;
   materializedData?: ReportMaterializedData;
   chartType?: ReportChartType;
+  renderAssets?: Partial<Record<ReportChartType | "default", ReportRenderAsset>>;
   patchStrategy:
     | "fixed"
     | "operator_replace"

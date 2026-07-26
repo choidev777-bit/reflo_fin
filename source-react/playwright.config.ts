@@ -32,14 +32,17 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run db:up && npm run db:migrate && npm run dev:full -- --hostname 127.0.0.1 --port 3100",
+    command:
+      "npm run db:up && npm run temporal:e2e:namespace && npm run db:migrate && npm run dev:full -- --hostname 127.0.0.1 --port 3100",
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
       ...process.env,
       REFLO_NEXT_DIST_DIR: ".runtime/next-e2e",
+      REFLO_TEMPORAL_NAMESPACE: "reflo-e2e",
       REFLO_TEST_AUTH_ENABLED: "1",
+      REFLO_COMPANY_DIRECTORY_TEST_FIXTURE: "1",
       REFLO_KRX_TEST_FIXTURE: "1",
       REFLO_LLM_TEST_FIXTURE: "1",
     },

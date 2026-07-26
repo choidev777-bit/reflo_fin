@@ -8,8 +8,8 @@ export type DirectoryCompany = {
   exchange: ExchangeCode;
   industry: string;
   listed: true;
-  mvpEligible: true;
-  ineligibilityReason: null;
+  mvpEligible: boolean;
+  ineligibilityReason: string | null;
 };
 
 export type CompanyDirectoryProvider = "kiwoom" | "krx-kind";

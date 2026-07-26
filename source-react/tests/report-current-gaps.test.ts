@@ -117,7 +117,7 @@ test("Phase 4: scalar를 원래 PDF slot용 snapshot으로 materialize한다", (
   assert.equal(snapshot.formattedValue, "1,250");
 });
 
-test.todo("Phase 6 gap: export PDF artifact는 source PDF artifact와 다르다", () => {
+test("Phase 6: export PDF artifact는 source PDF artifact와 다르다", () => {
   const implementation = sourceSection(
     reportRepositorySource,
     "export async function createReportExport",

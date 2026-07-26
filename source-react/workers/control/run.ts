@@ -73,6 +73,16 @@ async function run(): Promise<void> {
         activities.reportReportMaterializationFailure,
     },
   });
+  const reportDeliveryWorker = await Worker.create({
+    connection,
+    namespace,
+    taskQueue: "report-delivery",
+    activities: {
+      runReportDelivery: activities.runReportDelivery,
+      reportReportDeliveryFailure:
+        activities.reportReportDeliveryFailure,
+    },
+  });
 
   let reconciliationRunning = false;
   const reconciliationTimer = setInterval(() => {
@@ -97,6 +107,7 @@ async function run(): Promise<void> {
     researchNetworkWorker.shutdown();
     evidenceValidationWorker.shutdown();
     reportMaterializationWorker.shutdown();
+    reportDeliveryWorker.shutdown();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -110,6 +121,7 @@ async function run(): Promise<void> {
       researchNetworkWorker.run(),
       evidenceValidationWorker.run(),
       reportMaterializationWorker.run(),
+      reportDeliveryWorker.run(),
     ]);
   } finally {
     clearInterval(reconciliationTimer);

@@ -21,6 +21,7 @@ try {
 }
 
 const openAiApiKey = localEnvironment.OPENAI_API_KEY?.trim();
+const workerToken = localEnvironment.REFLO_WORKER_TOKEN?.trim();
 if (!openAiApiKey && startCommands.has(command)) {
   console.error(
     "OPENAI_API_KEY is missing from source-react/.env.local. Local services were not started.",
@@ -38,6 +39,8 @@ const child = spawn(
       // Compose reads only this launcher-owned name, so a stale shell
       // OPENAI_API_KEY cannot override source-react/.env.local.
       REFLO_LOCAL_OPENAI_API_KEY: openAiApiKey || "not-used-for-stop-command",
+      REFLO_WORKER_TOKEN:
+        workerToken || "not-used-for-non-worker-stop-command",
     },
     stdio: "inherit",
     windowsHide: true,
