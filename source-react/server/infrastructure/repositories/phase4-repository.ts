@@ -3,6 +3,21 @@ import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import {
+  createActualFinancialTargets,
+  type WorkbookCandidateCell,
+} from "../../domain/research-excel-targets";
+import {
+  buildResearchReportTargets,
+  type ReportMappingEntry,
+  type ResearchReportTarget,
+} from "../../domain/research-report-targets";
+import {
+  buildReportPeriodPlan,
+} from "../../domain/report-period-plan";
+import {
+  isValuationMappingMetric,
+} from "../../domain/mapping-data-readiness";
+import {
   blockerMeta,
   resumeRouteForBlocker,
 } from "../../domain/stage-blocker-policy";
@@ -77,6 +92,18 @@ type ProjectContext = {
   questionSetResourceVersionId: string;
   workbookResourceVersionId: string;
   workbookStructureHash: string;
+  workbookAnalysis: {
+    candidateCells?: WorkbookCandidateCell[];
+    candidateRanges?: Array<{
+      sheetId: string;
+      sheetName: string;
+      range: string;
+      periodColumns?: Array<{
+        label: string;
+      }>;
+    }>;
+  };
+  templateIr: unknown;
   mappingSetResourceVersionId: string;
   setupResourceVersionId: string;
 };
@@ -264,6 +291,8 @@ async function projectContext(
     question_set_resource_version_id: string;
     workbook_resource_version_id: string;
     structure_hash: string;
+    analysis_json: ProjectContext["workbookAnalysis"];
+    template_ir_json: unknown;
     mapping_set_resource_version_id: string;
     setup_resource_version_id: string;
     hypothesis_status: string;
@@ -276,7 +305,7 @@ async function projectContext(
        qsv.question_set_id, qsv.version_no AS question_set_version,
        qsv.resource_version_id AS question_set_resource_version_id,
        msv.workbook_version_id AS workbook_resource_version_id,
-       wv.structure_hash,
+       wv.structure_hash, wv.analysis_json, tiv.template_ir_json,
        msv.resource_version_id AS mapping_set_resource_version_id,
        setup_completion.primary_version_id AS setup_resource_version_id,
        hypothesis_state.stage_status AS hypothesis_status,
@@ -295,6 +324,8 @@ async function projectContext(
        ON files_completion.stage_completion_id = files_state.current_completion_id
      JOIN mapping_set_version msv
        ON msv.resource_version_id = files_completion.primary_version_id
+     JOIN template_ir_version tiv
+       ON tiv.resource_version_id = msv.template_ir_version_id
      JOIN workbook_version wv
        ON wv.resource_version_id = msv.workbook_version_id
      JOIN project_stage_state hypothesis_state
@@ -363,6 +394,8 @@ async function projectContext(
     questionSetResourceVersionId: row.question_set_resource_version_id,
     workbookResourceVersionId: row.workbook_resource_version_id,
     workbookStructureHash: row.structure_hash,
+    workbookAnalysis: row.analysis_json,
+    templateIr: row.template_ir_json,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     setupResourceVersionId: row.setup_resource_version_id,
   };
@@ -398,6 +431,156 @@ function collectionTargets(metrics: string[]) {
         : ("statement" as const),
     ],
   }));
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function objectArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) => {
+        const record = objectValue(item);
+        return record ? [record] : [];
+      })
+    : [];
+}
+
+function templateSlotLocation(
+  templateIr: unknown,
+  slotId: string,
+): { pageNumber: number | null; pageLabel: string | null } {
+  const template = objectValue(templateIr);
+  for (const page of objectArray(template?.pages)) {
+    const found = objectArray(page.slots).some(
+      (slot) => slot.slotId === slotId,
+    );
+    if (!found) continue;
+    return {
+      pageNumber:
+        typeof page.pageNumber === "number" ? page.pageNumber : null,
+      pageLabel: typeof page.pageLabel === "string" ? page.pageLabel : null,
+    };
+  }
+  return { pageNumber: null, pageLabel: null };
+}
+
+function rangeSize(value: string): number {
+  const match = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/i.exec(value.trim());
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  const column = (letters: string) =>
+    [...letters.toUpperCase()].reduce(
+      (total, letter) => total * 26 + letter.charCodeAt(0) - 64,
+      0,
+    );
+  return (
+    (column(match[3]) - column(match[1]) + 1) *
+    (Number(match[4]) - Number(match[2]) + 1)
+  );
+}
+
+function candidatePeriodLabels(
+  workbookAnalysis: ProjectContext["workbookAnalysis"],
+  sheetId: string,
+  address: string,
+): string[] {
+  const ranges = (workbookAnalysis.candidateRanges ?? [])
+    .filter(
+      (range) =>
+        range.sheetId === sheetId &&
+        (range.periodColumns?.length ?? 0) > 0,
+    )
+    .sort((left, right) => {
+      const leftExact =
+        left.range.toUpperCase() === address.toUpperCase() ? 0 : 1;
+      const rightExact =
+        right.range.toUpperCase() === address.toUpperCase() ? 0 : 1;
+      return leftExact - rightExact || rangeSize(left.range) - rangeSize(right.range);
+    });
+  return (ranges[0]?.periodColumns ?? []).flatMap((column) =>
+    column.label ? [column.label] : [],
+  );
+}
+
+async function loadResearchReportTargets(
+  client: TransactionClient,
+  context: ProjectContext,
+  executableTargets: ResearchExcelTarget[],
+): Promise<ResearchReportTarget[]> {
+  const result = await client.query<{
+    mapping_entry_id: string;
+    slot_id: string;
+    semantic_metric: string;
+    binding_kind: "scalar" | "table" | "chart";
+    required: boolean;
+    mapping_status: "suggested" | "confirmed" | "unmapped" | "invalid";
+    selected_candidate_id: string | null;
+    source_type: "cell" | "range" | "chart" | "market_data" | null;
+    sheet_id: string | null;
+    sheet_name: string | null;
+    address: string | null;
+    label: string | null;
+  }>(
+    `SELECT me.mapping_entry_id, me.slot_id, me.semantic_metric,
+       me.binding_kind, me.required, me.mapping_status,
+       me.selected_candidate_id, mc.source_type, mc.sheet_id,
+       mc.sheet_name, mc.address, mc.label
+     FROM mapping_entry me
+     LEFT JOIN mapping_candidate mc
+       ON mc.mapping_candidate_id = me.selected_candidate_id
+     WHERE me.mapping_set_version_id = $1
+     ORDER BY me.required DESC, me.semantic_metric`,
+    [context.mappingSetResourceVersionId],
+  );
+  const entries: ReportMappingEntry[] = result.rows.map((row) => {
+    const location = templateSlotLocation(context.templateIr, row.slot_id);
+    const candidate =
+      row.source_type &&
+      row.sheet_id &&
+      row.sheet_name &&
+      row.address
+        ? {
+            sourceType: row.source_type,
+            sheetId: row.sheet_id,
+            sheetName: row.sheet_name,
+            address: row.address,
+            label: row.label,
+            periodLabels: candidatePeriodLabels(
+              context.workbookAnalysis,
+              row.sheet_id,
+              row.address,
+            ),
+          }
+        : null;
+    return {
+      mappingEntryId: row.mapping_entry_id,
+      slotId: row.slot_id,
+      metric: row.semantic_metric,
+      kind: row.binding_kind,
+      required: row.required,
+      mappingState:
+        row.mapping_status === "invalid"
+          ? "invalid"
+          : candidate
+            ? "connected"
+            : row.mapping_status === "unmapped"
+              ? "unmapped"
+              : "review_required",
+      ...location,
+      candidate,
+    };
+  });
+  return buildResearchReportTargets({
+    entries,
+    periodPlan: buildReportPeriodPlan({
+      targetYear: context.targetYear,
+      targetQuarter: context.targetQuarter,
+      cutoffDate: context.cutoffDate,
+    }),
+    executableTargets,
+  });
 }
 
 async function buildDefaultSnapshot(
@@ -444,6 +627,7 @@ async function buildDefaultSnapshot(
   const mappingRows = await client.query<{
     mapping_entry_id: string;
     slot_id: string;
+    binding_kind: string;
     semantic_metric: string;
     value_type: string;
     required: boolean;
@@ -452,7 +636,8 @@ async function buildDefaultSnapshot(
     sheet_name: string | null;
     address: string | null;
   }>(
-    `SELECT me.mapping_entry_id, me.slot_id, me.semantic_metric, me.value_type,
+    `SELECT me.mapping_entry_id, me.slot_id, me.binding_kind,
+       me.semantic_metric, me.value_type,
        me.required, me.source_json,
        mc.sheet_id, mc.sheet_name, mc.address
      FROM mapping_entry me
@@ -460,12 +645,18 @@ async function buildDefaultSnapshot(
        ON mc.mapping_candidate_id = me.selected_candidate_id
      WHERE me.mapping_set_version_id = $1
        AND me.mapping_status = 'confirmed'
-       AND me.binding_kind = 'scalar'
      ORDER BY me.required DESC, me.semantic_metric`,
     [context.mappingSetResourceVersionId],
   );
   const excelTargets: ResearchExcelTarget[] = mappingRows.rows
-    .filter((row) => row.sheet_id && row.sheet_name && row.address)
+    .filter(
+      (row) =>
+        row.binding_kind === "scalar" &&
+        !isValuationMappingMetric(row.semantic_metric) &&
+        row.sheet_id &&
+        row.sheet_name &&
+        row.address,
+    )
     .map((row) => {
       const metric = row.semantic_metric;
       const marketPrice = /주가|종가/.test(metric);
@@ -499,6 +690,20 @@ async function buildDefaultSnapshot(
         excludedReason: null,
       };
     });
+  const mappingSlotIdsBySheetId = new Map<string, string[]>();
+  for (const row of mappingRows.rows) {
+    if (!row.sheet_id || row.binding_kind === "scalar") continue;
+    const current = mappingSlotIdsBySheetId.get(row.sheet_id) ?? [];
+    if (!current.includes(row.slot_id)) current.push(row.slot_id);
+    mappingSlotIdsBySheetId.set(row.sheet_id, current);
+  }
+  excelTargets.push(
+    ...createActualFinancialTargets({
+      candidateCells: context.workbookAnalysis.candidateCells ?? [],
+      targetYear: context.targetYear,
+      mappingSlotIdsBySheetId,
+    }),
+  );
   return attachNewsSearchPolicies(
     { questions, excelTargets, userUrls: [], sourceReferences: [] },
     {
@@ -743,8 +948,41 @@ async function ensurePlan(
     existing.workbookResourceVersionId === context.workbookResourceVersionId &&
     existing.mappingSetResourceVersionId ===
       context.mappingSetResourceVersionId;
-  if (refsMatch) return existing;
-  const snapshot = await buildDefaultSnapshot(client, context);
+  const expectedSystemTargetIds = new Set(
+    createActualFinancialTargets({
+      candidateCells: context.workbookAnalysis.candidateCells ?? [],
+      targetYear: context.targetYear,
+    }).map((target) => target.targetId),
+  );
+  const currentSystemTargetIds = new Set(
+    existing?.snapshot.excelTargets
+      .filter((target) => target.writeAuthority === "system")
+      .map((target) => target.targetId) ?? [],
+  );
+  const systemTargetContractCurrent = [...expectedSystemTargetIds].every(
+    (targetId) => currentSystemTargetIds.has(targetId),
+  );
+  const hasLegacyValuationTargets = Boolean(
+    existing?.snapshot.excelTargets.some((target) =>
+      isValuationMappingMetric(target.metric),
+    ),
+  );
+  if (
+    refsMatch &&
+    systemTargetContractCurrent &&
+    !hasLegacyValuationTargets
+  ) {
+    return existing;
+  }
+  const snapshot =
+    existing && refsMatch && systemTargetContractCurrent
+      ? {
+          ...existing.snapshot,
+          excelTargets: existing.snapshot.excelTargets.filter(
+            (target) => !isValuationMappingMetric(target.metric),
+          ),
+        }
+      : await buildDefaultSnapshot(client, context);
   if (!existing) {
     const planId = uuidv7();
     const resourceId = uuidv7();
@@ -906,6 +1144,11 @@ export async function getResearchPlanWorkspace(
     const context = await projectContext(client, projectId, userId, true);
     const plan = await ensurePlan(client, context, userId);
     const stages = await workflowState(client, projectId);
+    const reportTargets = await loadResearchReportTargets(
+      client,
+      context,
+      plan.snapshot.excelTargets,
+    );
     return {
       project: {
         projectId,
@@ -935,6 +1178,7 @@ export async function getResearchPlanWorkspace(
         status: plan.status,
         questions: plan.snapshot.questions,
         excelTargets: plan.snapshot.excelTargets,
+        reportTargets,
         userUrls: plan.snapshot.userUrls,
         sourceReferences: plan.snapshot.sourceReferences ?? [],
         validationSummary: plan.validationSummary,

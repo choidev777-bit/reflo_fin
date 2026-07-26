@@ -1,5 +1,9 @@
 import Decimal from "decimal.js";
 import { contentHash } from "./hash";
+import {
+  hasExactPeriodWindow,
+  type ReportPeriodPlan,
+} from "./report-period-plan";
 
 export type ReportTemplateSlot = {
   slotId: string;
@@ -2514,7 +2518,9 @@ function isBoilerplateText(value: string): boolean {
     /^(company|update|company update|research|research center)$/i.test(
       normalized,
     ) ||
-    /^(compliance notice|자료|주|출처)\b/i.test(normalized) ||
+    /^(?:자료|주|출처)\s*[:：]/i.test(normalized) ||
+    /^(?:source|sources|note|notes)\s*[:：]/i.test(normalized) ||
+    /^compliance notice\b/i.test(normalized) ||
     /^[A-Z][A-Z0-9.&-]{0,14}$/.test(normalized) ||
     /^\(\d{4,6}\)$/.test(normalized) ||
     /^\(?\d{4,6}\)?$/.test(normalized) ||
@@ -3945,6 +3951,7 @@ export function validateReportDocument(input: {
     targetPrice: string;
     forwardEps: string;
   };
+  reportPeriodPlan?: ReportPeriodPlan;
 }): ReportIssue[] {
   const issues: ReportIssue[] = [];
   if (
@@ -4018,6 +4025,30 @@ export function validateReportDocument(input: {
           code: "REPORT_DATA_MATERIALIZATION_INCOMPLETE",
           severity: "blocking",
           message: `${block.label}에 승인된 Excel 입력값이 반영되지 않았습니다.`,
+          pageId: page.pageId,
+          blockId: block.blockId,
+        });
+      }
+      if (
+        input.reportPeriodPlan &&
+        block.materializedData?.kind === "table" &&
+        block.materializedData.status === "ready" &&
+        block.materializedData.provenance.sources.some((source) =>
+          /^(?:12|13|14|15)_p4_/i.test(source.sheetName),
+        ) &&
+        !hasExactPeriodWindow(
+          block.materializedData.headers.map((cell) => ({
+            row: cell.row,
+            column: cell.column,
+            value: cell.formattedText || cell.rawValue || "",
+          })),
+          input.reportPeriodPlan.periods,
+        )
+      ) {
+        issues.push({
+          code: "REPORT_PERIOD_HEADER_MISMATCH",
+          severity: "blocking",
+          message: `${block.label}의 연도 구성이 보고서 기준 기간과 다릅니다.`,
           pageId: page.pageId,
           blockId: block.blockId,
         });

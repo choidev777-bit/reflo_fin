@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { connect } from "node:net";
-import { Context } from "@temporalio/activity";
+import { ApplicationFailure, Context } from "@temporalio/activity";
 import yauzl from "yauzl";
 import {
   createWorkerDownloadUrl,
@@ -682,9 +682,9 @@ export async function generateHypothesisQuestions(
     throw new Error("LLM worker response is missing output");
   }
   const payload = responseBody.output;
-  await internalPost(
-    `/internal/v1/jobs/${input.jobId}/results`,
-    createWorkerResultEnvelope({
+  let envelope;
+  try {
+    envelope = createWorkerResultEnvelope({
       attempt: input.jobAttempt,
       sequence: 3,
       inputVersionIds: input.sourceInputVersionIds,
@@ -697,7 +697,17 @@ export async function generateHypothesisQuestions(
       },
       artifacts: [],
       tool: controlWorkerTool,
-    }),
+    });
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(
+      "LLM worker returned an invalid hypothesis question payload",
+      "AGENT_OUTPUT_INVALID",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    envelope,
   );
 }
 
@@ -1110,13 +1120,19 @@ function descriptor(
 async function putInspectionArtifact(
   objectKey: string,
   bytes: Buffer,
-): Promise<{ objectVersion: string }> {
+  options: { reuseExistingOnConflict?: boolean } = {},
+): Promise<{ objectVersion: string; bytes: Buffer }> {
+  const expectedHash = createHash("sha256").update(bytes).digest("hex");
   try {
-    return await putImmutableObject({
+    await putImmutableObject({
       objectKey,
       body: bytes,
       mediaType: "application/json",
     });
+    return {
+      objectVersion: `sha256:${expectedHash}`,
+      bytes,
+    };
   } catch (error) {
     let existing: Buffer;
     try {
@@ -1124,14 +1140,16 @@ async function putInspectionArtifact(
     } catch {
       throw error;
     }
-    const expectedHash = createHash("sha256").update(bytes).digest("hex");
     const existingHash = createHash("sha256").update(existing).digest("hex");
-    if (expectedHash !== existingHash) {
+    if (expectedHash !== existingHash && !options.reuseExistingOnConflict) {
       throw new Error(`IMMUTABLE_ARTIFACT_CONFLICT:${objectKey}`, {
         cause: error,
       });
     }
-    return { objectVersion: `sha256:${existingHash}` };
+    return {
+      objectVersion: `sha256:${existingHash}`,
+      bytes: existing,
+    };
   }
 }
 
@@ -1141,12 +1159,33 @@ export async function finalizeInspection(
   workbook: WorkbookInspectionResult,
   marketPrice: MarketPriceSnapshot,
 ): Promise<void> {
+  const prefix = `immutable/${input.projectId}/file-inspections/${input.inspectionId}`;
+  const marketPriceKey = `${prefix}/market-price-snapshot.json`;
+  const marketPriceObject = await putInspectionArtifact(
+    marketPriceKey,
+    Buffer.from(JSON.stringify(marketPrice)),
+    { reuseExistingOnConflict: true },
+  );
+  let stableMarketPrice: MarketPriceSnapshot;
+  try {
+    stableMarketPrice = JSON.parse(
+      marketPriceObject.bytes.toString("utf8"),
+    ) as MarketPriceSnapshot;
+  } catch (error) {
+    throw new Error(`INVALID_MARKET_PRICE_ARTIFACT:${marketPriceKey}`, {
+      cause: error,
+    });
+  }
   const builtMapping =
     pdf.compatible &&
     workbook.compatible &&
     pdf.templateIr &&
     workbook.workbookAnalysis
-      ? buildMappingSet(pdf.templateIr, workbook.workbookAnalysis, marketPrice)
+      ? buildMappingSet(
+          pdf.templateIr,
+          workbook.workbookAnalysis,
+          stableMarketPrice,
+        )
       : null;
   const mapping = builtMapping
     ? {
@@ -1162,13 +1201,15 @@ export async function finalizeInspection(
                 },
               ]
             : []),
-          ...(marketPrice.status === "unavailable"
+          ...(stableMarketPrice.status === "unavailable"
             ? [
                 {
-                  code: marketPrice.errorCode ?? "KRX_MARKET_PRICE_UNAVAILABLE",
+                  code:
+                    stableMarketPrice.errorCode ??
+                    "KRX_MARKET_PRICE_UNAVAILABLE",
                   severity: "warning" as const,
                   message:
-                    marketPrice.errorMessage ??
+                    stableMarketPrice.errorMessage ??
                     "KRX 기준일 종가를 조회하지 못해 Excel 값을 사용했습니다.",
                 },
               ]
@@ -1191,16 +1232,14 @@ export async function finalizeInspection(
           },
         ],
       };
-  const prefix = `immutable/${input.projectId}/file-inspections/${input.inspectionId}`;
   const pdfBytes = Buffer.from(JSON.stringify(pdf.templateIr));
   const workbookBytes = Buffer.from(JSON.stringify(workbook.workbookAnalysis));
   const mappingBytes = Buffer.from(JSON.stringify(mapping.mappingSet));
-  const marketPriceBytes = Buffer.from(JSON.stringify(marketPrice));
-  const [pdfObject, workbookObject, mappingObject, marketPriceObject] = await Promise.all([
+  const marketPriceBytes = marketPriceObject.bytes;
+  const [pdfObject, workbookObject, mappingObject] = await Promise.all([
     putInspectionArtifact(`${prefix}/template-ir.json`, pdfBytes),
     putInspectionArtifact(`${prefix}/workbook-analysis.json`, workbookBytes),
     putInspectionArtifact(`${prefix}/mapping-set.json`, mappingBytes),
-    putInspectionArtifact(`${prefix}/market-price-snapshot.json`, marketPriceBytes),
   ]);
   const pdfArtifact = descriptor(
     "template_ir",
@@ -1216,7 +1255,7 @@ export async function finalizeInspection(
   );
   const marketPriceArtifact = descriptor(
     "market_price_snapshot",
-    `${prefix}/market-price-snapshot.json`,
+    marketPriceKey,
     marketPriceBytes,
     marketPriceObject.objectVersion,
   );
@@ -1229,7 +1268,7 @@ export async function finalizeInspection(
   const payload = {
     pdf: { ...pdf, artifact: pdfArtifact },
     workbook: { ...workbook, artifact: workbookArtifact },
-    marketPrice: { ...marketPrice, artifact: marketPriceArtifact },
+    marketPrice: { ...stableMarketPrice, artifact: marketPriceArtifact },
     mapping: { ...mapping, artifact: mappingArtifact },
   };
   await internalPost(

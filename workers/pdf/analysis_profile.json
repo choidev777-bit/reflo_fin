@@ -1,5 +1,5 @@
 {
-  "profileVersion": "pdf-classification/2.0",
+  "profileVersion": "pdf-classification/2.1",
   "pipelineVersion": "pdf-analysis/2.0",
   "styleExtractorVersion": "pdf-style/2.0",
   "geometryFingerprintVersion": "pdf-geometry/1.0",

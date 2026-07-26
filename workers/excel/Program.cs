@@ -503,6 +503,60 @@ app.MapPost("/valuation/read-model", async (
     }
 });
 
+app.MapPost("/valuation/prepare", async (
+    ValuationPrepareRequest request,
+    CancellationToken cancellationToken) =>
+{
+    var startedAt = DateTimeOffset.UtcNow;
+    try
+    {
+        var sourceBytes = await DownloadWorkbook(
+            request.DownloadUrl,
+            cancellationToken);
+        var prepared = WorkbookRollForwardEngine.RollForward(
+            sourceBytes,
+            new WorkbookRollForwardRequest(request.Periods));
+        var zip = ReadZipInsights(prepared.WorkbookBytes);
+        var warnings = new List<ContractWarning>();
+        using var workbook = OpenWorkbookForInspection(
+            prepared.WorkbookBytes,
+            warnings);
+        workbook.RecalculateAllFormulas();
+        var readModel = BuildValuationReadModel(
+            workbook,
+            prepared.WorkbookHash,
+            request.OutputBindings ?? [],
+            zip);
+        return Results.Ok(new
+        {
+            workbookBase64 = Convert.ToBase64String(prepared.WorkbookBytes),
+            prepared.WorkbookHash,
+            prepared.Changed,
+            prepared.Changes,
+            prepared.InputCells,
+            readModel,
+            durationMs =
+                (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds,
+        });
+    }
+    catch (Exception error)
+    {
+        var code = error is ValuationContractException contract
+            ? contract.Code
+            : error.Message == "REPORT_PERIOD_PLAN_INVALID"
+                ? "REPORT_PERIOD_PLAN_INVALID"
+                : "WORKBOOK_ROLL_FORWARD_FAILED";
+        return Results.UnprocessableEntity(new
+        {
+            error = new
+            {
+                code,
+                message = Trim(error.Message, 300),
+            },
+        });
+    }
+});
+
 app.MapPost("/valuation/calculate", async (
     ValuationCalculateRequest request,
     CancellationToken cancellationToken) =>
@@ -962,7 +1016,7 @@ static ValuationReadModel BuildValuationReadModel(
                         valueType,
                         label,
                         cell.Style.NumberFormat.Format ?? "",
-                        cell.Value.Type != XLDataType.Blank,
+                        true,
                         [],
                         null,
                         []));
@@ -1818,67 +1872,8 @@ static string ExtractExternalTarget(string formula)
 
 static IReadOnlyList<IXLRange> FindDenseTableRanges(
     IXLWorksheet worksheet,
-    IXLRange used)
-{
-    var contentCells = used.CellsUsed(XLCellsUsedOptions.Contents)
-        .Where(cell => cell.HasFormula || cell.Value.Type != XLDataType.Blank)
-        .Select(cell => (
-            Row: cell.Address!.RowNumber,
-            Column: cell.Address.ColumnNumber))
-        .ToArray();
-    if (contentCells.Length < 4) return [];
-    var occupied = contentCells.ToHashSet();
-    var rowGroups = ConsecutiveGroups(contentCells.Select(cell => cell.Row));
-    var columnGroups = ConsecutiveGroups(contentCells.Select(cell => cell.Column));
-    var candidates = new List<IXLRange>();
-    foreach (var rows in rowGroups)
-    {
-        foreach (var columns in columnGroups)
-        {
-            var rowCount = rows.Last - rows.First + 1;
-            var columnCount = columns.Last - columns.First + 1;
-            if (rowCount < 2 || columnCount < 2) continue;
-            var occupiedCount = 0;
-            for (var row = rows.First; row <= rows.Last; row++)
-            {
-                for (var column = columns.First; column <= columns.Last; column++)
-                {
-                    if (occupied.Contains((row, column))) occupiedCount++;
-                }
-            }
-            var density = (double)occupiedCount / (rowCount * columnCount);
-            if (occupiedCount < 4 || density < 0.15) continue;
-            candidates.Add(worksheet.Range(
-                rows.First,
-                columns.First,
-                rows.Last,
-                columns.Last));
-        }
-    }
-    return candidates;
-}
-
-static IReadOnlyList<ConsecutiveGroup> ConsecutiveGroups(IEnumerable<int> values)
-{
-    var sorted = values.Distinct().Order().ToArray();
-    if (sorted.Length == 0) return [];
-    var groups = new List<ConsecutiveGroup>();
-    var first = sorted[0];
-    var last = first;
-    foreach (var value in sorted.Skip(1))
-    {
-        if (value == last + 1)
-        {
-            last = value;
-            continue;
-        }
-        groups.Add(new ConsecutiveGroup(first, last));
-        first = value;
-        last = value;
-    }
-    groups.Add(new ConsecutiveGroup(first, last));
-    return groups;
-}
+    IXLRange used) =>
+    DenseTableRangeDetector.Find(worksheet, used);
 
 static TableTopology InferTableTopology(
     IXLWorksheet worksheet,
@@ -2652,6 +2647,10 @@ public sealed record ValuationAllowedCell(
 public sealed record ValuationReadRequest(
     string DownloadUrl,
     IReadOnlyList<ValuationOutputBinding>? OutputBindings);
+public sealed record ValuationPrepareRequest(
+    string DownloadUrl,
+    IReadOnlyList<WorkbookPeriod> Periods,
+    IReadOnlyList<ValuationOutputBinding>? OutputBindings);
 public sealed record ValuationCellChange(
     string SheetId,
     string Address,
@@ -3031,6 +3030,3 @@ public sealed record ParsedRangeReference(
     string? SheetId,
     string SheetName,
     string Range);
-public sealed record ConsecutiveGroup(
-    int First,
-    int Last);

@@ -187,6 +187,46 @@ test("projects narrative subtitles and bodies from PDF text geometry", () => {
   });
 });
 
+test("does not project source captions as narrative sections", () => {
+  const pages = pdfPageProjection({
+    pages: [
+      {
+        pageId: "page-2",
+        pageNumber: 2,
+        pageLabel: "02",
+        boxes: {
+          mediaBox: [0, 0, 595.32, 841.92],
+          cropBox: [0, 0, 595.32, 841.92],
+        },
+        blocks: [],
+        slots: [],
+        objects: [
+          {
+            objectId: "source-heading",
+            type: "text_run",
+            bbox: [46.8, 410, 230, 420],
+            textRun: {
+              text: "자료: FnGuide, 하나증권",
+              fontSize: 7,
+            },
+          },
+          {
+            objectId: "source-body",
+            type: "text_run",
+            bbox: [46.8, 424, 250, 434],
+            textRun: {
+              text: "자료: 대덕전자, 하나증권",
+              fontSize: 7,
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(pages[0]?.narrativeSections, []);
+});
+
 function cell(
   sheetId: string,
   sheetName: string,
@@ -460,6 +500,40 @@ test("confirms documented and period-specific model sources", () => {
   );
 });
 
+test("prefers the M2 target P/E output over a market P/E cell", () => {
+  const value = template();
+  value.pages[0].slots = [
+    {
+      slotId: "slot_per",
+      blockId: "block_per",
+      valueType: "decimal",
+      semanticKey: { metric: "per" },
+      required: true,
+    },
+  ];
+  const result = buildMappingSet(
+    value,
+    workbook([
+      cell(
+        "sheet_m2",
+        "M2_목표주가_타겟멀티플",
+        "C7",
+        "적정 P/E (선택 방식)",
+      ),
+      cell("sheet_financial", "04_p1_FinancialData", "F11", "PER"),
+    ]),
+  );
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(sourceAddresses(result), ["C7"]);
+  const binding = result.mappingSet.bindings[0];
+  assert.equal(binding?.kind, "scalar");
+  assert.ok(
+    binding?.kind === "scalar" &&
+      binding.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT"),
+  );
+});
+
 test("keeps a required slot blocked when candidates are ambiguous", () => {
   const value = template();
   value.pages[0].slots = [value.pages[0].slots[1]];
@@ -474,6 +548,46 @@ test("keeps a required slot blocked when candidates are ambiguous", () => {
   assert.equal(result.summary.status, "blocked");
   assert.equal(result.summary.unmappedRequiredCount, 1);
   assert.equal(result.mappingSet.bindings.length, 0);
+});
+
+test("does not treat a broad used range as ambiguity for one structured table", () => {
+  const value = template();
+  value.pages[0].slots = [
+    {
+      slotId: "slot_custom_table",
+      blockId: "block_custom_table",
+      valueType: "table",
+      semanticKey: { metric: "custom_table" },
+      required: true,
+    },
+  ];
+  const analyzed = workbook([]);
+  analyzed.candidateRanges = [
+    rangeCandidate({
+      candidateId: "range_structured",
+      sheetId: "sheet_custom",
+      sheetName: "custom_table",
+      range: "A4:G35",
+      label: "custom_table",
+      kind: "dense_region",
+    }),
+    rangeCandidate({
+      candidateId: "range_used",
+      sheetId: "sheet_custom",
+      sheetName: "custom_table",
+      range: "A1:G40",
+      label: "custom_table",
+      kind: "used_range",
+    }),
+  ];
+
+  const result = buildMappingSet(value, analyzed);
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.equal(result.summary.unmappedRequiredCount, 0);
+  assert.equal(result.mappingSet.bindings.length, 1);
+  assert.equal(result.mappingSet.bindings[0]?.kind, "table");
+  assert.equal(result.mappingSet.bindings[0]?.source.range, "A4:G35");
 });
 
 test("uses the KRX cutoff close as the authoritative current price", () => {
@@ -893,6 +1007,14 @@ test("maps the four page-5 financial tables independently", () => {
     });
     value.candidateRanges.push(
       rangeCandidate({
+        candidateId: `aaa_used_${sheetId}`,
+        sheetId,
+        sheetName,
+        range: "A1:Z90",
+        label,
+        kind: "used_range",
+      }),
+      rangeCandidate({
         candidateId: `range_${sheetId}`,
         sheetId,
         sheetName,
@@ -913,6 +1035,7 @@ test("maps the four page-5 financial tables independently", () => {
     );
   }
   const reportTemplate = template();
+  reportTemplate.pages[0].pageNumber = 5;
   reportTemplate.pages[0].slots = [
     {
       slotId: "slot_income",
@@ -964,6 +1087,147 @@ test("maps the four page-5 financial tables independently", () => {
     validateMappingSet(result.mappingSet),
     true,
     JSON.stringify(validateMappingSet.errors),
+  );
+});
+
+test("uses the declared report page to reject a page-1 summary table", () => {
+  const value = workbook([]);
+  const definitions = [
+    ["sheet_income", "12_p4_손익계산서", "A4:G35", "손익계산서"],
+    ["sheet_balance", "13_p4_대차대조표", "A4:G34", "대차대조표"],
+    ["sheet_indicators", "14_p4_투자지표", "A4:G26", "투자지표"],
+    ["sheet_cashflow", "15_p4_현금흐름표", "A4:G24", "현금흐름표"],
+  ] as const;
+  for (const [sheetId, sheetName, range, label] of definitions) {
+    value.sheets.push({
+      sheetId,
+      name: sheetName,
+      index: value.sheets.length,
+      visibility: "visible",
+      usedRange: `A1:${range.split(":")[1]}`,
+      structureHash: sheetId.padEnd(64, "7").slice(0, 64),
+      formulaCount: 0,
+      mergedRangeCount: 0,
+      chartCount: 0,
+      tableCount: 0,
+    });
+    value.candidateRanges.push(
+      rangeCandidate({
+        candidateId: `aaa_used_${sheetId}`,
+        sheetId,
+        sheetName,
+        range: "A1:Z90",
+        label,
+        kind: "used_range",
+      }),
+      rangeCandidate({
+        candidateId: `range_${sheetId}`,
+        sheetId,
+        sheetName,
+        range,
+        label,
+        kind: "dense_region",
+      }),
+    );
+  }
+  value.sheets.push({
+    sheetId: "sheet_summary",
+    name: "04_p1_FinancialData",
+    index: value.sheets.length,
+    visibility: "visible",
+    usedRange: "A1:F23",
+    structureHash: "8".repeat(64),
+    formulaCount: 0,
+    mergedRangeCount: 0,
+    chartCount: 0,
+    tableCount: 0,
+  });
+  value.candidateRanges.push(
+    rangeCandidate({
+      candidateId: "range_summary_indicators",
+      sheetId: "sheet_summary",
+      sheetName: "04_p1_FinancialData",
+      range: "A4:F16",
+      label: "투자지표",
+      kind: "dense_region",
+    }),
+  );
+
+  const reportTemplate = template();
+  reportTemplate.pages[0].pageNumber = 4;
+  reportTemplate.pages[0].slots = [
+    {
+      slotId: "slot_income",
+      blockId: "block_income",
+      valueType: "table",
+      semanticKey: {
+        metric: "financial_income_statement_table",
+        scope: "손익계산서",
+      },
+      required: true,
+    },
+    {
+      slotId: "slot_balance",
+      blockId: "block_balance",
+      valueType: "table",
+      semanticKey: {
+        metric: "financial_balance_sheet_table",
+        scope: "대차대조표",
+      },
+      required: true,
+    },
+    {
+      slotId: "slot_indicators",
+      blockId: "block_indicators",
+      valueType: "table",
+      semanticKey: {
+        metric: "financial_investment_indicators_table",
+        scope: "투자지표",
+      },
+      required: true,
+    },
+    {
+      slotId: "slot_cashflow",
+      blockId: "block_cashflow",
+      valueType: "table",
+      semanticKey: {
+        metric: "financial_cash_flow_table",
+        scope: "현금흐름표",
+      },
+      required: true,
+    },
+  ];
+
+  const result = buildMappingSet(reportTemplate, value);
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(
+    result.mappingSet.bindings.flatMap((binding) =>
+      binding.kind === "table" ? [binding.source.sheet] : [],
+    ),
+    definitions.map((definition) => definition[1]),
+  );
+  assert.deepEqual(
+    result.mappingSet.bindings.flatMap((binding) =>
+      binding.kind === "table" ? [binding.source.range] : [],
+    ),
+    definitions.map((definition) => definition[2]),
+  );
+  assert.equal(
+    result.mappingSet.candidates.some(
+      (candidate) => candidate.source.sheet === "04_p1_FinancialData",
+    ),
+    false,
+  );
+  assert.equal(
+    result.mappingSet.candidates
+      .filter((candidate) =>
+        candidate.reasonCodes.includes("BROAD_USED_RANGE"),
+      )
+      .every(
+        (candidate) => candidate.score < 0.88,
+      ),
+    true,
   );
 });
 
@@ -1052,6 +1316,74 @@ test("maps revised and prior quarterly tables to their dedicated output sheets",
       ["figure_7_chart", definitions[1][1], "A4:M22"],
     ],
   );
+});
+
+test("maps Key Data and figure one to their dedicated output sheets", () => {
+  const value = workbook([]);
+  const definitions = [
+    ["sheet_key_data", "01A_p1_KeyData", "A1:C22"],
+    ["sheet_valuation", "05_도표1_Valuation", "A1:Z90"],
+  ] as const;
+  for (const [sheetId, sheetName, usedRange] of definitions) {
+    value.sheets.push({
+      sheetId,
+      name: sheetName,
+      index: value.sheets.length,
+      visibility: "visible",
+      usedRange,
+      structureHash: sheetId.padEnd(64, "9").slice(0, 64),
+      formulaCount: 0,
+      mergedRangeCount: 0,
+      chartCount: 0,
+      tableCount: 0,
+    });
+  }
+  const reportTemplate = template();
+  reportTemplate.pages = [
+    {
+      ...reportTemplate.pages[0],
+      pageNumber: 1,
+      slots: [
+        {
+          slotId: "slot_key_data",
+          blockId: "block_key_data",
+          valueType: "table",
+          semanticKey: { metric: "key_data", scope: "Key Data" },
+          required: false,
+        },
+      ],
+    },
+    {
+      ...reportTemplate.pages[0],
+      pageId: "page_2",
+      pageNumber: 2,
+      slots: [
+        {
+          slotId: "slot_figure_1",
+          blockId: "block_figure_1",
+          valueType: "table",
+          semanticKey: {
+            metric: "figure_1_chart",
+            scope: "대덕전자 Valuation",
+          },
+          required: true,
+        },
+      ],
+    },
+  ];
+
+  const result = buildMappingSet(reportTemplate, value);
+  const sources = result.mappingSet.bindings.map((binding) =>
+    binding.kind === "table"
+      ? [binding.semanticKey.metric, binding.source.sheet, binding.source.range]
+      : null,
+  );
+
+  assert.deepEqual(sources, [
+    ["key_data", "01A_p1_KeyData", "A4:C14"],
+    ["figure_1_chart", "05_도표1_Valuation", "A4:E14"],
+  ]);
+  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
 });
 
 test("round-trips each chart candidate definition through mapping revision storage", () => {
@@ -1380,8 +1712,8 @@ test("versions semantic aliases and never auto-selects equally scored required c
   );
   const mappingMetadata = result.mappingSet as unknown as Record<string, unknown>;
 
-  assert.equal(mappingMetadata.semanticAliasVersion, "mapping-alias/2.0");
-  assert.equal(mappingMetadata.scoringRuleVersion, "mapping-score/2.0");
+  assert.equal(mappingMetadata.semanticAliasVersion, "mapping-alias/2.1");
+  assert.equal(mappingMetadata.scoringRuleVersion, "mapping-score/2.1");
   assert.equal(result.summary.status, "blocked");
   assert.equal(result.mappingSet.bindings.length, 0);
   assert.equal(

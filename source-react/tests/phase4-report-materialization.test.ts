@@ -23,6 +23,7 @@ import {
   parseReportBindingDefinition,
   reportMaterializationRetryDecision,
 } from "../server/infrastructure/repositories/report-repository";
+import { buildReportPeriodPlan } from "../server/domain/report-period-plan";
 
 const contractAjv = new Ajv2020({
   allErrors: true,
@@ -398,6 +399,123 @@ test("table snapshot preserves exact matrices, merges, dimensions, styles, and r
     assert.equal(snapshot.headers[0].style?.bold, true);
     assert.equal(snapshot.styleTemplateRef, "table-style-financial");
   }
+});
+
+test("final report validation blocks stale financial statement periods", () => {
+  const labels = ["구분", "2023", "2024", "2025F", "2026F", "2027F"];
+  const cells = labels.flatMap((label, index) => [
+    {
+      ...cell(
+        `${String.fromCharCode(65 + index)}1`,
+        1,
+        index + 1,
+        label,
+        label,
+      ),
+      valueType: "string",
+    },
+    cell(`${String.fromCharCode(65 + index)}2`, 2, index + 1, String(index)),
+  ]);
+  const binding: ReportMappingBinding = {
+    slotId: "slot-financial-periods",
+    metric: "income_statement_table",
+    kind: "table",
+    status: "confirmed",
+    sourceLabel: "12_p4_손익계산서 A1:F2",
+    sourceAddress: "A1:F2",
+    sourceType: "range",
+    definition: {
+      kind: "table",
+      source: {
+        sheetId: "sheet-income-statement",
+        sheetName: "12_p4_손익계산서",
+        address: "A1:F2",
+        structureFingerprint: "income-statement-periods",
+      },
+      rowKeyColumn: "A",
+      columnHeaderRow: 1,
+      expectedRows: 2,
+      expectedColumns: 6,
+    },
+  };
+  const snapshot = materializeReportBindings(
+    [binding],
+    context(cells, {
+      readModel: {
+        schemaVersion: "1.2",
+        workbookHash: "c".repeat(64),
+        sheets: [
+          {
+            sheetId: "sheet-income-statement",
+            name: "12_p4_손익계산서",
+            cells,
+          },
+        ],
+      },
+    }),
+  )[binding.slotId];
+  const document: ReportDocument = {
+    schemaVersion: "1.0",
+    pageCount: 1,
+    pages: [
+      {
+        pageId: "page-financials",
+        pageNumber: 1,
+        pageLabel: "4",
+        role: "financials",
+        widthPt: 595,
+        heightPt: 842,
+        rotation: 0,
+        blocks: [
+          {
+            blockId: "block-financial-periods",
+            pageId: "page-financials",
+            role: "visual",
+            label: "손익계산서",
+            text: "손익계산서",
+            editable: false,
+            revision: 1,
+            evidenceIds: [],
+            numericAuthority: "mapping_set",
+            templateBlockId: "template-financial-periods",
+            bbox: [10, 10, 300, 400],
+            sourceObjectIds: [],
+            dataBinding: {
+              slotId: binding.slotId,
+              metric: binding.metric,
+              kind: "table",
+              status: "confirmed",
+              sourceLabel: binding.sourceLabel,
+              sourceAddress: binding.sourceAddress,
+              sourceType: binding.sourceType,
+            },
+            materializedData: snapshot,
+            patchStrategy: "fixed",
+          },
+        ],
+      },
+    ],
+  };
+
+  const issues = validateReportDocument({
+    document,
+    templatePageIds: ["page-financials"],
+    evidenceIds: new Set(),
+    valuationText: {
+      targetPer: "10",
+      targetPrice: "100000",
+      forwardEps: "10000",
+    },
+    reportPeriodPlan: buildReportPeriodPlan({
+      targetYear: 2026,
+      targetQuarter: 1,
+      cutoffDate: "2026-04-30",
+    }),
+  });
+
+  assert.ok(
+    issues.some((issue) => issue.code === "REPORT_PERIOD_HEADER_MISMATCH"),
+  );
 });
 
 test("the four financial statement ranges materialize independently", () => {

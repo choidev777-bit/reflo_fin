@@ -124,6 +124,36 @@ def revised_prior_tables_pdf() -> bytes:
     return result
 
 
+def valuation_table_pdf() -> bytes:
+    document = pymupdf.open()
+    page = document.new_page(width=595.32, height=841.92)
+    page.insert_text(
+        (197, 70),
+        "Figure 1. Daeduck Electronics Valuation",
+        fontname="helv",
+        fontsize=9,
+    )
+    for row, label in enumerate(
+        ("EPS", "Target P/E", "Target price", "Current price", "Upside")
+    ):
+        top = 88 + row * 16
+        page.insert_text((220, top + 10), label, fontname="helv", fontsize=7)
+        page.draw_rect(
+            pymupdf.Rect(215, top, 550, top + 16),
+            color=(0.45, 0.45, 0.45),
+            width=0.5,
+        )
+    page.insert_text(
+        (197, 176),
+        "Source: REFLO test fixture",
+        fontname="helv",
+        fontsize=6,
+    )
+    result = document.tobytes()
+    document.close()
+    return result
+
+
 def image_only_pdf() -> bytes:
     document = pymupdf.open()
     page = document.new_page(width=300, height=400)
@@ -261,6 +291,12 @@ class PdfWorkerRenderTest(unittest.TestCase):
         self.assertEqual(
             "pdf-analysis/2.0",
             result["templateIr"]["analysisMetadata"]["pipelineVersion"],
+        )
+        self.assertEqual(
+            "pdf-classification/2.1",
+            result["templateIr"]["analysisMetadata"][
+                "classificationRuleVersion"
+            ],
         )
         repeated = inspect_pdf_bytes(payload)
         self.assertEqual(result["templateIr"], repeated["templateIr"])
@@ -429,6 +465,26 @@ class PdfWorkerRenderTest(unittest.TestCase):
         self.assertLess(revised["bbox"][3], prior["bbox"][1])
         self.assertLess(revised["bbox"][0], 50)
         self.assertGreater(revised["bbox"][2], 545)
+
+    def test_detects_valuation_as_figure_one_table(self) -> None:
+        result = inspect_pdf_bytes(valuation_table_pdf())
+        page = result["templateIr"]["pages"][0]
+        slot = next(
+            item
+            for item in page["slots"]
+            if item["semanticKey"]["metric"] == "figure_1_chart"
+        )
+        block = next(
+            item for item in page["blocks"] if item["blockId"] == slot["blockId"]
+        )
+
+        self.assertTrue(result["compatible"], result["issues"])
+        self.assertEqual("table", slot["valueType"])
+        self.assertEqual(
+            "Daeduck Electronics Valuation",
+            slot["semanticKey"]["scope"],
+        )
+        self.assertEqual("table", block["classification"])
 
     def test_isc_template_ir_classifies_editable_charts_fixed_visual_and_tables(
         self,

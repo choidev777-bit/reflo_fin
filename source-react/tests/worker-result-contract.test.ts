@@ -7,6 +7,7 @@ import {
   createWorkerResultEnvelope,
   parseWorkerResultEnvelope,
 } from "../server/domain/worker-result-contract";
+import workerResultSchemas from "../server/domain/generated/worker-result-schemas.json";
 
 const HASH = "a".repeat(64);
 const FILE_SCAN_PAYLOAD = {
@@ -76,6 +77,33 @@ test("worker result envelopes use the canonical command version and lineage fiel
   assert.deepEqual(envelope.inputVersionIds, ["rv_input"]);
   assert.equal(envelope.results.length, 1);
   assert.match(envelope.results[0].hash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
+});
+
+test("hypothesis question output can be wrapped in the canonical worker result envelope", () => {
+  const fixturePath = fileURLToPath(
+    new URL(
+      "../../contracts/schemas/fixtures/valid/agent-hypothesis-output.json",
+      import.meta.url,
+    ),
+  );
+  const payload = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const envelope = createWorkerResultEnvelope({
+    attempt: 1,
+    sequence: 3,
+    inputVersionIds: ["hypothesis_version_01"],
+    resultType: "hypothesis_questions",
+    payload,
+    result: {
+      entityType: "hypothesis_questions",
+      entityId: "generation_1",
+      version: 1,
+    },
+    artifacts: [],
+    tool: { name: "reflo-control", version: "1.0.0" },
+  });
+
+  assert.equal(envelope.resultType, "hypothesis_questions");
   assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
 });
 
@@ -197,6 +225,31 @@ test("runtime result types stay synchronized with the schema registry", () => {
     [...WORKER_RESULT_TYPES].sort(),
     registry.resultTypes.map((item) => item.resultType).sort(),
   );
+});
+
+test("workbook chart parts accept OOXML paths nested below xl", () => {
+  const workbookSchema = workerResultSchemas.find(
+    (schema) =>
+      schema.$id ===
+      "https://schemas.reflo.dev/worker/v1/workbook-analysis.schema.json",
+  ) as
+    | {
+        $defs?: {
+          ChartAnalysis?: {
+            properties?: {
+              partPath?: { pattern?: string };
+            };
+          };
+        };
+      }
+    | undefined;
+  const pattern =
+    workbookSchema?.$defs?.ChartAnalysis?.properties?.partPath?.pattern;
+
+  assert.ok(pattern);
+  assert.match("xl/charts/chart1.xml", new RegExp(pattern));
+  assert.match("xl/drawings/charts/chart1.xml", new RegExp(pattern));
+  assert.doesNotMatch("xl/drawings/chart1.xml", new RegExp(pattern));
 });
 
 test("worker tool metadata follows the shared strict descriptor", () => {

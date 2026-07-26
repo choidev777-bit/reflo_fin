@@ -18,6 +18,7 @@ export type ValidationTarget = {
   unit: string;
   scope: string;
   valueKind: string;
+  writeAuthority?: "user" | "system";
   required: boolean;
   included: boolean;
 };

@@ -816,6 +816,19 @@ function buildPlan(
       (cell) => `${cell.sheetId}:${cell.address.toUpperCase()}`,
     ),
   );
+  const systemWritableKeys = new Set(
+    context.targets
+      .filter(
+        (target) =>
+          target.writeAuthority === "system" &&
+          target.sheetId &&
+          target.address,
+      )
+      .map(
+        (target) =>
+          `${target.sheetId}:${target.address!.toUpperCase()}`,
+      ),
+  );
   const cells = mergeWorkbookApplicationCells(
     editableCells.map((cell): WorkbookApplicationCell => ({
       sheetId: cell.sheetId,
@@ -840,9 +853,11 @@ function buildPlan(
         canonicalCellValue(cell.rawValue) ??
         "",
       formula: cell.formula,
-      editable: editableKeys.has(
-        `${cell.sheetId}:${cell.address.toUpperCase()}`,
-      ),
+      editable:
+        editableKeys.has(`${cell.sheetId}:${cell.address.toUpperCase()}`) ||
+        systemWritableKeys.has(
+          `${cell.sheetId}:${cell.address.toUpperCase()}`,
+        ),
       structureFingerprint: cell.structureFingerprint ?? null,
     })),
   );
@@ -851,7 +866,7 @@ function buildPlan(
       if (!target.sheetId || !target.sheetName || !target.address) return [];
       const targetAddress = target.address.toUpperCase();
       const key = `${target.sheetId}:${targetAddress}`;
-      if (!editableKeys.has(key)) return [];
+      if (!editableKeys.has(key) && !systemWritableKeys.has(key)) return [];
       const cell = cells.find(
         (candidate) =>
           candidate.sheetId === target.sheetId &&

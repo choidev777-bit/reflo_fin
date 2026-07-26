@@ -1,4 +1,5 @@
 import {
+  ApplicationFailure,
   CancellationScope,
   isCancellation,
   patched,
@@ -248,6 +249,20 @@ export async function fileInspectionWorkflow(
   }
 }
 
+function hasApplicationFailureType(error: unknown, type: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current; depth += 1) {
+    if (current instanceof ApplicationFailure && current.type === type) {
+      return true;
+    }
+    current =
+      typeof current === "object" && current !== null && "cause" in current
+        ? current.cause
+        : null;
+  }
+  return false;
+}
+
 export async function hypothesisGenerationWorkflow(
   input: HypothesisGenerationWorkflowInput,
 ): Promise<void> {
@@ -258,12 +273,18 @@ export async function hypothesisGenerationWorkflow(
       if (isCancellation(error)) {
         await scanActivities.reportCancellation(input.jobId, input.jobAttempt);
       } else {
+        const outputInvalid = hasApplicationFailureType(
+          error,
+          "AGENT_OUTPUT_INVALID",
+        );
         await scanActivities.reportFailure(
           input.jobId,
           input.jobAttempt,
-          "AGENT_UNAVAILABLE",
-          "조사 질문을 만들지 못했습니다. 잠시 후 다시 시도해주세요.",
-          true,
+          outputInvalid ? "AGENT_OUTPUT_INVALID" : "AGENT_UNAVAILABLE",
+          outputInvalid
+            ? "AI 질문 응답 형식이 올바르지 않습니다."
+            : "조사 질문을 만들지 못했습니다. 잠시 후 다시 시도해주세요.",
+          !outputInvalid,
         );
       }
     });

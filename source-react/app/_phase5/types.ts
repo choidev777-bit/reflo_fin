@@ -9,6 +9,8 @@ export type OutputCell = {
 };
 
 export type WorkbookCell = {
+  sheetId?: string;
+  sheetName?: string;
   address: string;
   row: number;
   column: number;
@@ -63,6 +65,38 @@ export type WorkbookReadModel = {
   editableCellSetVersion: number;
   schemaVersion: string;
   workbookHash: string;
+  reportPeriodPlan?: {
+    schemaVersion: "1.0";
+    targetYear: number;
+    targetQuarter: number;
+    cutoffDate: string;
+    latestActualYear: number;
+    source: "project_target" | "dart_verified";
+    periods: Array<{
+      year: number;
+      label: string;
+      role: "actual" | "forecast";
+    }>;
+  };
+  inputManifest?: Array<{
+    sheetName: string;
+    address: string;
+    metric: string;
+    period: string;
+    unit: string;
+    required: boolean;
+    writeAuthority: "user" | "system";
+  }>;
+  rollForward?: {
+    changed: boolean;
+    changes: Array<{
+      sheetName: string;
+      address: string;
+      changeType: string;
+      beforeValue: string | null;
+      afterValue: string | null;
+    }>;
+  };
   sheets: Array<{
     sheetId: string;
     name: string;

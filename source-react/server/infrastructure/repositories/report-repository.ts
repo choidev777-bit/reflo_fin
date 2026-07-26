@@ -39,6 +39,7 @@ import {
   type ReportTemplatePage,
   type ReportWorkbookReadModel,
 } from "../../domain/report";
+import { buildReportPeriodPlan } from "../../domain/report-period-plan";
 import {
   serializeReportMaterializationArtifact,
   type ReportMaterializationResourceRef,
@@ -3375,6 +3376,11 @@ async function buildReportMaterialization(
       targetPrice: prepared.context.targetPrice,
       forwardEps: prepared.context.forwardEps,
     },
+    reportPeriodPlan: buildReportPeriodPlan({
+      targetYear: prepared.context.targetYear,
+      targetQuarter: prepared.context.targetQuarter,
+      cutoffDate: prepared.context.cutoffDate,
+    }),
   }).filter((issue) => issue.severity === "blocking");
   if (issues.length > 0) {
     throw new Error(
@@ -6124,6 +6130,11 @@ export async function executeReportValidation(input: {
         targetPrice: context.targetPrice,
         forwardEps: context.forwardEps,
       },
+      reportPeriodPlan: buildReportPeriodPlan({
+        targetYear: context.targetYear,
+        targetQuarter: context.targetQuarter,
+        cutoffDate: context.cutoffDate,
+      }),
     });
     const status = issues.some((issue) => issue.severity === "blocking")
       ? "failed"

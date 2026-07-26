@@ -432,7 +432,7 @@
         },
         "partPath": {
           "type": "string",
-          "pattern": "^xl/charts/[^/]+\\.xml$",
+          "pattern": "^xl/(?:[^/]+/)*charts/[^/]+\\.xml$",
           "maxLength": 500
         },
         "title": {
