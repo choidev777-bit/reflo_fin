@@ -30,7 +30,10 @@ async function run(): Promise<void> {
     connection,
     namespace,
     taskQueue: "excel-calc",
-    activities: { analyzeExcel: activities.analyzeExcel },
+    activities: {
+      analyzeExcel: activities.analyzeExcel,
+      applyAndPublishWorkbook: activities.applyAndPublishWorkbook,
+    },
   });
   const llmWorker = await Worker.create({
     connection,

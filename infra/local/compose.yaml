@@ -99,9 +99,13 @@ services:
 
   excel-worker:
     build:
-      context: ../../workers/excel
+      context: ../..
+      dockerfile: workers/excel/Dockerfile
     ports:
       - "127.0.0.1:8092:8092"
+    environment:
+      REFLO_WORKER_TOKEN: ${REFLO_WORKER_TOKEN:?REFLO_WORKER_TOKEN is required}
+      REFLO_WORKER_DOWNLOAD_AUTHORITIES: ${REFLO_WORKER_DOWNLOAD_AUTHORITIES:-host.docker.internal:9000}
 
   llm-worker:
     build:

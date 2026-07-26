@@ -6,6 +6,16 @@ import type {
   ValidationWorkbookManifest,
 } from "./types";
 
+function writeStatusLabel(
+  status: ValidationWorkbookManifest["evidenceBindings"][number]["writeStatus"],
+): string {
+  if (status === "applied") return "반영 완료";
+  if (status === "applying") return "재계산 중";
+  if (status === "blocked") return "반영 차단";
+  if (status === "proposed") return "반영 예정";
+  return "검증 대기";
+}
+
 export function ValidationWorkbook({
   manifest,
   selectedTargetId,
@@ -39,19 +49,35 @@ export function ValidationWorkbook({
   const selectedBinding = manifest.evidenceBindings.find(
     (binding) => binding.targetId === selectedTargetId,
   );
+  const applicationStatus = manifest.workbookApplication?.status;
+  const workbookStatus =
+    applicationStatus === "succeeded"
+      ? "검증본 생성 완료"
+      : applicationStatus === "queued" || applicationStatus === "running"
+        ? "검증본 생성 중"
+        : applicationStatus === "failed" ||
+            applicationStatus === "obsolete"
+          ? "검증본 생성 실패"
+          : "적용 전";
 
   return (
     <section className="phase4-workbook" aria-label="검증용 Excel workbook">
       <header>
         <div>
           <small>READ-ONLY WORKBOOK</small>
-          <strong>분석 workbook 검증 사본</strong>
+          <strong>승인 Evidence 반영 검토</strong>
         </div>
-        <span>읽기 전용</span>
+        <span>{workbookStatus}</span>
       </header>
       <div className="phase4-formula-bar">
         <b>{selected ? `${selected.sheetName}!${selected.address}` : "—"}</b>
-        <span>{selectedBinding?.formattedText ?? selected?.metric ?? ""}</span>
+        <span>
+          {selectedBinding
+            ? `${selectedBinding.beforeValue ?? "빈 셀"} → ${
+                selectedBinding.afterValue ?? "빈 셀"
+              } · Evidence ${selectedBinding.evidenceIds.length}건`
+            : selected?.metric ?? ""}
+        </span>
       </div>
       <div
         className="phase4-grid"
@@ -62,8 +88,9 @@ export function ValidationWorkbook({
         <div role="row" className="head">
           <span role="columnheader">셀</span>
           <span role="columnheader">지표</span>
-          <span role="columnheader">값</span>
-          <span role="columnheader">기간 · 기준</span>
+          <span role="columnheader">Before</span>
+          <span role="columnheader">After</span>
+          <span role="columnheader">Evidence · 상태</span>
         </div>
         {visibleTargets.map((target) => {
           const binding = manifest.evidenceBindings.find(
@@ -80,11 +107,20 @@ export function ValidationWorkbook({
             >
               <span role="gridcell">{target.address}</span>
               <span role="gridcell">{target.metric}</span>
+              <span role="gridcell">{binding?.beforeValue ?? "빈 셀"}</span>
               <strong role="gridcell">
-                {binding?.formattedText ?? "검증 대기"}
+                {binding?.afterValue ?? binding?.formattedText ?? "검증 대기"}
               </strong>
-              <span role="gridcell">
-                {target.period} · {target.scope}
+              <span role="gridcell" className="phase4-write-status">
+                <b>
+                  {binding
+                    ? writeStatusLabel(binding.writeStatus)
+                    : "검증 대기"}
+                </b>
+                <small>
+                  Evidence {binding?.evidenceIds.length ?? 0}건 ·{" "}
+                  {target.period} · {target.scope}
+                </small>
               </span>
             </button>
           );
@@ -124,7 +160,10 @@ export function ValidationWorkbook({
           </button>
         ))}
       </nav>
-      <p>{manifest.readOnlyReason}</p>
+      <p>
+        원본 Workbook은 변경하지 않습니다. 승인된 입력 셀만 새 artifact에
+        반영하며, Evidence ID·before/after·재계산 결과를 함께 고정합니다.
+      </p>
     </section>
   );
 }

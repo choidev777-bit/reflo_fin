@@ -11751,9 +11751,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .phase4-grid > .head,
 .phase4-grid > button {
-  min-width: 580px;
+  min-width: 760px;
   display: grid;
-  grid-template-columns: 90px 1.1fr 1fr 1.5fr;
+  grid-template-columns: 80px 1.1fr .8fr .8fr 1.7fr;
   align-items: center;
 }
 
@@ -11788,6 +11788,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding: 0 10px;
   font-size: 10px;
   line-height: 1.4;
+}
+
+.phase4-write-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase4-write-status b {
+  color: var(--p4-lime-deep);
+  font-size: 9px;
+}
+
+.phase4-write-status small {
+  color: var(--p4-muted);
+  font-size: 8px;
 }
 
 .phase4-grid-empty,

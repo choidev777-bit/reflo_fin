@@ -2,7 +2,11 @@ import { timingSafeEqual } from "node:crypto";
 import { ApiError } from "./api-error";
 
 function workerToken(): string {
-  return process.env.REFLO_WORKER_TOKEN?.trim() || "reflo-local-worker-token-change-me";
+  const value = process.env.REFLO_WORKER_TOKEN?.trim();
+  if (!value) {
+    throw new Error("REFLO_WORKER_TOKEN is required.");
+  }
+  return value;
 }
 
 export function requireWorkerIdentity(request: Request): void {

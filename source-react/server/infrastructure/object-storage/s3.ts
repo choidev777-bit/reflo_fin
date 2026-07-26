@@ -126,6 +126,7 @@ export async function verifyUploadedObject(input: {
   expectedByteSize: number;
   expectedMediaType: string;
   expectedSha256: string | null;
+  expectedMetadata?: Record<string, string>;
 }): Promise<{
   sha256: string;
   byteSize: number;
@@ -145,6 +146,11 @@ export async function verifyUploadedObject(input: {
   const mediaType = head.ContentType?.split(";")[0]?.trim().toLowerCase() ?? "";
   if (mediaType !== input.expectedMediaType.toLowerCase()) {
     throw new Error("OBJECT_MEDIA_TYPE_MISMATCH");
+  }
+  for (const [key, value] of Object.entries(input.expectedMetadata ?? {})) {
+    if (head.Metadata?.[key.toLowerCase()] !== value) {
+      throw new Error("OBJECT_METADATA_MISMATCH");
+    }
   }
   const object = await client.send(
     new GetObjectCommand({ Bucket: bucket, Key: input.objectKey }),

@@ -10,6 +10,7 @@ import type {
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
   ResearchValidationWorkflowInput,
+  WorkbookApplicationWorkflowInput,
 } from "./types";
 
 const scanActivities = proxyActivities<typeof activities>({
@@ -69,6 +70,18 @@ const evidenceValidationActivities = proxyActivities<typeof activities>({
     backoffCoefficient: 2,
     maximumInterval: "30 seconds",
     maximumAttempts: 2,
+  },
+});
+
+const workbookApplicationActivities = proxyActivities<typeof activities>({
+  taskQueue: "excel-calc",
+  startToCloseTimeout: "10 minutes",
+  heartbeatTimeout: "1 minute",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "1 minute",
+    maximumAttempts: 3,
   },
 });
 
@@ -267,6 +280,46 @@ export async function researchValidationWorkflow(
           failure.code,
           failure.message,
           failure.retryable,
+        );
+      }
+    });
+    throw error;
+  }
+}
+
+export async function workbookApplicationWorkflow(
+  input: WorkbookApplicationWorkflowInput,
+): Promise<void> {
+  try {
+    await workbookApplicationActivities.applyAndPublishWorkbook(input);
+  } catch (error) {
+    await CancellationScope.nonCancellable(async () => {
+      if (isCancellation(error)) {
+        await scanActivities.reportCancellation(input.jobId, input.jobAttempt);
+        await scanActivities.reportWorkbookApplicationFailure(
+          input.applicationId,
+          input.jobAttempt,
+          "WORKBOOK_APPLICATION_CANCELLED",
+          "Workbook 반영 작업이 취소되었습니다.",
+        );
+      } else {
+        const message =
+          error instanceof Error ? error.message : "WORKBOOK_APPLICATION_FAILED";
+        const code =
+          message.match(/([A-Z][A-Z0-9_]{4,})/)?.[1] ??
+          "WORKBOOK_APPLICATION_FAILED";
+        await scanActivities.reportFailure(
+          input.jobId,
+          input.jobAttempt,
+          code,
+          "승인 값을 Workbook에 반영하지 못했습니다.",
+          true,
+        );
+        await scanActivities.reportWorkbookApplicationFailure(
+          input.applicationId,
+          input.jobAttempt,
+          code,
+          message.slice(0, 500),
         );
       }
     });

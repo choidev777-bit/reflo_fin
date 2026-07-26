@@ -1,6 +1,6 @@
 # Implementation Plan: REFLO 종단간 리서치·Excel·보고서 자동화 완성
 
-**상태:** 승인됨 · Phase 1·2 완료 · Phase 3 미착수<br>
+**상태:** 승인됨 · Phase 1·2·3 완료 · Phase 4 미착수<br>
 **작성일:** 2026-07-26  
 **최종 수정일:** 2026-07-26  
 **예상 구현:** 7개 독립 Phase, 집중 개발 28시간 내외  
@@ -8,7 +8,7 @@
 **기준 Fixture:** `fixtures/ISC_095340_4Q25_Valuation_하나증권_12.xlsx`와 대응 ISC PDF  
 
 > 이 문서는 기존의 부분 계획을 종단간 관점에서 통합한 **승인된 완성 실행 계획**이다.<br>
-> 2026-07-26에는 사용자 지시에 따라 Phase 1과 Phase 2를 순서대로 완료했으며 Phase 3 이후 범위는 미착수 상태로 보존한다.
+> 2026-07-26에는 사용자 지시에 따라 Phase 1, Phase 2, Phase 3을 순서대로 완료했으며 Phase 4 이후 범위는 미착수 상태로 보존한다.
 
 관련 부분 계획:
 
@@ -718,59 +718,102 @@ Windows host에는 .NET runtime만 있고 SDK가 없어 공통 명령의 `dotnet
 
 **목표:** 자료 수집과 검증에서 확정한 값을 안전한 Excel input cell에 적용하고 재계산된 불변 Workbook을 만든다.  
 **예상:** 4시간  
-**상태:** 대기  
+**실제:** 약 1시간<br>
+**상태:** 완료<br>
 **의존성:** Phase 2
 
 ### RED — 테스트 먼저
 
-- [ ] `source-react/tests/phase4-workbook-application.test.ts` 작성
+- [x] `source-react/tests/phase4-workbook-application.test.ts` 작성
   - Evidence → ValidatedValueSet
   - unit/period/scope 변환
   - conflict·qualified decision
   - formula cell 쓰기 차단
   - 승인되지 않은 cell 쓰기 차단
   - before/after/provenance
-- [ ] Excel worker 테스트
+- [x] Excel worker 테스트
   - 허용 input cell만 변경
   - 수식·시트·차트 구조 보존
   - VML 메모 fixture 저장
   - 재계산 오류와 unsupported function
-- [ ] Validation 완료 후 새 Workbook artifact가 없으면 실패하는 통합 테스트 작성
+- [x] Validation 완료 후 새 Workbook artifact가 없으면 실패하는 통합 테스트 작성
 
 ### GREEN — 최소 구현
 
-- [ ] `ValidatedValueSet` 생성 service 구현
-- [ ] `WorkbookApplicationPlan` 생성과 검토 API 구현
-- [ ] Evidence target과 `workbook_input` binding 연결
-- [ ] 승인·거절·수정 append-only decision 구현
-- [ ] Excel worker에 승인된 cell patch + recalc endpoint 구현
-- [ ] 안전한 input cell이 없을 때 `_REFLO_BRIDGE` 사용
-- [ ] 원본 XLSX는 불변으로 유지하고 새 artifact 저장
-- [ ] 적용 cell diff·Evidence provenance·calculation report 저장
-- [ ] Validation approval이 정확한 Validated Workbook을 pin하도록 변경
-- [ ] Valuation 초기 Workbook이 업로드 원본이 아니라 Validated Workbook을 사용하도록 변경
-- [ ] Validation UI에 before/after, source, 적용 상태 제공
+- [x] `ValidatedValueSet` 생성 service 구현
+- [x] `WorkbookApplicationPlan` 생성과 검토 API 구현
+- [x] Evidence target과 `workbook_input` binding 연결
+- [x] 승인·거절·수정 append-only decision 구현
+- [x] Excel worker에 승인된 cell patch + recalc endpoint 구현
+- [x] 안전한 input cell이 없을 때 `_REFLO_BRIDGE` 사용
+- [x] 원본 XLSX는 불변으로 유지하고 새 artifact 저장
+- [x] 적용 cell diff·Evidence provenance·calculation report 저장
+- [x] Validation approval이 정확한 Validated Workbook을 pin하도록 변경
+- [x] Valuation 초기 Workbook이 업로드 원본이 아니라 Validated Workbook을 사용하도록 변경
+- [x] Validation UI에 before/after, source, 적용 상태 제공
 
 ### REFACTOR
 
-- [ ] validation/valuation에 중복된 Workbook 초기화 로직 통합
-- [ ] decimal·unit conversion 공통 domain service 분리
-- [ ] Workbook application job을 Temporal/outbox 패턴으로 통일
+- [x] validation/valuation에 중복된 Workbook 초기화 로직 통합
+- [x] decimal·unit conversion 공통 domain service 분리
+- [x] Workbook application job을 Temporal/outbox 패턴으로 통일
 
 ### 품질 게이트
 
-- [ ] 승인 cell 외 binary/semantic diff 0
-- [ ] formula hash와 structure hash 보존
-- [ ] 적용된 모든 값에 Evidence ID 존재
-- [ ] 재계산된 output 3종(EPS·PER·목표주가) 검증
-- [ ] VML/LibreOffice 호환 실패 시 원본 보존·명시적 blocker
-- [ ] 공통 검증 명령 통과
+- [x] 승인 cell 외 binary/semantic diff 0
+- [x] formula hash와 structure hash 보존
+- [x] 적용된 모든 값에 Evidence ID 존재
+- [x] 재계산된 output 3종(EPS·PER·목표주가) 검증
+- [x] VML/LibreOffice 호환 실패 시 원본 보존·명시적 blocker
+- [x] 공통 검증 명령 통과
 
 ### Rollback
 
 - Validated Workbook은 새 artifact로만 저장한다.
 - 실패 시 source Workbook active pointer를 유지한다.
 - 적용 run을 폐기해도 Evidence decision과 원본은 보존한다.
+
+### Phase 3 완료 기록 — 2026-07-26
+
+**RED**
+
+- `phase4-workbook-application.test.ts`를 먼저 추가해 `ValidatedValueSet`, 단위·기간·범위, conflict·qualified decision, allowlist, formula 차단, before/after/provenance 계약이 구현 모듈 부재로 실패하는 것을 확인했다.
+- Excel worker 테스트는 application engine 부재로 컴파일 실패하는 상태에서 시작했고, 허용 셀·수식·unsupported function·bridge·VML/차트 보존 시나리오를 먼저 고정했다.
+- `report-current-gaps.test.ts`의 Phase 3 TODO를 활성화하고 새 Validated Workbook 없이 완료할 수 있던 경로를 실패 조건으로 전환했다.
+
+**GREEN**
+
+- 승인 Evidence를 exact source snapshot에 고정하는 불변 `ValidatedValueSet`과 `WorkbookApplicationPlan`을 만들고, 직접 입력 셀이 안전하지 않으면 Evidence ID가 포함된 very-hidden `_REFLO_BRIDGE`를 생성했다.
+- workbook write 제안 조회와 승인·거절·동등값 수정의 append-only API, 동일 프로젝트 advisory lock, idempotency 재검사를 구현했다.
+- Excel worker `/validation/apply`가 source SHA-256을 확인한 뒤 승인 명령만 적용하고 재계산하며, 수식·구조·drawing·chart·comment·VML hash와 EPS·PER·목표주가를 검증하도록 구현했다.
+- 결과 XLSX는 원본을 덮어쓰지 않고 새 immutable object, artifact, `resource_version`, `resource_artifact`, `validated_workbook_version`으로 저장하며 cell diff·provenance·calculation report를 함께 고정했다.
+- Validation approval을 현재 validation run·version·승인 plan의 정확한 Workbook application에 pin하고, valuation 초기화가 그 artifact와 lineage ID를 사용하도록 변경했다.
+- Validation UI는 before/after, Evidence 건수와 원문, proposed/applying/applied/blocked 상태를 표시하고 Workbook 생성 성공 후에만 완료한다.
+
+**REFACTOR**
+
+- validation과 valuation이 같은 required output binding loader를 사용하도록 통합하고, decimal·unit·period·scope 정규화를 공통 domain service로 분리했다.
+- Workbook application을 기존 Temporal/outbox, progress, failure, stale-result 경계에 연결했다.
+- 실제 cell 분석값이 editable placeholder에 덮어써지지 않도록 merge 규칙을 순수 domain 함수로 분리하고 회귀 테스트를 추가했다.
+- 적용 결정과 실행 생성을 같은 advisory lock으로 직렬화하고, 완료 조회를 현재 validation run과 승인 plan까지 정확히 제한했다.
+- 푸시 전 독립 리뷰에서 발견한 terminal 결과 재게시, 현재 validation pin 누락, lineage lock 순서, 만료 idempotency 문제를 수정하고 late/stale 결과가 artifact를 게시하지 않는 회귀 테스트를 추가했다.
+- Excel worker는 Bearer 인증, 다운로드 authority allowlist, redirect 차단과 100 MiB streaming cap을 적용하고, callback은 서버가 계산한 project/application object key와 실제 object hash·size·media type·metadata를 다시 검증한다.
+- Workbook 제안 GET의 DB 변경을 제거해 명시적 CSRF POST로 준비하도록 분리하고, worker heartbeat·UI polling SLA·status ETag 계약을 일치시켰다.
+
+| 검증 | 완료 결과 |
+|---|---|
+| Domain | Phase 3 unit 10/10 pass; 값 정규화·allowlist·formula·bridge·decision·terminal/stale worker-result 검증 |
+| Explicit Postgres integration | 2/2 pass; artifact 없는 완료 fail-closed, 현재 run·승인 plan exact pin |
+| Excel worker | 실제 ISC XLSX 포함 4/4 pass; chart/drawing/VML hash 보존, Docker .NET 9 build 0 warnings/errors |
+| Migration | 실제 Phase 3 value-set parent/subtype 계보가 있는 상태에서 down → up 통과, orphan parent 0, 현재 up |
+| Contract | 16 schemas, 29 fixtures, 21 result types drift 0; OpenAPI Redocly lint 통과 |
+| Source tests | 102 total, 89 pass, 11 DB-env skip, Phase 4·6 intentional TODO 2, fail 0 |
+| Next | lint 0 errors(기존 warning 22), typecheck·production build 통과 |
+| Browser | Playwright 10/10 통과 |
+| PDF worker | 9/9 통과 |
+| Diff | `git diff --check` 통과 |
+
+Windows host에는 .NET SDK가 없어 직접 `dotnet build`는 실행할 수 없었다. 동일 worker와 테스트 csproj를 공식 .NET 9 SDK Docker 이미지에서 빌드·실행해 대체 검증했다.
 
 ---
 
@@ -1257,12 +1300,12 @@ ISC 6페이지 fixture 기준:
 |---|---|---:|---:|
 | Phase 1 계약·버전 계보 | 완료 | 4h | 1h 30m |
 | Phase 2 분석·매핑·스타일 | 완료 | 4h | 2h |
-| Phase 3 Evidence→Workbook | 대기 | 4h | - |
+| Phase 3 Evidence→Workbook | 완료 | 4h | 1h |
 | Phase 4 typed materialization | 대기 | 4h | - |
 | Phase 5 공용 renderer·UI | 대기 | 4h | - |
 | Phase 6 PDF·검증·export | 대기 | 4h | - |
 | Phase 7 migration·E2E·출시 | 대기 | 4h | - |
-| **합계** | **2/7** | **28h** | **3h 30m** |
+| **합계** | **3/7** | **28h** | **4h 30m** |
 
 PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 개발 시간에 포함하지 않는다.
 
@@ -1274,7 +1317,7 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 - 시트명을 PDF 제목과 같게 바꾸는 것만으로 차트 데이터 부족 문제는 해결되지 않는다.
 - P/E/P/B Band는 기간·주가·band series가 필요하다.
-- 자료 수집 Evidence는 현재 Workbook에 실제 적용되지 않는다.
+- 자료 수집 Evidence는 Phase 3에서 승인된 cell만 새 immutable Workbook artifact에 실제 적용되도록 완료했다.
 - scalar materializer가 없어 PDF의 과거 EPS 등이 남을 수 있다.
 - 브라우저 overlay는 final PDF가 아니다.
 - 현재 export PDF는 원본 PDF artifact를 사용한다.
@@ -1307,6 +1350,17 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - 저장 IR에서 만든 compact preview만 GET에 노출하면 detect-once 원칙을 지키면서도 사용자가 형상 지문과 후보 topology를 검토할 수 있다.
 - `_REFLO_BRIDGE`는 빈 placeholder나 추정값을 허용하지 않고 승인 Evidence provenance가 있을 때만 authoritative generated range가 된다.
 
+### Phase 3 학습
+
+- editable cell allowlist는 실제 candidate cell의 값·수식·구조 metadata를 보강해야 하며 placeholder가 이를 덮어쓰면 formula 차단과 before diff가 동시에 무너진다.
+- validation version만 비교해서는 과거 run의 같은 번호를 선택할 수 있으므로 완료 승인에는 validation run·승인 plan·value set·Workbook artifact를 함께 pin해야 한다.
+- append-only 결정과 application 생성은 같은 advisory lock을 사용하고 잠금 획득 뒤 idempotency를 재검사해야 중복 결정과 시작 후 변경 경쟁을 막을 수 있다.
+- ClosedXML 저장은 drawing·chart·comment·VML package part를 다시 직렬화할 수 있으므로 보호 part와 관계·content type을 원본에서 복원한 뒤 hash를 재검증해야 한다.
+- 새 Workbook row만 저장해서는 artifact lineage가 완성되지 않으며 공통 `resource_artifact` 연결까지 함께 기록해야 한다.
+- worker callback payload 내부의 hash 두 개를 서로 비교하는 것만으로는 신뢰 경계가 닫히지 않으며 object store의 실제 bytes·metadata와 서버 계산 object key를 함께 검증해야 한다.
+- 결과 commit은 application/job row lock보다 project lineage advisory lock을 먼저 획득하고, terminal 상태 및 현재 validation run·version·plan을 artifact 저장 전에 재검사해야 한다.
+- 검토용 GET은 immutable resource라도 생성하면 안 되며, 상태 생성은 CSRF가 적용된 명시적 POST로 분리해야 한다.
+
 ---
 
 ## 17. 최종 완료 체크리스트
@@ -1314,10 +1368,10 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 - [ ] 업로드부터 최종 export까지 단일 E2E 통과
 - [ ] 모든 동적 PDF block이 Template IR에 존재
 - [ ] 모든 필수 slot이 확인된 typed binding을 가짐
-- [ ] 조사 승인값이 새 Workbook artifact에 실제 반영됨
-- [ ] 승인되지 않은 cell은 변경되지 않음
-- [ ] Workbook 재계산·구조 검증 통과
-- [ ] Valuation이 정확한 Validated Workbook을 사용
+- [x] 조사 승인값이 새 Workbook artifact에 실제 반영됨
+- [x] 승인되지 않은 cell은 변경되지 않음
+- [x] Workbook 재계산·구조 검증 통과
+- [x] Valuation이 정확한 Validated Workbook을 사용
 - [ ] EPS·PER·목표주가·현재주가가 원래 PDF 위치에서 교체됨
 - [ ] 재무표 4개가 최신값으로 생성됨
 - [ ] 데이터 차트가 새 category·series로 생성됨
@@ -1343,10 +1397,10 @@ PDF corpus 준비, 디자인 검토, 운영 환경 배포 시간은 위 집중 �
 
 ## 18. 다음 행동
 
-1. Phase 2 완료 결과와 ISC source-data blocker 2건을 검토한다.
-2. 사용자 지시가 있을 때만 Phase 3의 RED부터 시작한다.
+1. Phase 3 완료 결과와 immutable Validated Workbook 계보를 검토한다.
+2. 사용자 지시가 있을 때만 Phase 4의 RED부터 시작한다.
 3. 각 Phase 품질 게이트를 통과한 뒤에만 다음 단계로 이동한다.
 
-**Plan Status:** 승인됨 · Phase 1·2 완료 · Phase 3 미착수<br>
-**Next Action:** 사용자 지시 후 Phase 3 RED 시작<br>
+**Plan Status:** 승인됨 · Phase 1·2·3 완료 · Phase 4 미착수<br>
+**Next Action:** 사용자 지시 후 Phase 4 RED 시작<br>
 **Blocked By:** 없음

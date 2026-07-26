@@ -2,6 +2,7 @@ import { contentHash } from "./hash";
 
 export const SOURCE_SNAPSHOT_SCOPES = [
   "workflow_job",
+  "validation_workbook",
   "report_materialization",
   "report_render",
 ] as const;

@@ -2069,6 +2069,27 @@ export async function recordWorkerProgress(
       [jobId, operationStatus, command.phase, command.progressPercent, command.sequence],
     );
     await client.query(
+      `UPDATE workbook_application_run
+       SET application_status =
+             CASE WHEN $2 = 'cancelled' THEN 'failed' ELSE 'running' END,
+           started_at = COALESCE(started_at, now()),
+           finished_at =
+             CASE WHEN $2 = 'cancelled' THEN now() ELSE finished_at END,
+           error_code =
+             CASE WHEN $2 = 'cancelled'
+               THEN 'WORKBOOK_APPLICATION_CANCELLED'
+               ELSE error_code
+             END,
+           error_summary =
+             CASE WHEN $2 = 'cancelled'
+               THEN 'Workbook 반영 작업이 취소되었습니다.'
+               ELSE error_summary
+             END
+       WHERE job_id = $1
+         AND application_status IN ('queued', 'running')`,
+      [jobId, operationStatus],
+    );
+    await client.query(
       `INSERT INTO workflow_job_event (
         job_event_id, job_id, sequence_no, event_type, operation_status,
         phase, progress_percent, metadata_json, occurred_at

@@ -27,16 +27,22 @@ import type {
   FileInspectionWorkflowInput,
   HypothesisGenerationWorkflowInput,
   ResearchValidationWorkflowInput,
+  WorkbookApplicationWorkflowInput,
   PdfInspectionResult,
   WorkbookInspectionResult,
 } from "./types";
+import type {
+  WorkbookApplicationWorkerResult,
+} from "../../server/domain/workbook-application";
 import { buildMappingSet } from "./mapping";
 
 const internalApiUrl =
   process.env.REFLO_INTERNAL_API_URL?.replace(/\/$/, "") ||
   "http://127.0.0.1:3000";
-const workerToken =
-  process.env.REFLO_WORKER_TOKEN?.trim() || "reflo-local-worker-token-change-me";
+const workerToken = process.env.REFLO_WORKER_TOKEN?.trim();
+if (!workerToken) {
+  throw new Error("REFLO_WORKER_TOKEN is required.");
+}
 const controlWorkerTool = { name: "reflo-control", version: "1.0.0" };
 
 async function internalPost(path: string, body: unknown): Promise<void> {
@@ -256,7 +262,10 @@ async function callIsolatedWorker<T>(
   const downloadUrl = await createWorkerDownloadUrl(objectKey, 10 * 60);
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/inspect`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${workerToken}`,
+    },
     body: JSON.stringify({ downloadUrl }),
     signal: Context.current().cancellationSignal,
   });
@@ -283,6 +292,141 @@ export async function analyzeExcel(
   return callIsolatedWorker<WorkbookInspectionResult>(
     process.env.REFLO_EXCEL_WORKER_URL || "http://127.0.0.1:8092",
     input.workbook.objectKey,
+  );
+}
+
+export async function applyAndPublishWorkbook(
+  input: WorkbookApplicationWorkflowInput,
+): Promise<void> {
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    1,
+    "applying_validated_values",
+    20,
+    "승인 Evidence 값을 Workbook 입력 셀에 반영하고 있습니다.",
+  );
+  const downloadUrl = await createWorkerDownloadUrl(
+    input.sourceObjectKey,
+    10 * 60,
+  );
+  const baseUrl =
+    process.env.REFLO_EXCEL_WORKER_URL || "http://127.0.0.1:8092";
+  const activity = Context.current();
+  const heartbeatTimer = setInterval(
+    () => activity.heartbeat("excel-worker-request"),
+    30_000,
+  );
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl.replace(/\/$/, "")}/validation/apply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${workerToken}`,
+      },
+      body: JSON.stringify({
+        downloadUrl,
+        expectedWorkbookHash: input.sourceWorkbookHash,
+        expectedStructureHash: null,
+        commands: input.plan.commands.map((command) => ({
+          targetId: command.targetId,
+          sheetId:
+            command.generatedBridge && command.sheetId === "_REFLO_BRIDGE"
+              ? null
+              : command.sheetId,
+          sheetName: command.sheetName,
+          address: command.address,
+          valueType: command.valueType,
+          afterValue: command.afterValue,
+          evidenceIds: command.evidenceIds,
+          expectedStructureFingerprint:
+            command.expectedStructureFingerprint,
+          generatedBridge: command.generatedBridge,
+        })),
+        outputBindings: input.outputBindings,
+      }),
+      signal: Context.current().cancellationSignal,
+    });
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+  const body = (await response.json()) as
+    | WorkbookApplicationWorkerResult
+    | {
+        error?: {
+          code?: string;
+          message?: string;
+          details?: unknown[];
+        };
+      };
+  if (!response.ok || "error" in body) {
+    const error = "error" in body ? body.error : undefined;
+    throw new Error(
+      `${error?.code ?? "WORKBOOK_APPLICATION_FAILED"}:` +
+      `${error?.message ?? "Excel worker failed."}`,
+    );
+  }
+  const result = body as WorkbookApplicationWorkerResult;
+  const workbookBytes = Buffer.from(result.workbookBase64, "base64");
+  const measuredHash = createHash("sha256")
+    .update(workbookBytes)
+    .digest("hex");
+  if (measuredHash !== result.workbookHash) {
+    throw new Error("WORKER_RESULT_HASH_MISMATCH");
+  }
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    2,
+    "validating_workbook",
+    75,
+    "수식·시트·차트 구조와 재계산 결과를 확인하고 있습니다.",
+  );
+  const objectKey =
+    `projects/${input.projectId}/validation/` +
+    `workbook-${input.applicationId}-${result.workbookHash.slice(0, 12)}.xlsx`;
+  let stored: { objectVersion: string };
+  try {
+    stored = await putImmutableObject({
+      objectKey,
+      body: workbookBytes,
+      mediaType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      metadata: {
+        project: input.projectId,
+        application: input.applicationId,
+        sourceSnapshot: input.validationSourceSnapshotId,
+      },
+    });
+  } catch (error) {
+    const existing = await readObjectBytes(objectKey).catch(() => null);
+    if (
+      !existing ||
+      createHash("sha256").update(existing).digest("hex") !==
+        result.workbookHash
+    ) {
+      throw error;
+    }
+    stored = { objectVersion: `sha256:${result.workbookHash}` };
+  }
+  await internalPost(
+    `/internal/v1/workbook-applications/${input.applicationId}/result`,
+    {
+      attempt: input.jobAttempt,
+      payload: {
+        result: { ...result, workbookBase64: "" },
+        artifact: {
+          objectKey,
+          objectVersion: stored.objectVersion,
+          sha256: result.workbookHash,
+          byteSize: workbookBytes.byteLength,
+          mediaType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          originalFilename: input.sourceFilename,
+        },
+      },
+    },
   );
 }
 
@@ -987,6 +1131,18 @@ export async function reportFailure(
     message,
     retryable,
   });
+}
+
+export async function reportWorkbookApplicationFailure(
+  applicationId: string,
+  attempt: number,
+  code: string,
+  message: string,
+): Promise<void> {
+  await internalPost(
+    `/internal/v1/workbook-applications/${applicationId}/failure`,
+    { attempt, code, message },
+  );
 }
 
 export async function reportCancellation(

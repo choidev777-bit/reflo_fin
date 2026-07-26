@@ -25,6 +25,7 @@ import {
   invalidateResourceDependents,
   recordResourceDependencies,
 } from "../services/dependency-invalidator";
+import { loadRequiredWorkbookOutputBindings } from "../services/workbook-output-bindings";
 
 type CellChange = {
   sheetId: string;
@@ -140,6 +141,9 @@ type Context = {
   targetYear: number;
   targetQuarter: number;
   cutoffDate: string;
+  validationApprovalId: string;
+  validatedValueSetResourceVersionId: string;
+  validatedWorkbookResourceVersionId: string;
   sourceWorkbookResourceVersionId: string;
   mappingSetResourceVersionId: string;
   structureHash: string;
@@ -156,6 +160,9 @@ type Context = {
 };
 
 type WorkbookState = {
+  validationApprovalId: string;
+  validatedValueSetResourceVersionId: string;
+  validatedWorkbookResourceVersionId: string;
   sourceWorkbookResourceVersionId: string;
   mappingSetResourceVersionId: string;
   structureHash: string;
@@ -409,6 +416,16 @@ async function projectContext(
     validation_approval_id: string;
     validation_run_id: string;
     approved_plan_resource_version_id: string;
+    validated_value_set_resource_version_id: string;
+    validated_workbook_resource_version_id: string;
+    application_plan_json: {
+      commands?: Array<{
+        targetId: string;
+        sheetId: string;
+        address: string;
+        generatedBridge: boolean;
+      }>;
+    };
     structure_hash: string;
     artifact_id: string;
     object_key: string;
@@ -425,7 +442,11 @@ async function projectContext(
        validation.approval_id AS validation_approval_id,
        validation.validation_run_id,
        validation.approved_plan_resource_version_id,
-       wv.structure_hash, a.artifact_id, a.object_key, a.original_filename,
+       validation.validated_value_set_resource_version_id,
+       validation.validated_workbook_resource_version_id,
+       workbook_application.application_plan_json,
+       validated_workbook.structure_hash,
+       a.artifact_id, a.object_key, a.original_filename,
        a.sha256, price.resource_version_id AS price_snapshot_id,
        price.close_price::text, price.trading_date::text
      FROM project p
@@ -476,19 +497,42 @@ async function projectContext(
      JOIN validation_run validation_run
        ON validation_run.validation_run_id = validation.validation_run_id
       AND validation_run.status = 'succeeded'
+     JOIN workbook_application_run workbook_application
+       ON workbook_application.workbook_application_id =
+          validation.workbook_application_id
+      AND workbook_application.project_id = p.project_id
+      AND workbook_application.application_status = 'succeeded'
+      AND workbook_application.output_workbook_resource_version_id =
+          validation.validated_workbook_resource_version_id
+      AND workbook_application.output_artifact_id =
+          validation.validated_workbook_artifact_id
+     JOIN validated_workbook_version validated_workbook
+       ON validated_workbook.resource_version_id =
+          validation.validated_workbook_resource_version_id
+      AND validated_workbook.project_id = p.project_id
+      AND validated_workbook.validated_value_set_resource_version_id =
+          validation.validated_value_set_resource_version_id
+      AND validated_workbook.artifact_id =
+          validation.validated_workbook_artifact_id
+      AND validated_workbook.calculation_status = 'success'
      JOIN mapping_set_version msv
        ON msv.resource_version_id =
           approved_plan.mapping_set_resource_version_id
       AND msv.resource_version_id = files_completion.primary_version_id
       AND msv.mapping_status = 'confirmed'
       AND msv.unmapped_required_count = 0
+      AND msv.resource_version_id =
+          validated_workbook.mapping_set_resource_version_id
      JOIN workbook_version wv
        ON wv.resource_version_id =
           approved_plan.workbook_resource_version_id
       AND wv.resource_version_id = msv.workbook_version_id
-     JOIN project_file_version pfv
-       ON pfv.resource_version_id = wv.source_file_version_id
-     JOIN artifact a ON a.artifact_id = pfv.artifact_id
+      AND wv.resource_version_id =
+          validated_workbook.source_workbook_resource_version_id
+     JOIN artifact a
+       ON a.artifact_id = validated_workbook.artifact_id
+      AND a.project_id = p.project_id
+      AND a.storage_status = 'accepted'
      JOIN LATERAL (
        SELECT fi.market_price_snapshot_resource_version_id
        FROM file_inspection fi
@@ -554,54 +598,11 @@ async function projectContext(
       },
     );
   }
-  const mapping = await client.query<{
-    semantic_metric: string;
-    sheet_id: string | null;
-    address: string | null;
-    expected_formula_hash: string | null;
-    expected_structure_fingerprint: string | null;
-  }>(
-    `SELECT me.semantic_metric, candidate.sheet_id, candidate.address,
-       me.source_json->>'formulaHash' AS expected_formula_hash,
-       me.source_json->>'structureFingerprint' AS expected_structure_fingerprint
-     FROM mapping_entry me
-     JOIN mapping_candidate candidate
-       ON candidate.mapping_candidate_id = me.selected_candidate_id
-     WHERE me.mapping_set_version_id = $1
-       AND me.mapping_status = 'confirmed'
-       AND me.binding_kind = 'scalar'
-       AND candidate.source_type = 'cell'
-       AND me.semantic_metric IN ('eps', 'per', 'target_price')`,
-    [row.mapping_set_resource_version_id],
+  const mappedOutputBindings = await loadRequiredWorkbookOutputBindings(
+    client,
+    row.mapping_set_resource_version_id,
   );
-  const metricNames = {
-    eps: "forward_eps",
-    per: "target_per",
-    target_price: "target_price",
-  } as const;
-  const outputBindings = mapping.rows.flatMap((binding) => {
-    const metric = metricNames[binding.semantic_metric as keyof typeof metricNames];
-    if (
-      !metric ||
-      !binding.sheet_id ||
-      !binding.address ||
-      !/^[A-Z]{1,3}[1-9]\d{0,6}$/.test(binding.address)
-    ) {
-      return [];
-    }
-    return [{
-      metric,
-      sheetId: binding.sheet_id,
-      address: binding.address,
-      expectedFormulaHash: binding.expected_formula_hash,
-      expectedStructureFingerprint:
-        binding.expected_structure_fingerprint,
-    }];
-  });
-  if (
-    outputBindings.length !== 3 ||
-    new Set(outputBindings.map((binding) => binding.metric)).size !== 3
-  ) {
+  if (mappedOutputBindings.length !== 3) {
     throw new ApiError(
       409,
       "MAPPING_REVALIDATION_REQUIRED",
@@ -616,6 +617,33 @@ async function projectContext(
       },
     );
   }
+  const applicationCommands = new Map(
+    (row.application_plan_json.commands ?? []).map((command) => [
+      command.targetId,
+      command,
+    ]),
+  );
+  const outputBindings: OutputBinding[] = mappedOutputBindings.map(
+    (binding) => {
+      const command = applicationCommands.get(binding.targetId);
+      return command?.generatedBridge
+        ? {
+            metric: binding.metric,
+            sheetId: "_REFLO_BRIDGE",
+            address: command.address,
+            expectedFormulaHash: null,
+            expectedStructureFingerprint: null,
+          }
+        : {
+            metric: binding.metric,
+            sheetId: binding.sheetId,
+            address: binding.address,
+            expectedFormulaHash: binding.expectedFormulaHash,
+            expectedStructureFingerprint:
+              binding.expectedStructureFingerprint,
+          };
+    },
+  );
   const validatedSources = await client.query<{
     source_version_id: string;
   }>(
@@ -633,11 +661,19 @@ async function projectContext(
   const validationInputResourceVersionIds = [
     ...new Set([
       row.approved_plan_resource_version_id,
+      row.validated_value_set_resource_version_id,
+      row.validated_workbook_resource_version_id,
       ...validatedSources.rows.map((source) => source.source_version_id),
     ]),
   ].sort((left, right) => left.localeCompare(right));
   const inputFingerprint = contentHash({
     validationApprovalId: row.validation_approval_id,
+    validatedValueSetResourceVersionId:
+      row.validated_value_set_resource_version_id,
+    validatedWorkbookResourceVersionId:
+      row.validated_workbook_resource_version_id,
+    validatedWorkbookArtifactId: row.artifact_id,
+    validatedWorkbookSha256: row.sha256,
     validationInputResourceVersionIds,
     workbookResourceVersionId: row.workbook_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
@@ -652,6 +688,11 @@ async function projectContext(
     targetYear: row.target_year,
     targetQuarter: row.target_quarter,
     cutoffDate: row.cutoff_date,
+    validationApprovalId: row.validation_approval_id,
+    validatedValueSetResourceVersionId:
+      row.validated_value_set_resource_version_id,
+    validatedWorkbookResourceVersionId:
+      row.validated_workbook_resource_version_id,
     sourceWorkbookResourceVersionId: row.workbook_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     structureHash: row.structure_hash,
@@ -676,7 +717,10 @@ async function callExcel<T>(
     process.env.REFLO_EXCEL_WORKER_URL?.trim() || "http://127.0.0.1:8092";
   const response = await fetch(`${base.replace(/\/$/, "")}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${requireWorkerToken()}`,
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
@@ -700,12 +744,28 @@ async function callExcel<T>(
   return payload as T;
 }
 
+function requireWorkerToken(): string {
+  const value = process.env.REFLO_WORKER_TOKEN?.trim();
+  if (!value) {
+    throw new ApiError(
+      503,
+      "WORKER_CONFIGURATION_REQUIRED",
+      "Excel 계산 서비스 인증 설정이 필요합니다.",
+      { retryable: false },
+    );
+  }
+  return value;
+}
+
 async function readWorkbookState(
   client: TransactionClient,
   projectId: string,
   lock = false,
 ): Promise<WorkbookState | null> {
   const result = await client.query<{
+    validation_approval_id: string;
+    validated_value_set_resource_version_id: string;
+    validated_workbook_resource_version_id: string;
     source_workbook_resource_version_id: string;
     mapping_set_resource_version_id: string;
     structure_hash: string;
@@ -718,7 +778,10 @@ async function readWorkbookState(
     calculation_status: string;
     saved_at: Date;
   }>(
-    `SELECT vw.source_workbook_resource_version_id,
+    `SELECT vw.validation_approval_id,
+       vw.validated_value_set_resource_version_id,
+       vw.validated_workbook_resource_version_id,
+       vw.source_workbook_resource_version_id,
        vw.mapping_set_resource_version_id, vw.structure_hash,
        vw.input_fingerprint, vw.workbook_version,
        vw.editable_cell_set_version,
@@ -733,6 +796,11 @@ async function readWorkbookState(
   const row = result.rows[0];
   return row
     ? {
+        validationApprovalId: row.validation_approval_id,
+        validatedValueSetResourceVersionId:
+          row.validated_value_set_resource_version_id,
+        validatedWorkbookResourceVersionId:
+          row.validated_workbook_resource_version_id,
         sourceWorkbookResourceVersionId:
           row.source_workbook_resource_version_id,
         mappingSetResourceVersionId: row.mapping_set_resource_version_id,
@@ -751,6 +819,11 @@ async function readWorkbookState(
 
 function workbookInputsMatch(state: WorkbookState, context: Context) {
   return (
+    state.validationApprovalId === context.validationApprovalId &&
+    state.validatedValueSetResourceVersionId ===
+      context.validatedValueSetResourceVersionId &&
+    state.validatedWorkbookResourceVersionId ===
+      context.validatedWorkbookResourceVersionId &&
     state.sourceWorkbookResourceVersionId ===
       context.sourceWorkbookResourceVersionId &&
     state.mappingSetResourceVersionId ===
@@ -909,8 +982,12 @@ async function ensureWorkbook(
          project_id, source_workbook_resource_version_id, source_artifact_id,
          current_artifact_id, workbook_version, editable_cell_set_version,
          structure_hash, read_model_json, calculation_status,
-         mapping_set_resource_version_id, input_fingerprint
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'success', $9, $10)
+         mapping_set_resource_version_id, input_fingerprint,
+         validation_approval_id,
+         validated_value_set_resource_version_id,
+         validated_workbook_resource_version_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'success',
+         $9, $10, $11, $12, $13)
        ON CONFLICT (project_id) DO UPDATE SET
          source_workbook_resource_version_id =
            EXCLUDED.source_workbook_resource_version_id,
@@ -924,6 +1001,11 @@ async function ensureWorkbook(
          mapping_set_resource_version_id =
            EXCLUDED.mapping_set_resource_version_id,
          input_fingerprint = EXCLUDED.input_fingerprint,
+         validation_approval_id = EXCLUDED.validation_approval_id,
+         validated_value_set_resource_version_id =
+           EXCLUDED.validated_value_set_resource_version_id,
+         validated_workbook_resource_version_id =
+           EXCLUDED.validated_workbook_resource_version_id,
          saved_at = now()`,
       [
         projectId,
@@ -936,6 +1018,9 @@ async function ensureWorkbook(
         JSON.stringify(persistedReadModel),
         context.mappingSetResourceVersionId,
         context.inputFingerprint,
+        context.validationApprovalId,
+        context.validatedValueSetResourceVersionId,
+        context.validatedWorkbookResourceVersionId,
       ],
     );
     const state = await readWorkbookState(client, projectId);

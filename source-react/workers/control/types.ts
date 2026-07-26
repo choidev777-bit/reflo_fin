@@ -113,6 +113,31 @@ export type ResearchValidationWorkflowInput = {
   validationRuleVersion: string;
 };
 
+export type WorkbookApplicationWorkflowInput = {
+  workflowType: "workbookApplicationWorkflow";
+  jobId: string;
+  jobAttempt: number;
+  projectId: string;
+  applicationId: string;
+  validationSourceSnapshotId: string;
+  sourceFingerprint: string;
+  sourceWorkbookResourceVersionId: string;
+  mappingSetResourceVersionId: string;
+  validatedValueSetResourceVersionId: string;
+  sourceArtifactId: string;
+  sourceObjectKey: string;
+  sourceWorkbookHash: string;
+  sourceFilename: string;
+  plan: import("../../server/domain/workbook-application").WorkbookApplicationPlan;
+  outputBindings: Array<{
+    metric: "forward_eps" | "target_per" | "target_price";
+    sheetId: string;
+    sheetName: string;
+    address: string;
+  }>;
+  inputVersionIds: string[];
+};
+
 export type InspectionIssue = {
   code: string;
   severity: "info" | "warning" | "blocking";

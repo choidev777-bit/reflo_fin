@@ -17,6 +17,8 @@ import type {
   ResultDetail,
   ValidationWorkbookManifest,
   ValidationWorkspace,
+  WorkbookApplicationAccepted,
+  WorkbookApplicationProjection,
 } from "./types";
 
 function evidenceSourceUrl(
@@ -58,6 +60,46 @@ function sufficiencyLabel(value: QuestionAnswer["sufficiency"]): string {
   if (value === "qualified") return "조건부";
   if (value === "reinvestigating") return "재조사 중";
   return "불충분";
+}
+
+function workbookWriteStatusLabel(status: string | undefined): string {
+  if (status === "applied") return "반영 완료";
+  if (status === "applying") return "재계산 중";
+  if (status === "blocked") return "반영 차단";
+  if (status === "proposed") return "반영 예정";
+  return "검증 대기";
+}
+
+async function pollWorkbookApplication(
+  statusUrl: string,
+  onProgress: (projection: WorkbookApplicationProjection) => void,
+): Promise<WorkbookApplicationProjection> {
+  for (let attempt = 0; attempt < 660; attempt += 1) {
+    const projection =
+      await apiJson<WorkbookApplicationProjection>(statusUrl);
+    onProgress(projection);
+    if (
+      projection.operationStatus === "succeeded" &&
+      projection.validity === "current" &&
+      projection.outputWorkbook
+    ) {
+      return projection;
+    }
+    if (
+      projection.validity === "obsolete" ||
+      projection.operationStatus === "failed" ||
+      projection.operationStatus === "cancelled"
+    ) {
+      throw new Error(
+        projection.error?.message ??
+          "Workbook 반영에 실패했습니다. 원본 Workbook은 변경되지 않았습니다.",
+      );
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    "Workbook 반영이 제한 시간 안에 끝나지 않았습니다. 작업 상태를 다시 확인해주세요.",
+  );
 }
 
 export function ValidationScreen({ projectId }: { projectId: string }) {
@@ -157,22 +199,62 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
   }, [projectId, selectedResultId, session.status]);
 
   useEffect(() => {
-    if (category !== "excel" || workbook || session.status !== "authenticated") {
+    if (
+      category !== "excel" ||
+      workbook ||
+      session.status !== "authenticated" ||
+      !session.csrfToken
+    ) {
       return;
     }
-    void apiJson<ValidationWorkbookManifest>(
-      `/api/projects/${projectId}/validation/workbook`,
-    )
+    const prepare =
+      workspace?.workspace.status === "REVIEW_READY" ||
+      workspace?.workspace.status === "APPROVED"
+        ? apiJson(
+            `/api/projects/${projectId}/validation/workbook-write-proposals`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": session.csrfToken,
+              },
+            },
+          )
+        : Promise.resolve();
+    void prepare
+      .then(() =>
+        apiJson<ValidationWorkbookManifest>(
+          `/api/projects/${projectId}/validation/workbook`,
+        ),
+      )
       .then((next) => {
+        const firstTarget = next.validationTargets[0] ?? null;
         setWorkbook(next);
-        setSelectedTarget(next.validationTargets[0] ?? null);
+        setSelectedTarget(firstTarget);
+        if (firstTarget) {
+          const result = workspace?.results.find(
+            (item) => item.targetId === firstTarget.targetId,
+          );
+          setSelectedResultId(result?.resultId ?? null);
+        }
       })
       .catch((error) => setPageError(message(error)));
-  }, [category, projectId, session.status, workbook]);
+  }, [
+    category,
+    projectId,
+    session.csrfToken,
+    session.status,
+    workbook,
+    workspace,
+  ]);
 
   const selectedResult =
     workspace?.results.find((result) => result.resultId === selectedResultId) ??
     null;
+  const selectedWorkbookBinding =
+    workbook?.evidenceBindings.find(
+      (binding) => binding.targetId === selectedTarget?.targetId,
+    ) ?? null;
 
   const filterCount = (target: Filter) => {
     if (!workspace) return 0;
@@ -301,6 +383,100 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
     if (!workspace || !session.csrfToken) return;
     setMutationBusy(true);
     try {
+      await apiJson(
+        `/api/projects/${projectId}/validation/workbook-write-proposals`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": session.csrfToken,
+          },
+        },
+      );
+      let currentWorkbook = await apiJson<ValidationWorkbookManifest>(
+        `/api/projects/${projectId}/validation/workbook`,
+      );
+      setWorkbook(currentWorkbook);
+      if (
+        !currentWorkbook.validatedValueSetVersionId ||
+        !currentWorkbook.sourceSnapshotId ||
+        !currentWorkbook.sourceFingerprint ||
+        !currentWorkbook.expectedProjectVersion
+      ) {
+        throw new Error(
+          "승인 Evidence와 Workbook 반영 계획을 먼저 준비해주세요.",
+        );
+      }
+      if (
+        currentWorkbook.workbookApplication?.status !== "succeeded" ||
+        !currentWorkbook.validatedWorkbookArtifactId
+      ) {
+        const activeApplication =
+          currentWorkbook.workbookApplication?.status === "queued" ||
+          currentWorkbook.workbookApplication?.status === "running"
+            ? {
+                taskId: currentWorkbook.workbookApplication.taskId,
+                statusUrl:
+                  `/api/projects/${projectId}/validation/` +
+                  `workbook-applications/${currentWorkbook.workbookApplication.taskId}`,
+              }
+            : await apiJson<WorkbookApplicationAccepted>(
+                `/api/projects/${projectId}/validation/workbook-applications`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRF-Token": session.csrfToken,
+                    "Idempotency-Key": crypto.randomUUID(),
+                  },
+                  body: JSON.stringify({
+                    validatedValueSetVersionId:
+                      currentWorkbook.validatedValueSetVersionId,
+                    expectedWorkbookVersion:
+                      currentWorkbook.workbookVersion,
+                    expectedProjectVersion:
+                      currentWorkbook.expectedProjectVersion,
+                    sourceSnapshotId:
+                      currentWorkbook.sourceSnapshotId,
+                    sourceFingerprint:
+                      currentWorkbook.sourceFingerprint,
+                  }),
+                },
+              );
+        await pollWorkbookApplication(
+          activeApplication.statusUrl,
+          (projection) => {
+            setWorkbook((current) =>
+              current
+                ? {
+                    ...current,
+                    workbookApplication: {
+                      taskId: projection.taskId,
+                      status:
+                        projection.operationStatus === "succeeded"
+                          ? "succeeded"
+                          : projection.operationStatus === "failed" ||
+                              projection.operationStatus === "cancelled"
+                            ? "failed"
+                            : "running",
+                    },
+                    validatedWorkbookArtifactId:
+                      projection.outputWorkbook?.artifactId ?? null,
+                  }
+                : current,
+            );
+          },
+        );
+        currentWorkbook = await apiJson<ValidationWorkbookManifest>(
+          `/api/projects/${projectId}/validation/workbook`,
+        );
+        setWorkbook(currentWorkbook);
+      }
+      if (!currentWorkbook.validatedWorkbookArtifactId) {
+        throw new Error(
+          "재계산된 검증 Workbook artifact를 확인하지 못했습니다.",
+        );
+      }
       const response = await apiJson<{ nextRoute: string }>(
         `/api/projects/${projectId}/validation/complete`,
         {
@@ -808,6 +984,22 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                       <dd>
                         {detail.evidence[0].period} ·{" "}
                         {detail.evidence[0].scope}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Workbook Before</dt>
+                      <dd>{selectedWorkbookBinding?.beforeValue ?? "빈 셀"}</dd>
+                    </div>
+                    <div>
+                      <dt>Workbook After</dt>
+                      <dd>{selectedWorkbookBinding?.afterValue ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>적용 상태</dt>
+                      <dd>
+                        {workbookWriteStatusLabel(
+                          selectedWorkbookBinding?.writeStatus,
+                        )}
                       </dd>
                     </div>
                   </dl>

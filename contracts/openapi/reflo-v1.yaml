@@ -504,6 +504,77 @@ paths:
           $ref: "#/components/responses/Error"
       x-project-owner-required: true
       x-error-codes: [WORKBOOK_VERSION_MISMATCH]
+  /api/projects/{projectId}/validation/workbook-write-proposals:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Validation]
+      operationId: getValidationWorkbookWriteProposals
+      summary: Review Evidence-backed writes before creating a workbook artifact
+      responses:
+        "200":
+          description: Workbook write proposals pinned to one source snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookWriteProposalList"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VALIDATED_VALUE_SET_NOT_APPROVED, WORKBOOK_REQUIRED_OUTPUT_MISSING]
+    post:
+      tags: [Validation]
+      operationId: prepareValidationWorkbookWriteProposals
+      summary: Materialize the immutable validated value set for proposal review
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "201":
+          description: Workbook write proposals prepared from the current validation version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookWriteProposalList"
+        default:
+          $ref: "#/components/responses/Error"
+      x-project-owner-required: true
+      x-error-codes: [VALIDATED_VALUE_SET_NOT_APPROVED, WORKBOOK_REQUIRED_OUTPUT_MISSING]
+  /api/projects/{projectId}/validation/workbook-write-proposals/{proposalId}/decision:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: proposalId
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/OpaqueId"
+    post:
+      tags: [Validation]
+      operationId: decideValidationWorkbookWriteProposal
+      summary: Append an approve, reject, or equivalent-value modification decision
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkbookWriteProposalDecisionRequest"
+      responses:
+        "200":
+          description: Append-only proposal decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookWriteProposalDecisionResponse"
+        default:
+          $ref: "#/components/responses/Error"
+      x-idempotency-required: true
+      x-project-owner-required: true
+      x-error-codes: [WORKBOOK_WRITE_PROPOSAL_NOT_FOUND, WORKBOOK_VERSION_MISMATCH, SOURCE_FINGERPRINT_MISMATCH, WORKBOOK_VALUE_CHANGE_REQUIRES_REVALIDATION, WORKBOOK_APPLICATION_ALREADY_STARTED]
   /api/projects/{projectId}/validation/workbook-applications:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -523,6 +594,12 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateWorkbookApplicationRequest"
       responses:
+        "200":
+          description: An identical completed application already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkbookApplicationAccepted"
         "202":
           description: Workbook application task accepted
           content:
@@ -686,7 +763,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StageCompleteResponse"
+                $ref: "#/components/schemas/ValidationCompleteResponse"
         default:
           $ref: "#/components/responses/Error"
       x-idempotency-required: true
@@ -5850,21 +5927,36 @@ components:
       required:
         - originalWorkbookHash
         - workbookVersion
+        - workbookResourceVersionId
+        - structureHash
         - visibleSheets
         - cells
         - validationTargets
+        - evidenceBindings
         - readOnlyReason
+        - validatedValueSetVersionId
+        - sourceSnapshotId
+        - sourceFingerprint
+        - expectedProjectVersion
+        - workbookApplication
+        - workbookApplicationPlan
+        - validatedWorkbookArtifactId
       properties:
         originalWorkbookHash:
           type: string
-          minLength: 16
+          pattern: "^[a-f0-9]{64}$"
         workbookVersion:
           $ref: "#/components/schemas/VersionNumber"
+        workbookResourceVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        structureHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
         visibleSheets:
           type: array
           items:
             type: object
-            additionalProperties: false
+            additionalProperties: true
             required: [sheetId, name]
             properties:
               sheetId:
@@ -5875,22 +5967,13 @@ components:
           type: array
           items:
             type: object
-            additionalProperties: false
-            required: [sheetId, address, rawValue, formattedText, formula, styleToken, readOnly]
+            additionalProperties: true
+            required: [sheetId, address]
             properties:
               sheetId:
                 $ref: "#/components/schemas/OpaqueId"
               address:
                 type: string
-              rawValue: {}
-              formattedText:
-                type: string
-              formula:
-                type: [string, "null"]
-              styleToken:
-                type: string
-              readOnly:
-                type: boolean
         validationTargets:
           type: array
           items:
@@ -5902,9 +5985,292 @@ components:
                 $ref: "#/components/schemas/OpaqueId"
               address:
                 type: string
+        evidenceBindings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - targetId
+              - evidenceIds
+              - value
+              - formattedText
+              - beforeValue
+              - afterValue
+              - writeStatus
+            properties:
+              targetId:
+                $ref: "#/components/schemas/OpaqueId"
+              evidenceIds:
+                type: array
+                minItems: 1
+                uniqueItems: true
+                items:
+                  $ref: "#/components/schemas/OpaqueId"
+              value:
+                type: [string, "null"]
+              formattedText:
+                type: string
+              beforeValue:
+                type: [string, "null"]
+              afterValue:
+                type: [string, "null"]
+              writeStatus:
+                type: string
+                enum: [awaiting_validation, proposed, blocked, applying, applied]
         readOnlyReason:
           type: string
           const: validation_workspace
+        validatedValueSetVersionId:
+          type: [string, "null"]
+        sourceSnapshotId:
+          type: [string, "null"]
+        sourceFingerprint:
+          type: [string, "null"]
+          pattern: "^[a-f0-9]{64}$"
+        expectedProjectVersion:
+          oneOf:
+            - $ref: "#/components/schemas/VersionNumber"
+            - type: "null"
+        workbookApplication:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [taskId, status]
+              properties:
+                taskId:
+                  $ref: "#/components/schemas/OpaqueId"
+                status:
+                  type: string
+                  enum: [queued, running, succeeded, failed, obsolete]
+            - type: "null"
+        workbookApplicationPlan:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [commands, blocked, planHash]
+              properties:
+                commands:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/WorkbookPatchCommand"
+                blocked:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/WorkbookApplicationBlocker"
+                planHash:
+                  type: string
+                  pattern: "^[a-f0-9]{64}$"
+            - type: "null"
+        validatedWorkbookArtifactId:
+          type: [string, "null"]
+    WorkbookPatchCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - targetId
+        - sheetId
+        - sheetName
+        - address
+        - valueType
+        - beforeValue
+        - afterValue
+        - evidenceIds
+        - expectedStructureFingerprint
+        - generatedBridge
+      properties:
+        targetId:
+          $ref: "#/components/schemas/OpaqueId"
+        sheetId:
+          $ref: "#/components/schemas/OpaqueId"
+        sheetName:
+          type: string
+        address:
+          type: string
+          pattern: "^[A-Z]{1,3}[1-9][0-9]{0,6}$"
+        valueType:
+          type: string
+          enum: [number, string, boolean, blank]
+        beforeValue:
+          type: [string, "null"]
+        afterValue:
+          type: [string, "null"]
+        evidenceIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/OpaqueId"
+        expectedStructureFingerprint:
+          type: [string, "null"]
+        generatedBridge:
+          type: boolean
+    WorkbookApplicationBlocker:
+      type: object
+      additionalProperties: false
+      required: [targetId, reasonCode, sheetId, address]
+      properties:
+        targetId:
+          $ref: "#/components/schemas/OpaqueId"
+        reasonCode:
+          type: string
+        sheetId:
+          type: [string, "null"]
+        address:
+          type: [string, "null"]
+    WorkbookWriteProposalList:
+      type: object
+      additionalProperties: false
+      required:
+        - validatedValueSetVersionId
+        - expectedWorkbookVersion
+        - expectedProjectVersion
+        - sourceSnapshotId
+        - sourceFingerprint
+        - structureHash
+        - planHash
+        - reviewStatus
+        - proposals
+        - blockers
+      properties:
+        validatedValueSetVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        expectedWorkbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        expectedProjectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        structureHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        planHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        reviewStatus:
+          type: string
+          enum: [proposed, approved, rejected]
+        proposals:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - proposalId
+              - targetId
+              - sheetId
+              - sheetName
+              - address
+              - beforeValue
+              - afterValue
+              - valueType
+              - evidenceIds
+              - generatedBridge
+              - decision
+              - status
+            properties:
+              proposalId:
+                $ref: "#/components/schemas/OpaqueId"
+              targetId:
+                $ref: "#/components/schemas/OpaqueId"
+              sheetId:
+                $ref: "#/components/schemas/OpaqueId"
+              sheetName:
+                type: string
+              address:
+                type: string
+              beforeValue:
+                type: [string, "null"]
+              afterValue:
+                type: [string, "null"]
+              valueType:
+                type: string
+                enum: [number, string, boolean, blank]
+              evidenceIds:
+                type: array
+                minItems: 1
+                uniqueItems: true
+                items:
+                  $ref: "#/components/schemas/OpaqueId"
+              generatedBridge:
+                type: boolean
+              decision:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [decisionId, decisionNo, action, reason, decidedAt]
+                    properties:
+                      decisionId:
+                        $ref: "#/components/schemas/OpaqueId"
+                      decisionNo:
+                        $ref: "#/components/schemas/VersionNumber"
+                      action:
+                        type: string
+                        enum: [approve, reject, modify]
+                      reason:
+                        type: string
+                      decidedAt:
+                        $ref: "#/components/schemas/Timestamp"
+                  - type: "null"
+              status:
+                type: string
+                enum: [proposed, approve, reject, modify]
+        blockers:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkbookApplicationBlocker"
+    WorkbookWriteProposalDecisionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - validatedValueSetVersionId
+        - expectedWorkbookVersion
+        - expectedProjectVersion
+        - sourceSnapshotId
+        - sourceFingerprint
+        - action
+        - reason
+      properties:
+        validatedValueSetVersionId:
+          $ref: "#/components/schemas/OpaqueId"
+        expectedWorkbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        expectedProjectVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        sourceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        action:
+          type: string
+          enum: [approve, reject, modify]
+        proposedAfterValue:
+          type: [string, "null"]
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 1000
+    WorkbookWriteProposalDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [decisionId, proposalId, decisionNo, action, status]
+      properties:
+        decisionId:
+          $ref: "#/components/schemas/OpaqueId"
+        proposalId:
+          $ref: "#/components/schemas/OpaqueId"
+        decisionNo:
+          $ref: "#/components/schemas/VersionNumber"
+        action:
+          type: string
+          enum: [approve, reject, modify]
+        status:
+          type: string
+          enum: [approve, reject, modify]
     CreateWorkbookApplicationRequest:
       type: object
       additionalProperties: false
@@ -5941,7 +6307,7 @@ components:
           $ref: "#/components/schemas/OpaqueId"
         operationStatus:
           type: string
-          const: queued
+          enum: [queued, running, succeeded]
         validity:
           type: string
           const: current
@@ -5953,38 +6319,110 @@ components:
           type: string
           pattern: "^[a-f0-9]{64}$"
     WorkbookApplicationProjection:
-      allOf:
-        - $ref: "#/components/schemas/JobProjection"
-        - type: object
-          required:
-            - taskId
-            - sourceSnapshotId
-            - sourceFingerprint
-            - inputWorkbookVersion
-            - appliedCellCount
-            - blockedCellCount
-          properties:
-            taskId:
-              $ref: "#/components/schemas/OpaqueId"
-            sourceSnapshotId:
-              $ref: "#/components/schemas/OpaqueId"
-            sourceFingerprint:
-              type: string
-              pattern: "^[a-f0-9]{64}$"
-            inputWorkbookVersion:
-              $ref: "#/components/schemas/VersionNumber"
-            appliedCellCount:
-              type: integer
-              minimum: 0
-            blockedCellCount:
-              type: integer
-              minimum: 0
-            outputWorkbook:
-              oneOf:
-                - $ref: "#/components/schemas/VersionRef"
-                - type: "null"
-            obsoleteReason:
-              type: ["string", "null"]
+      type: object
+      additionalProperties: false
+      required:
+        - jobId
+        - jobType
+        - taskId
+        - operationStatus
+        - validity
+        - phase
+        - progressMode
+        - progressPercent
+        - attempt
+        - retryable
+        - error
+        - requestedAt
+        - startedAt
+        - finishedAt
+        - heartbeatAt
+        - updatedAt
+        - sourceSnapshotId
+        - sourceFingerprint
+        - inputWorkbookVersion
+        - appliedCellCount
+        - blockedCellCount
+        - outputWorkbook
+        - obsoleteReason
+      properties:
+        jobId:
+          $ref: "#/components/schemas/OpaqueId"
+        jobType:
+          type: string
+          const: workbook_application
+        taskId:
+          $ref: "#/components/schemas/OpaqueId"
+        operationStatus:
+          $ref: "#/components/schemas/JobStatus"
+        validity:
+          $ref: "#/components/schemas/JobValidity"
+        phase:
+          type: [string, "null"]
+        progressMode:
+          type: string
+          enum: [determinate, indeterminate]
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        attempt:
+          type: integer
+          minimum: 1
+        retryable:
+          type: boolean
+        error:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code:
+                  type: string
+                message:
+                  type: [string, "null"]
+            - type: "null"
+        requestedAt:
+          $ref: "#/components/schemas/Timestamp"
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        heartbeatAt:
+          type: [string, "null"]
+          format: date-time
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+        sourceSnapshotId:
+          $ref: "#/components/schemas/OpaqueId"
+        sourceFingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        inputWorkbookVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        appliedCellCount:
+          type: integer
+          minimum: 0
+        blockedCellCount:
+          type: integer
+          minimum: 0
+        outputWorkbook:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, version, artifactId]
+              properties:
+                id:
+                  $ref: "#/components/schemas/OpaqueId"
+                version:
+                  $ref: "#/components/schemas/VersionNumber"
+                artifactId:
+                  type: [string, "null"]
+            - type: "null"
+        obsoleteReason:
+          type: [string, "null"]
     ReportMaterializationProjection:
       allOf:
         - $ref: "#/components/schemas/JobProjection"
@@ -6097,3 +6535,23 @@ components:
       properties:
         expectedValidationVersion:
           $ref: "#/components/schemas/VersionNumber"
+    ValidationCompleteResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - approvalId
+        - validationVersion
+        - validatedWorkbookArtifactId
+        - approvedAt
+        - nextRoute
+      properties:
+        approvalId:
+          $ref: "#/components/schemas/OpaqueId"
+        validationVersion:
+          $ref: "#/components/schemas/VersionNumber"
+        validatedWorkbookArtifactId:
+          $ref: "#/components/schemas/OpaqueId"
+        approvedAt:
+          $ref: "#/components/schemas/Timestamp"
+        nextRoute:
+          $ref: "#/components/schemas/RelativeRoute"

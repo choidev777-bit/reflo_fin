@@ -49,6 +49,10 @@ import {
   pinWorkflowJobSourceSnapshot,
   recordLateWorkflowJobResult,
 } from "../services/source-snapshot-service";
+import {
+  assertValidatedWorkbookReady,
+  readPreparedValidatedWorkbook,
+} from "./workbook-application-repository";
 
 type IdempotentResult = { status: number; body: unknown };
 const MAX_RESEARCH_PDF_REFERENCES = 10;
@@ -3324,16 +3328,56 @@ export async function getValidationWorkbook(input: {
     }>(
       `SELECT target_id, evidence_ids, value_normalized, one_line_value
        FROM validation_result
-       WHERE project_id = $1 AND category = 'excel'
+       WHERE project_id = $1 AND validation_run_id = $2
+         AND category = 'excel'
          AND exception_status <> 'SUPERSEDED'`,
-      [input.projectId],
+      [input.projectId, workspace.validation_run_id],
     );
+    const preparation =
+      workspace.workspace_status === "REVIEW_READY" ||
+      workspace.workspace_status === "APPROVED"
+        ? await readPreparedValidatedWorkbook(client, {
+            projectId: input.projectId,
+            userId: input.userId,
+          })
+        : null;
+    const latestApplication = await client.query<{
+      workbook_application_id: string;
+      application_status: string;
+      output_artifact_id: string | null;
+      application_plan_json: {
+        commands?: Array<{
+          targetId: string;
+          beforeValue: string | null;
+          afterValue: string | null;
+          evidenceIds: string[];
+        }>;
+        blocked?: Array<{ targetId: string; reasonCode: string }>;
+      };
+    }>(
+      `SELECT workbook_application_id, application_status,
+         output_artifact_id, application_plan_json
+       FROM workbook_application_run
+       WHERE project_id = $1
+         AND source_workbook_resource_version_id = $2
+         AND source_fingerprint = $3
+       ORDER BY requested_at DESC
+       LIMIT 1`,
+      [
+        input.projectId,
+        row.workbook_resource_version_id,
+        preparation?.context.sourceFingerprint ?? "0".repeat(64),
+      ],
+    );
+    const application = latestApplication.rows[0] ?? null;
+    const activePlan =
+      application?.application_plan_json ?? preparation?.plan ?? null;
     return {
       originalWorkbookHash: row.original_sha256,
-      workbookVersion: row.workbook_resource_version_id,
+      workbookVersion: 1,
+      workbookResourceVersionId: row.workbook_resource_version_id,
       structureHash: row.structure_hash,
-      readOnly: true,
-      readOnlyReason: "조사 결과 검증 단계에서는 모든 셀을 읽기 전용으로 표시합니다.",
+      readOnlyReason: "validation_workspace",
       visibleSheets: (row.analysis_json.sheets ?? []).filter(
         (sheet) =>
           sheet.visibility !== "hidden" && sheet.name !== "_REFLO_BRIDGE",
@@ -3345,8 +3389,46 @@ export async function getValidationWorkbook(input: {
         evidenceIds: binding.evidence_ids,
         value: binding.value_normalized,
         formattedText: binding.one_line_value,
-        writeStatus: "pending",
+        beforeValue:
+          activePlan?.commands?.find(
+            (command) => command.targetId === binding.target_id,
+          )?.beforeValue ?? null,
+        afterValue:
+          activePlan?.commands?.find(
+            (command) => command.targetId === binding.target_id,
+          )?.afterValue ?? binding.value_normalized,
+        writeStatus: activePlan?.blocked?.some(
+          (blocker) => blocker.targetId === binding.target_id,
+        )
+          ? "blocked"
+          : application?.application_status === "succeeded"
+            ? "applied"
+            : application?.application_status === "queued" ||
+                application?.application_status === "running"
+              ? "applying"
+              : preparation
+                ? "proposed"
+                : "awaiting_validation",
       })),
+      validatedValueSetVersionId: preparation?.resourceVersionId ?? null,
+      sourceSnapshotId: preparation?.context.sourceSnapshotId ?? null,
+      sourceFingerprint: preparation?.context.sourceFingerprint ?? null,
+      expectedProjectVersion: preparation?.context.projectVersion ?? null,
+      workbookApplication: application
+        ? {
+            taskId: application.workbook_application_id,
+            status: application.application_status,
+          }
+        : null,
+      workbookApplicationPlan: preparation
+        ? {
+            commands: preparation.plan.commands,
+            blocked: preparation.plan.blocked,
+            planHash: preparation.plan.planHash,
+          }
+        : null,
+      validatedWorkbookArtifactId:
+        application?.output_artifact_id ?? null,
     };
   });
 }
@@ -3896,12 +3978,22 @@ export async function completeValidation(input: {
         },
       );
     }
+    const validatedWorkbook = await assertValidatedWorkbookReady(client, {
+      projectId: input.projectId,
+      validationRunId: workspace.validation_run_id,
+      validationVersion: version,
+      approvedPlanResourceVersionId:
+        workspace.approved_plan_resource_version_id,
+    });
     const approvalId = uuidv7();
     await client.query(
       `INSERT INTO validation_approval (
          approval_id, project_id, validation_run_id, validation_version,
-         approved_plan_resource_version_id, approved_by_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+         approved_plan_resource_version_id, approved_by_user_id,
+         validated_value_set_resource_version_id,
+         validated_workbook_resource_version_id,
+         validated_workbook_artifact_id, workbook_application_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         approvalId,
         input.projectId,
@@ -3909,6 +4001,10 @@ export async function completeValidation(input: {
         version,
         workspace.approved_plan_resource_version_id,
         input.userId,
+        validatedWorkbook.validatedValueSetResourceVersionId,
+        validatedWorkbook.validatedWorkbookResourceVersionId,
+        validatedWorkbook.validatedWorkbookArtifactId,
+        validatedWorkbook.applicationId,
       ],
     );
     await client.query(
@@ -3966,6 +4062,8 @@ export async function completeValidation(input: {
     const body = {
       approvalId,
       validationVersion: version,
+      validatedWorkbookArtifactId:
+        validatedWorkbook.validatedWorkbookArtifactId,
       approvedAt: new Date().toISOString(),
       nextRoute: processRoute(input.projectId, "valuation"),
     };

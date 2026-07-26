@@ -34,7 +34,7 @@ function sourceSection(
   return source.slice(start, end);
 }
 
-test.todo("Phase 3 gap: 검증값을 새 Workbook artifact에 실제 반영한다", () => {
+test("Phase 3: 검증값을 새 Workbook artifact에 실제 반영한다", () => {
   const implementation = sourceSection(
     phase4RepositorySource,
     "export async function getValidationWorkbook",

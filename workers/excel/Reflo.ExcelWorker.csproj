@@ -11,4 +11,10 @@
   <ItemGroup>
     <ProjectReference Include="..\dotnet\Reflo.Contracts\Reflo.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Reflo.ExcelWorker.Tests\**\*.cs" />
+    <Content Remove="Reflo.ExcelWorker.Tests\**\*" />
+    <EmbeddedResource Remove="Reflo.ExcelWorker.Tests\**\*" />
+    <None Remove="Reflo.ExcelWorker.Tests\**\*" />
+  </ItemGroup>
 </Project>

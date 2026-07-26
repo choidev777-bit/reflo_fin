@@ -285,9 +285,9 @@ export type ResultDetail = {
 
 export type ValidationWorkbookManifest = {
   originalWorkbookHash: string;
-  workbookVersion: string;
+  workbookVersion: number;
+  workbookResourceVersionId: string;
   structureHash: string;
-  readOnly: true;
   readOnlyReason: string;
   visibleSheets: Array<{
     sheetId?: string;
@@ -312,6 +312,69 @@ export type ValidationWorkbookManifest = {
     evidenceIds: string[];
     value: string | null;
     formattedText: string;
-    writeStatus: string;
+    beforeValue: string | null;
+    afterValue: string | null;
+    writeStatus:
+      | "awaiting_validation"
+      | "proposed"
+      | "blocked"
+      | "applying"
+      | "applied";
   }>;
+  validatedValueSetVersionId: string | null;
+  sourceSnapshotId: string | null;
+  sourceFingerprint: string | null;
+  expectedProjectVersion: number | null;
+  workbookApplication: {
+    taskId: string;
+    status: "queued" | "running" | "succeeded" | "failed" | "obsolete";
+  } | null;
+  workbookApplicationPlan: {
+    commands: Array<{
+      targetId: string;
+      sheetId: string;
+      sheetName: string;
+      address: string;
+      valueType: "number" | "string" | "boolean" | "blank";
+      beforeValue: string | null;
+      afterValue: string | null;
+      evidenceIds: string[];
+      generatedBridge: boolean;
+    }>;
+    blocked: Array<{
+      targetId: string;
+      reasonCode: string;
+    }>;
+    planHash: string;
+  } | null;
+  validatedWorkbookArtifactId: string | null;
+};
+
+export type WorkbookApplicationAccepted = {
+  taskId: string;
+  operationStatus: "queued" | "running" | "succeeded";
+  validity: "current";
+  statusUrl: string;
+  sourceSnapshotId: string;
+  sourceFingerprint: string;
+};
+
+export type WorkbookApplicationProjection = {
+  taskId: string;
+  operationStatus:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancelled";
+  validity: "current" | "obsolete";
+  phase: string | null;
+  progressPercent: number;
+  retryable: boolean;
+  error: { code: string; message: string | null } | null;
+  outputWorkbook: {
+    id: string;
+    version: number;
+    artifactId: string | null;
+  } | null;
 };

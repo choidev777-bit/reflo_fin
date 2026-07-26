@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using ClosedXML.Excel;
+using Reflo.ExcelWorker;
 
 const long MaxWorkbookBytes = 100L * 1024 * 1024;
 const int MaxSheets = 50;
@@ -22,7 +23,42 @@ const string EngineVersion = "0.105.0";
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:8092");
+var workerToken = Environment.GetEnvironmentVariable("REFLO_WORKER_TOKEN")?.Trim();
+if (string.IsNullOrWhiteSpace(workerToken))
+{
+    throw new InvalidOperationException("REFLO_WORKER_TOKEN is required.");
+}
 var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path == "/health")
+    {
+        await next();
+        return;
+    }
+    var authorization = context.Request.Headers.Authorization.ToString();
+    var supplied = authorization.StartsWith("Bearer ", StringComparison.Ordinal)
+        ? authorization["Bearer ".Length..]
+        : "";
+    var expectedBytes = Encoding.UTF8.GetBytes(workerToken);
+    var suppliedBytes = Encoding.UTF8.GetBytes(supplied);
+    if (expectedBytes.Length != suppliedBytes.Length ||
+        !CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes))
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = new
+            {
+                code = "WORKER_AUTH_REQUIRED",
+                message = "Worker authentication is required.",
+            },
+        });
+        return;
+    }
+    await next();
+});
 
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -41,17 +77,7 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
 
     try
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-        await using var source = await http.GetStreamAsync(downloadUri, cancellationToken);
-        await using var buffer = new MemoryStream();
-        await source.CopyToAsync(buffer, cancellationToken);
-        if (buffer.Length > MaxWorkbookBytes)
-        {
-            return Results.Ok(EmptyResult(
-                [new Issue("FILE_TOO_LARGE", "blocking", "Excel은 최대 100 MiB까지 지원합니다.")]));
-        }
-
-        var bytes = buffer.ToArray();
+        var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
         var originalSha256 = Sha(bytes);
         var zip = ReadZipInsights(bytes);
         var issues = new List<Issue>();
@@ -628,6 +654,73 @@ app.MapPost("/valuation/calculate", async (
     }
 });
 
+app.MapPost("/validation/apply", async (
+    WorkbookApplicationHttpRequest request,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var sourceBytes = await DownloadWorkbook(
+            request.DownloadUrl,
+            cancellationToken);
+        var result = WorkbookApplicationEngine.Apply(
+            sourceBytes,
+            new WorkbookApplicationRequest(
+                request.ExpectedWorkbookHash,
+                request.ExpectedStructureHash,
+                request.Commands,
+                request.OutputBindings ?? []));
+        return Results.Ok(new
+        {
+            workbookBase64 = Convert.ToBase64String(result.WorkbookBytes),
+            result.WorkbookHash,
+            result.EngineName,
+            result.EngineVersion,
+            result.ChangedCells,
+            result.StructureHashBefore,
+            result.StructureHashAfter,
+            result.FormulaHashBefore,
+            result.FormulaHashAfter,
+            result.ProtectedPartHashesBefore,
+            result.ProtectedPartHashesAfter,
+            result.CalculationErrors,
+            result.UnsupportedFunctions,
+            outputs = new
+            {
+                forwardEps = result.Outputs.GetValueOrDefault("forward_eps"),
+                targetPer = result.Outputs.GetValueOrDefault("target_per"),
+                targetPrice = result.Outputs.GetValueOrDefault("target_price"),
+            },
+        });
+    }
+    catch (WorkbookApplicationException error)
+    {
+        return Results.UnprocessableEntity(new
+        {
+            error = new
+            {
+                code = error.Code,
+                message = Trim(error.Message, 300),
+                details = string.IsNullOrWhiteSpace(error.Details)
+                    ? Array.Empty<string>()
+                    : new[] { Trim(error.Details, 1000) },
+            },
+        });
+    }
+    catch (Exception error)
+    {
+        app.Logger.LogError(error, "Workbook application failed.");
+        return Results.UnprocessableEntity(new
+        {
+            error = new
+            {
+                code = "WORKBOOK_APPLICATION_FAILED",
+                message = Trim(error.Message, 300),
+            },
+        });
+    }
+});
+
 app.Run();
 
 static XLWorkbook OpenWorkbookForInspection(
@@ -720,13 +813,50 @@ static async Task<byte[]> DownloadWorkbook(
     {
         throw new InvalidOperationException("downloadUrl is required");
     }
-    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-    var bytes = await http.GetByteArrayAsync(uri, cancellationToken);
-    if (bytes.LongLength > MaxWorkbookBytes)
+    if (!string.IsNullOrEmpty(uri.UserInfo) ||
+        !AllowedDownloadAuthorities().Contains(uri.Authority))
+    {
+        throw new InvalidOperationException("DOWNLOAD_URL_NOT_ALLOWED");
+    }
+    using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+    using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(2) };
+    using var response = await http.GetAsync(
+        uri,
+        HttpCompletionOption.ResponseHeadersRead,
+        cancellationToken);
+    response.EnsureSuccessStatusCode();
+    if (response.Content.Headers.ContentLength > MaxWorkbookBytes)
     {
         throw new InvalidOperationException("FILE_TOO_LARGE");
     }
-    return bytes;
+    await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+    await using var buffer = new MemoryStream();
+    var chunk = new byte[81920];
+    while (true)
+    {
+        var read = await source.ReadAsync(chunk, cancellationToken);
+        if (read == 0) break;
+        if (buffer.Length + read > MaxWorkbookBytes)
+        {
+            throw new InvalidOperationException("FILE_TOO_LARGE");
+        }
+        await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+    }
+    return buffer.ToArray();
+}
+
+static HashSet<string> AllowedDownloadAuthorities()
+{
+    var configured =
+        Environment.GetEnvironmentVariable("REFLO_WORKER_DOWNLOAD_AUTHORITIES");
+    if (string.IsNullOrWhiteSpace(configured))
+    {
+        throw new InvalidOperationException(
+            "REFLO_WORKER_DOWNLOAD_AUTHORITIES is required.");
+    }
+    return configured
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
 }
 
 static ValuationReadModel BuildValuationReadModel(
@@ -1224,9 +1354,18 @@ static ValuationOutput BoundOutput(
     ValuationOutputBinding binding,
     ZipInsights zip)
 {
+    var bridgeBinding = string.Equals(
+        binding.SheetId,
+        "_REFLO_BRIDGE",
+        StringComparison.Ordinal);
     var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
-        StableSheetId(zip, sheet) == binding.SheetId &&
-        sheet.Visibility == XLWorksheetVisibility.Visible);
+        bridgeBinding
+            ? string.Equals(
+                sheet.Name,
+                "_REFLO_BRIDGE",
+                StringComparison.Ordinal)
+            : StableSheetId(zip, sheet) == binding.SheetId &&
+              sheet.Visibility == XLWorksheetVisibility.Visible);
     if (worksheet is null || !TryCell(worksheet, binding.Address, out var cell))
     {
         throw new ValuationContractException(
@@ -2518,6 +2657,12 @@ public sealed record ValuationCalculateRequest(
     IReadOnlyList<ValuationCellChange> Changes,
     IReadOnlyList<ValuationAllowedCell>? AllowedCells,
     IReadOnlyList<ValuationOutputBinding>? OutputBindings);
+public sealed record WorkbookApplicationHttpRequest(
+    string DownloadUrl,
+    string ExpectedWorkbookHash,
+    string? ExpectedStructureHash,
+    IReadOnlyList<WorkbookPatchCommand> Commands,
+    IReadOnlyList<WorkbookApplicationOutputBinding>? OutputBindings);
 public sealed record ValuationCell(
     string Address,
     int Row,
