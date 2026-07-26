@@ -333,69 +333,49 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
 
   await page.getByRole("button", { name: "검사 실행" }).click();
   const inspectionDialog = page.getByRole("dialog", {
-    name: /분석·매핑 항목|분석과 필수 매핑/,
+    name: "PDF - Excel 연결 확인",
   });
   await expect(inspectionDialog).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("페이지·블록·슬롯·물리 객체")).toBeVisible();
-  await page.getByRole("tab", { name: "Excel 모델" }).click();
-  await expect(page.getByText("시트·수식·편집 셀·모델 구조")).toBeVisible();
-  await page.getByRole("tab", { name: "PDF·데이터 연결" }).click();
-  await expect(page.getByText("PDF 구성과 데이터 원본 연결")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "PDF 블록" }).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Excel 후보" }).first()).toBeVisible();
-  await expect(page.locator(".phase2-mapping-comparison").first()).toBeVisible();
-  await expect(page.getByText(/경계 좌표/).first()).toBeVisible();
-  await expect(page.getByText(/구조 지문|계열 미리보기/).first()).toBeVisible();
-  await expect(page.getByText(/KRX 기준일 종가/).first()).toBeVisible();
-  await expect(page.locator("option", { hasText: "KRX 기준일 종가" })).toHaveCount(1);
-  await expect(page.getByText("투자의견", { exact: true })).toHaveCount(0);
-
-  const unresolvedRequiredMappings = page.locator(
-    ".phase2-mapping-editor label.needs-selection select:not(:disabled)",
+  await expect(inspectionDialog.getByRole("tab")).toHaveCount(0);
+  await expect(
+    inspectionDialog.getByRole("region", { name: "PDF 구성" }),
+  ).toBeVisible();
+  const pdfPageButtons = inspectionDialog.locator(
+    ".phase2-page-rail > button",
   );
-  const unresolvedCount = await unresolvedRequiredMappings.count();
-  expect(unresolvedCount).toBe(9);
-  const selectableUnresolvedMappings = page.locator(
-    ".phase2-mapping-editor label.needs-selection select:not(:disabled):has(option:nth-child(2))",
-  );
-  let selectableCount = await selectableUnresolvedMappings.count();
-  while (selectableCount > 0) {
-    const select = selectableUnresolvedMappings.first();
-    const candidateValue = await select.locator("option").nth(1).getAttribute("value");
-    expect(candidateValue).toBeTruthy();
-    await select.selectOption(candidateValue!);
-    selectableCount -= 1;
-    await expect(selectableUnresolvedMappings).toHaveCount(selectableCount);
-  }
-  const remainingRequiredMappings = await unresolvedRequiredMappings.count();
-  await page.getByRole("button", { name: "매핑 보정 저장" }).click();
+  await expect(pdfPageButtons).toHaveCount(5);
 
-  if (remainingRequiredMappings > 0) {
-    expect(remainingRequiredMappings).toBe(2);
-    await expect(
-      page.getByRole("heading", {
-        name: "확인이 필요한 분석·매핑 항목이 있습니다.",
-      }),
-    ).toBeVisible({ timeout: 60_000 });
-    await expect(
-      page.getByText("미매핑 필수").locator("..").locator("dd"),
-    ).toHaveText("2개");
-    await expect(page.getByText("v2", { exact: true })).toBeVisible();
-    test.info().annotations.push({
-      type: "source-data-blocker",
-      description:
-        "figure_2_chart와 figure_3_chart는 원본 Workbook에 기간별 주가·밴드 계열이 없어 오연결하지 않고 차단합니다.",
-    });
-    return;
+  let resolvedMappings = 0;
+  for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
+    await pdfPageButtons.nth(pageIndex).click();
+    const reviewItems = inspectionDialog
+      .locator(".phase2-element-list > button")
+      .filter({
+        has: inspectionDialog.locator(
+          '.phase2-result-status[data-status="review"]',
+        ),
+      });
+    while ((await reviewItems.count()) > 0) {
+      await reviewItems.first().click();
+      const select = inspectionDialog.locator(
+        ".phase2-candidate-control select",
+      );
+      await expect(select).toHaveCount(1);
+      const candidateValue = await select
+        .locator("option")
+        .nth(1)
+        .getAttribute("value");
+      expect(candidateValue).toBeTruthy();
+      await select.selectOption(candidateValue!);
+      resolvedMappings += 1;
+    }
   }
-
-  const resultHeading = page.getByRole("heading", {
-    name: "분석과 필수 매핑을 모두 확인했습니다.",
-  });
-  await expect(resultHeading).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("0개", { exact: true })).toBeVisible();
-  await expect(page.getByText("v2", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /결과 확정 · 다음/ }).click();
+  expect(resolvedMappings).toBe(7);
+  await page.getByRole("button", { name: "분석 결과 반영" }).click();
+  await expect(
+    page.getByRole("button", { name: "분석 결과 확정 · 다음" }),
+  ).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "분석 결과 확정 · 다음" }).click();
   await expect(page).toHaveURL(/\/process\/hypothesis$/);
   await expect(
     page.getByRole("heading", { name: "투자의견 · 조사 질문" }),

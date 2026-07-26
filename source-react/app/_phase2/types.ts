@@ -55,6 +55,13 @@ export type InspectionProjection = {
       status: "suggested" | "confirmed" | "unmapped" | "invalid";
       confidence: number | null;
       source: unknown;
+      plan: {
+        resolution: "external_pending" | "later_stage";
+        sourceLabel: string;
+        destinationLabel: string;
+        ownerStage: string;
+        exclusiveSource: boolean;
+      } | null;
       pdfBlock: {
         pageNumber: number;
         pageLabel: string | null;
@@ -123,6 +130,45 @@ export type InspectionProjection = {
       tableCount: number;
       chartCount: number;
       warningCount: number;
+      pages: Array<{
+        pageId: string;
+        pageNumber: number;
+        pageLabel: string | null;
+        pageBox: [number, number, number, number] | null;
+        headerFields: {
+          reportDate: {
+            text: string;
+            bbox: [number, number, number, number] | null;
+            objectIds: string[];
+          } | null;
+          reportTitle: {
+            text: string;
+            bbox: [number, number, number, number] | null;
+            objectIds: string[];
+          } | null;
+        };
+        narrativeSections: Array<{
+          order: number;
+          headingText: string;
+          headingBbox: [number, number, number, number] | null;
+          bodyBbox: [number, number, number, number] | null;
+          bodyRegions: Array<[number, number, number, number]>;
+          headingObjectIds: string[];
+          bodyObjectIds: string[];
+          sourceText: string;
+        }>;
+        slots: Array<{
+          slotId: string;
+          blockId: string;
+          metric: string;
+          valueType: string;
+          required: boolean;
+          role: string;
+          classification: string | null;
+          bbox: [number, number, number, number] | null;
+          confidence: number | null;
+        }>;
+      }>;
     };
     workbook: {
       sheetCount: number;
@@ -135,6 +181,22 @@ export type InspectionProjection = {
       tableCount: number;
       externalLinkCount: number;
       namedRangeCount: number;
+      calculationStatus: string;
+      calculationErrorCount: number;
+      warningCount: number;
+      sheets: Array<{
+        sheetId: string;
+        name: string;
+        index: number;
+        visibility: string;
+        usedRange: string;
+        formulaCount: number;
+        editableCellCount: number;
+        mergedRangeCount: number;
+        chartCount: number;
+        tableCount: number;
+        protected: boolean;
+      }>;
     };
   } | null;
   resultVersions: {

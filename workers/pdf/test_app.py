@@ -93,6 +93,37 @@ def overlapping_chart_pdf() -> bytes:
     return result
 
 
+def revised_prior_tables_pdf() -> bytes:
+    document = pymupdf.open()
+    page = document.new_page(width=595.32, height=841.92)
+    for number, title_y, source_y, suffix in (
+        (6, 80, 395, "revised"),
+        (7, 445, 770, "prior"),
+    ):
+        page.insert_text(
+            (42, title_y),
+            f"Figure {number}. Quarterly performance outlook ({suffix})",
+            fontname="helv",
+            fontsize=9,
+        )
+        for row in range(5):
+            top = title_y + 25 + row * 45
+            page.draw_rect(
+                pymupdf.Rect(42, top, 553, top + 45),
+                color=(0.45, 0.45, 0.45),
+                width=0.5,
+            )
+        page.insert_text(
+            (42, source_y),
+            "Source: REFLO test fixture",
+            fontname="helv",
+            fontsize=6,
+        )
+    result = document.tobytes()
+    document.close()
+    return result
+
+
 def image_only_pdf() -> bytes:
     document = pymupdf.open()
     page = document.new_page(width=300, height=400)
@@ -362,6 +393,42 @@ class PdfWorkerRenderTest(unittest.TestCase):
             block for block in page["blocks"] if block["blockId"] in region_block_ids
         ]
         self.assertTrue(all(block["bbox"][0] > 390 for block in region_blocks))
+
+    def test_splits_revised_and_prior_performance_tables_by_figure_heading(
+        self,
+    ) -> None:
+        result = inspect_pdf_bytes(revised_prior_tables_pdf())
+        page = result["templateIr"]["pages"][0]
+        slots = {
+            slot["semanticKey"]["metric"]: slot for slot in page["slots"]
+        }
+
+        self.assertTrue(result["compatible"], result["issues"])
+        self.assertEqual(
+            {"figure_6_chart", "figure_7_chart"},
+            {"figure_6_chart", "figure_7_chart"} & slots.keys(),
+        )
+        self.assertEqual("table", slots["figure_6_chart"]["valueType"])
+        self.assertEqual("table", slots["figure_7_chart"]["valueType"])
+        self.assertNotIn("quarterly_performance_table", slots)
+
+        blocks = {
+            slot["semanticKey"]["metric"]: next(
+                block
+                for block in page["blocks"]
+                if block["blockId"] == slot["blockId"]
+            )
+            for slot in slots.values()
+            if slot["semanticKey"]["metric"]
+            in {"figure_6_chart", "figure_7_chart"}
+        }
+        revised = blocks["figure_6_chart"]
+        prior = blocks["figure_7_chart"]
+        self.assertEqual("table", revised["classification"])
+        self.assertEqual("table", prior["classification"])
+        self.assertLess(revised["bbox"][3], prior["bbox"][1])
+        self.assertLess(revised["bbox"][0], 50)
+        self.assertGreater(revised["bbox"][2], 545)
 
     def test_isc_template_ir_classifies_editable_charts_fixed_visual_and_tables(
         self,

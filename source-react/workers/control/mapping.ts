@@ -10,10 +10,15 @@ import type {
 } from "./types";
 import type { MarketPriceSnapshot } from "../../server/infrastructure/market-data/krx";
 import {
+  deferredMappingPolicy,
+  deferredMappingResolvesRequiredSlot,
+} from "../../server/domain/mapping-policy";
+import {
   IGNORED_RANGE_CONTEXT,
   LEGACY_ISC_WORKBOOK_PROFILE,
   MAPPING_RULES,
   METRIC_ALIASES,
+  REFLO_REPORT_OUTPUT_PROFILE,
 } from "./mapping-rules";
 
 export type MappingSource = {
@@ -638,9 +643,10 @@ function tableCandidates(
   slot: TemplateSlot,
   workbook: WorkbookAnalysis,
 ): MappingCandidate[] {
-  const fixed = (
-    LEGACY_ISC_WORKBOOK_PROFILE.rangeHints[slot.semanticKey.metric] ?? []
-  )
+  const fixed = [
+    ...(REFLO_REPORT_OUTPUT_PROFILE.rangeHints[slot.semanticKey.metric] ?? []),
+    ...(LEGACY_ISC_WORKBOOK_PROFILE.rangeHints[slot.semanticKey.metric] ?? []),
+  ]
     .map(([sheet, range]) => synthesizeRange(workbook, sheet, range))
     .filter((value): value is WorkbookCandidateRange => Boolean(value))
     .map((range) => ({
@@ -1318,6 +1324,13 @@ export function buildMappingSet(
 ): { mappingSet: MappingSet; summary: MappingSummary } {
   const slots = template.pages.flatMap((page) => page.slots);
   const candidateSeeds = slots.flatMap((slot) => {
+    const deferredPolicy = deferredMappingPolicy(slot.semanticKey.metric);
+    if (deferredPolicy?.exclusiveSource) {
+      const krxCandidate = marketPrice
+        ? marketPriceCandidate(slot, marketPrice)
+        : null;
+      return krxCandidate ? [krxCandidate] : [];
+    }
     if (slot.valueType === "table") return tableCandidates(slot, workbook);
     if (slot.valueType === "chart") return chartCandidates(slot, workbook);
     const workbookCandidates = scalarCandidates(slot, workbook);
@@ -1358,7 +1371,12 @@ export function buildMappingSet(
   });
   const boundSlotIds = new Set(bindings.map((binding) => binding.slotId));
   const unmappedRequiredSlots = slots
-    .filter((slot) => slot.required && !boundSlotIds.has(slot.slotId))
+    .filter(
+      (slot) =>
+        slot.required &&
+        !boundSlotIds.has(slot.slotId) &&
+        !deferredMappingResolvesRequiredSlot(slot.semanticKey.metric),
+    )
     .map((slot) => slot.slotId);
   const status = unmappedRequiredSlots.length === 0 ? "confirmed" : "suggested";
   const mappingSetId = opaque(
@@ -1377,9 +1395,9 @@ export function buildMappingSet(
     ...(marketPrice?.status === "unavailable"
       ? [
           {
-            code: "KRX_MARKET_PRICE_FALLBACK",
+            code: "KRX_MARKET_PRICE_PENDING",
             message:
-              "KRX 기준일 종가를 조회하지 못해 Excel의 현재주가 값을 대체 원본으로 사용했습니다.",
+              "KRX 기준일 종가는 Excel 값으로 대체하지 않고 후속 자료 수집에서 다시 조회합니다.",
           },
         ]
       : []),

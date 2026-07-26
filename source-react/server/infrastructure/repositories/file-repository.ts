@@ -3,6 +3,15 @@ import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import { blockerMeta } from "../../domain/stage-blocker-policy";
+import {
+  deferredMappingPolicy,
+  deferredMappingResolvesRequiredSlot,
+} from "../../domain/mapping-policy";
+import {
+  detectNarrativeSections,
+  detectReportHeaderFields,
+  type ReportTemplatePage,
+} from "../../domain/report";
 import type {
   WorkerResultCommitMetadata,
   WorkerResultCommitOutcome,
@@ -1016,6 +1025,23 @@ function bboxValue(
   return value as [number, number, number, number];
 }
 
+function unionBboxValues(
+  values: unknown[],
+): [number, number, number, number] | null {
+  const boxes = values
+    .map(bboxValue)
+    .filter(
+      (value): value is [number, number, number, number] => Boolean(value),
+    );
+  if (boxes.length === 0) return null;
+  return [
+    Math.min(...boxes.map((box) => box[0])),
+    Math.min(...boxes.map((box) => box[1])),
+    Math.max(...boxes.map((box) => box[2])),
+    Math.max(...boxes.map((box) => box[3])),
+  ];
+}
+
 export function buildPdfBlockPreview(
   templateIr: unknown,
   slotId: string,
@@ -1138,6 +1164,171 @@ export function buildWorkbookCandidatePreview(input: {
     currency: stringValue(input.source.currency),
     structureFingerprint: sourceFingerprint,
   };
+}
+
+export function pdfPageProjection(templateIr: unknown): Array<{
+  pageId: string;
+  pageNumber: number;
+  pageLabel: string | null;
+  pageBox: [number, number, number, number] | null;
+  headerFields: {
+    reportDate: {
+      text: string;
+      bbox: [number, number, number, number] | null;
+      objectIds: string[];
+    } | null;
+    reportTitle: {
+      text: string;
+      bbox: [number, number, number, number] | null;
+      objectIds: string[];
+    } | null;
+  };
+  narrativeSections: Array<{
+    order: number;
+    headingText: string;
+    headingBbox: [number, number, number, number] | null;
+    bodyBbox: [number, number, number, number] | null;
+    bodyRegions: Array<[number, number, number, number]>;
+    headingObjectIds: string[];
+    bodyObjectIds: string[];
+    sourceText: string;
+  }>;
+  slots: Array<{
+    slotId: string;
+    blockId: string;
+    metric: string;
+    valueType: string;
+    required: boolean;
+    role: string;
+    classification: string | null;
+    bbox: [number, number, number, number] | null;
+    confidence: number | null;
+  }>;
+}> {
+  const template = recordValue(templateIr);
+  return recordArray(template?.pages).map((page, pageIndex) => {
+    const blocks = new Map(
+      recordArray(page.blocks).flatMap((block) => {
+        const blockId = stringValue(block.blockId);
+        return blockId ? [[blockId, block] as const] : [];
+      }),
+    );
+    const boxes = recordValue(page.boxes);
+    const pageBox = bboxValue(boxes?.cropBox) ?? bboxValue(boxes?.mediaBox);
+    const pageWidth = pageBox ? Math.abs(pageBox[2] - pageBox[0]) : 595.32;
+    const pageHeight = pageBox ? Math.abs(pageBox[3] - pageBox[1]) : 841.92;
+    const narrativeSections = detectNarrativeSections(
+      page as unknown as ReportTemplatePage,
+      pageWidth,
+      pageHeight,
+    );
+    const headerFields =
+      pageIndex === 0
+        ? detectReportHeaderFields(
+            page as unknown as ReportTemplatePage,
+            pageWidth,
+            pageHeight,
+          )
+        : { reportDate: null, reportTitle: null };
+    const headerFieldProjection = (
+      field: (typeof headerFields)["reportDate"],
+    ) =>
+      field
+        ? {
+            text: field.text,
+            bbox: bboxValue(field.bbox),
+            objectIds: [field.objectId],
+          }
+        : null;
+    return {
+      pageId: stringValue(page.pageId) ?? `page-${pageIndex + 1}`,
+      pageNumber: numberValue(page.pageNumber) ?? pageIndex + 1,
+      pageLabel: stringValue(page.pageLabel),
+      pageBox,
+      headerFields: {
+        reportDate: headerFieldProjection(headerFields.reportDate),
+        reportTitle: headerFieldProjection(headerFields.reportTitle),
+      },
+      narrativeSections: narrativeSections.map((section, index) => ({
+        order: index + 1,
+        headingText: section.heading.text,
+        headingBbox: bboxValue(section.heading.bbox),
+        bodyBbox: unionBboxValues(
+          section.bodyRuns.map((run) => run.bbox),
+        ),
+        bodyRegions: section.bodyRegions,
+        headingObjectIds: [section.heading.objectId],
+        bodyObjectIds: section.bodyRuns.map((run) => run.objectId),
+        sourceText: section.sourceText,
+      })),
+      slots: recordArray(page.slots).flatMap((slot) => {
+        const slotId = stringValue(slot.slotId);
+        const blockId = stringValue(slot.blockId);
+        const semanticKey = recordValue(slot.semanticKey);
+        const metric = stringValue(semanticKey?.metric);
+        if (!slotId || !blockId || !metric) return [];
+        const block = blocks.get(blockId);
+        return [
+          {
+            slotId,
+            blockId,
+            metric,
+            valueType: stringValue(slot.valueType) ?? "string",
+            required: slot.required === true,
+            role: stringValue(block?.role) ?? "unknown",
+            classification: stringValue(block?.classification),
+            bbox: bboxValue(block?.bbox),
+            confidence: numberValue(block?.analysisConfidence),
+          },
+        ];
+      }),
+    };
+  });
+}
+
+function workbookSheetProjection(workbookAnalysis: unknown): Array<{
+  sheetId: string;
+  name: string;
+  index: number;
+  visibility: string;
+  usedRange: string;
+  formulaCount: number;
+  editableCellCount: number;
+  mergedRangeCount: number;
+  chartCount: number;
+  tableCount: number;
+  protected: boolean;
+}> {
+  const workbook = recordValue(workbookAnalysis);
+  const editableCountBySheet = new Map<string, number>();
+  for (const cell of recordArray(workbook?.editableCells)) {
+    const sheetId = stringValue(cell.sheetId);
+    if (!sheetId) continue;
+    editableCountBySheet.set(
+      sheetId,
+      (editableCountBySheet.get(sheetId) ?? 0) + 1,
+    );
+  }
+  return recordArray(workbook?.sheets).flatMap((sheet, index) => {
+    const sheetId = stringValue(sheet.sheetId);
+    const name = stringValue(sheet.name);
+    if (!sheetId || !name) return [];
+    return [
+      {
+        sheetId,
+        name,
+        index: numberValue(sheet.index) ?? index,
+        visibility: stringValue(sheet.visibility) ?? "visible",
+        usedRange: stringValue(sheet.usedRange) ?? "A1",
+        formulaCount: numberValue(sheet.formulaCount) ?? 0,
+        editableCellCount: editableCountBySheet.get(sheetId) ?? 0,
+        mergedRangeCount: numberValue(sheet.mergedRangeCount) ?? 0,
+        chartCount: numberValue(sheet.chartCount) ?? 0,
+        tableCount: numberValue(sheet.tableCount) ?? 0,
+        protected: sheet.protected === true,
+      },
+    ];
+  });
 }
 
 async function inspectionProjection(
@@ -1290,6 +1481,7 @@ async function inspectionProjection(
       confidence: number | null;
       source: unknown;
       pdfBlock: PdfBlockPreview | null;
+      plan: ReturnType<typeof deferredMappingPolicy>;
       selectedCandidateId: string | null;
       candidates: Array<{
         candidateId: string;
@@ -1324,6 +1516,7 @@ async function inspectionProjection(
         pdfBlock: buildPdfBlockPreview(row.template_ir_json, item.slot_id),
         selectedCandidateId: item.selected_candidate_id,
         candidates: [],
+        plan: deferredMappingPolicy(item.semantic_metric),
       };
       mappingEntries.set(item.mapping_entry_id, entry);
     }
@@ -1404,6 +1597,7 @@ async function inspectionProjection(
             tableCount: row.pdf_table_count ?? 0,
             chartCount: row.pdf_chart_count ?? 0,
             warningCount: row.pdf_warning_count ?? 0,
+            pages: pdfPageProjection(row.template_ir_json),
           },
           workbook: {
             sheetCount: row.workbook_sheet_count ?? 0,
@@ -1416,6 +1610,16 @@ async function inspectionProjection(
             tableCount: row.workbook_table_count ?? 0,
             externalLinkCount: row.workbook_external_link_count ?? 0,
             namedRangeCount: row.workbook_named_range_count ?? 0,
+            calculationStatus:
+              stringValue(recordValue(row.workbook_analysis_json)?.calculationStatus) ??
+              "unknown",
+            calculationErrorCount: recordArray(
+              recordValue(row.workbook_analysis_json)?.calculationErrors,
+            ).length,
+            warningCount: recordArray(
+              recordValue(row.workbook_analysis_json)?.warnings,
+            ).length,
+            sheets: workbookSheetProjection(row.workbook_analysis_json),
           },
         }
       : null,
@@ -2658,9 +2862,18 @@ export async function createMappingRevision(input: {
     }
   }
   const revisedEntries = snapshot.entries.map((entry) => {
-    const selectedCandidateId = selectionMap.has(entry.entryId)
+    const requestedCandidateId = selectionMap.has(entry.entryId)
       ? selectionMap.get(entry.entryId) ?? null
       : entry.selectedCandidateId;
+    const requestedCandidate = entry.candidates.find(
+      (candidate) => candidate.candidateId === requestedCandidateId,
+    );
+    const policy = deferredMappingPolicy(entry.metric);
+    const selectedCandidateId =
+      policy?.exclusiveSource &&
+      requestedCandidate?.sourceType !== "market_data"
+        ? null
+        : requestedCandidateId;
     return { ...entry, selectedCandidateId };
   });
   const bindings = revisedEntries.flatMap((entry) => {
@@ -2688,7 +2901,12 @@ export async function createMappingRevision(input: {
     })),
   );
   const unmappedRequiredSlots = revisedEntries
-    .filter((entry) => entry.required && !entry.selectedCandidateId)
+    .filter(
+      (entry) =>
+        entry.required &&
+        !entry.selectedCandidateId &&
+        !deferredMappingResolvesRequiredSlot(entry.metric),
+    )
     .map((entry) => entry.slotId);
   const mappingStatus =
     unmappedRequiredSlots.length === 0 ? ("confirmed" as const) : ("blocked" as const);
@@ -2701,15 +2919,29 @@ export async function createMappingRevision(input: {
     bindings,
     candidates,
     unmappedRequiredSlots,
-    warnings:
-      unmappedRequiredSlots.length > 0
+    warnings: [
+      ...(
+        Array.isArray(originalMapping.warnings)
+          ? originalMapping.warnings
+          : []
+      ).filter(
+        (warning) =>
+          !(
+            typeof warning === "object" &&
+            warning !== null &&
+            "code" in warning &&
+            warning.code === "REQUIRED_MAPPING_UNRESOLVED"
+          ),
+      ),
+      ...(unmappedRequiredSlots.length > 0
         ? [
             {
               code: "REQUIRED_MAPPING_UNRESOLVED",
-              message: `필수 슬롯 ${unmappedRequiredSlots.length}개의 Excel 원본을 확인해야 합니다.`,
+              message: `필수 슬롯 ${unmappedRequiredSlots.length}개의 원본을 확인해야 합니다.`,
             },
           ]
-        : [],
+        : []),
+    ],
   };
   const revisionId = uuidv7();
   const objectKey = `immutable/${input.projectId}/mapping-sets/${input.mappingSetVersionId}/revisions/${revisionId}.json`;
@@ -2830,7 +3062,11 @@ export async function createMappingRevision(input: {
           entry.kind,
           entry.valueType,
           entry.required,
-          selected ? "confirmed" : "unmapped",
+          selected
+            ? "confirmed"
+            : deferredMappingPolicy(entry.metric)
+              ? "suggested"
+              : "unmapped",
           selected?.score ?? entry.candidates[0]?.score ?? null,
           selected
             ? JSON.stringify(
@@ -3771,7 +4007,11 @@ export async function commitInspectionResult(
                 : "scalar",
             slot.valueType,
             slot.required,
-            binding ? "confirmed" : "unmapped",
+            binding
+              ? "confirmed"
+              : deferredMappingPolicy(slot.semanticKey.metric)
+                ? "suggested"
+                : "unmapped",
             candidatesBySlot.get(slot.slotId)?.[0]?.score ?? null,
             binding
               ? JSON.stringify(
