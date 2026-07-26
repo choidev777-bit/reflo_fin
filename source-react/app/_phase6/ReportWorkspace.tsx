@@ -22,6 +22,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiJson, ClientApiError } from "../_phase1/api";
 import { useSession } from "../_phase1/useSession";
+import { ReportChartEditor } from "./ReportChartEditor";
 import { ReportPdfEditor } from "./ReportPdfEditor";
 import { PdfPreview } from "./PdfPreview";
 import styles from "./phase6.module.css";
@@ -30,11 +31,19 @@ import type {
   ExportJob,
   ProvenanceDetail,
   ReportBlock,
+  ReportChartType,
   ReportWorkspaceData,
   ValidationJob,
 } from "./types";
 
-type Panel = "versions" | "preview" | "validation" | "export" | "ai" | "provenance";
+type Panel =
+  | "versions"
+  | "preview"
+  | "validation"
+  | "export"
+  | "ai"
+  | "provenance"
+  | "chart";
 type Proposal = {
   proposalId: string;
   blockId: string;
@@ -70,6 +79,34 @@ function errorMessage(error: unknown) {
   return error instanceof ClientApiError
     ? error.body.error.message
     : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+function materializationBlockerMessage(code: string) {
+  const messages: Record<string, string> = {
+    BINDING_NOT_CONFIRMED:
+      "이 블록의 Excel 연결이 아직 확정되지 않았습니다.",
+    APPROVED_WORKBOOK_READ_MODEL_MISSING:
+      "승인된 Excel 버전의 읽기 데이터가 없어 초안에 반영할 수 없습니다.",
+    TABLE_RANGE_BINDING_REQUIRED:
+      "표의 시트와 셀 범위를 다시 연결해야 합니다.",
+    TABLE_SOURCE_RANGE_UNAVAILABLE:
+      "연결된 표 범위를 승인된 Excel 버전에서 찾지 못했습니다.",
+    TABLE_SOURCE_RANGE_EMPTY:
+      "연결된 표 범위에 표시할 데이터가 없습니다.",
+    TABLE_TOPOLOGY_MISMATCH:
+      "표의 행·열 구조가 연결을 확정했을 때와 달라졌습니다.",
+    TABLE_BINDING_METADATA_INVALID:
+      "표의 헤더 또는 행 이름 열 연결을 다시 확인해야 합니다.",
+    TABLE_HEADER_ROW_EMPTY:
+      "연결된 표의 헤더 행을 읽지 못했습니다.",
+    CHART_SERIES_BINDING_REQUIRED:
+      "그래프의 category와 각 series 범위를 연결해야 합니다.",
+    CHART_CATEGORY_RANGE_INVALID:
+      "그래프의 category 범위를 승인된 Excel 버전에서 읽지 못했습니다.",
+    CHART_SERIES_RANGE_INVALID:
+      "그래프 series의 길이 또는 숫자 형식이 category와 맞지 않습니다.",
+  };
+  return messages[code] ?? `초안 데이터 반영을 완료하지 못했습니다. (${code})`;
 }
 
 function findBlock(workspace: ReportWorkspaceData, blockId: string) {
@@ -474,6 +511,97 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     setPanel("ai");
   };
 
+  const openChart = (blockId: string) => {
+    setActiveBlockId(blockId);
+    setPanel("chart");
+  };
+
+  const applyChartType = async (chartType: ReportChartType) => {
+    const current = workspaceRef.current;
+    const lease = editSessionRef.current;
+    const block =
+      current && activeBlockId ? findBlock(current, activeBlockId) : null;
+    if (
+      !current ||
+      !lease ||
+      !block ||
+      block.dataBinding?.kind !== "chart" ||
+      block.dataBinding.status !== "confirmed" ||
+      block.materializedData?.kind !== "chart" ||
+      block.materializedData.status !== "ready" ||
+      !block.materializedData.supportedChartTypes.includes(chartType) ||
+      session.status !== "authenticated" ||
+      pending
+    ) {
+      return;
+    }
+
+    setPending("chart-apply");
+    setSaveState("saving");
+    setError(null);
+    try {
+      const result = await apiJson<{
+        reportVersionId: string;
+        version: number;
+        savedAt: string;
+        pages: ReportWorkspaceData["pages"];
+      }>(
+        `/api/projects/${projectId}/report/versions/${current.report.activeVersionId}`,
+        {
+          method: "PATCH",
+          headers: mutationHeaders(session.csrfToken, lease.leaseToken),
+          body: JSON.stringify({
+            expectedVersion: current.report.version,
+            editSessionId: lease.editSessionId,
+            clientMutationId: crypto.randomUUID(),
+            operations: [
+              {
+                type: "replace_chart_type",
+                blockId: block.blockId,
+                baseBlockRevision: block.revision,
+                chartType,
+              },
+            ],
+          }),
+        },
+      );
+      updateWorkspace((latest) => ({
+        ...latest,
+        report: {
+          ...latest.report,
+          activeVersionId: result.reportVersionId,
+          version: result.version,
+          lastSavedAt: result.savedAt,
+          validationStatus: "not_run",
+          previewStatus: "stale",
+        },
+        pages: result.pages,
+        jobs: {
+          ...latest.jobs,
+          preview: null,
+          validation: null,
+          approval: null,
+          export: null,
+        },
+      }));
+      setEditSession((currentSession) =>
+        currentSession
+          ? { ...currentSession, reportVersionId: result.reportVersionId }
+          : currentSession,
+      );
+      setValidation(null);
+      setExportJob(null);
+      setPanel(null);
+      setSaveState("saved");
+    } catch (caught) {
+      setSaveState("error");
+      setError(errorMessage(caught));
+      await loadWorkspace();
+    } finally {
+      setPending(null);
+    }
+  };
+
   const requestAiProposal = async () => {
     if (
       !workspace ||
@@ -800,12 +928,12 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
           ))}
         </nav>
 
-        <section className={styles.reportCanvas} aria-label="원본 PDF 기반 보고서 편집">
+        <section className={styles.reportCanvas} aria-label="보고서 초안 편집">
           <div className={styles.pdfEditorGuide} data-editable={editable}>
             <span className={styles.pdfEditorGuideDot} />
             {editable
-              ? "표시된 텍스트 영역을 누르면 해당 블록의 AI 수정 창이 열립니다."
-              : "PDF 텍스트를 드래그해 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 영역이 표시됩니다."}
+              ? "텍스트는 문장 편집, 그래프는 형태 변경, 표는 연결 출처 확인 패널을 엽니다."
+              : "보고서 초안의 텍스트를 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 텍스트와 데이터 블록이 표시됩니다."}
           </div>
           <ReportPdfEditor
             url={workspace.sourcePdf.contentUrl}
@@ -814,6 +942,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
             activeBlockId={activeBlockId}
             onSelectBlock={openAi}
             onInspectBlock={(blockId) => void openProvenance(blockId)}
+            onEditChart={openChart}
           />
         </section>
       </div>
@@ -836,6 +965,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                   {panel === "validation" && "최종 검증"}
                   {panel === "export" && "내보내기"}
                   {panel === "ai" && "AI 문장 다듬기"}
+                  {panel === "chart" && "그래프 형태 변경"}
                   {panel === "provenance" &&
                     (selectedBlock?.dataBinding ? "데이터 연결" : "근거 추적")}
                 </h2>
@@ -1053,6 +1183,19 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
               </div>
             )}
 
+            {panel === "chart" &&
+              selectedBlock?.dataBinding?.kind === "chart" && (
+                <ReportChartEditor
+                  key={selectedBlock.blockId}
+                  block={selectedBlock}
+                  pending={Boolean(pending)}
+                  onApply={(chartType) => void applyChartType(chartType)}
+                  onInspectConnection={() =>
+                    void openProvenance(selectedBlock.blockId)
+                  }
+                />
+              )}
+
             {panel === "provenance" && (
               <div className={styles.panelSection}>
                 {!provenance ? (
@@ -1094,6 +1237,68 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
                         )}
                       </div>
                     )}
+                    {provenance.materialization &&
+                      provenance.materialization.kind !== "fixed_visual" && (
+                        <div
+                          className={styles.materializationCard}
+                          data-status={provenance.materialization.status}
+                        >
+                          <div className={styles.materializationSummary}>
+                            <div>
+                              <span>초안 데이터</span>
+                              <strong>
+                                {provenance.materialization.status === "ready"
+                                  ? "초안 반영 완료"
+                                  : "초안 반영 불가"}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>Workbook</span>
+                              <strong>
+                                v
+                                {
+                                  provenance.materialization.provenance
+                                    .workbookVersion
+                                }
+                              </strong>
+                            </div>
+                          </div>
+                          {provenance.materialization.blockerCode && (
+                            <p className={styles.materializationBlocker}>
+                              {materializationBlockerMessage(
+                                provenance.materialization.blockerCode,
+                              )}
+                            </p>
+                          )}
+                          <dl className={styles.materializationSources}>
+                            {provenance.materialization.provenance.sources.map(
+                              (source, index) => (
+                                <div
+                                  key={`${source.role}-${source.seriesId ?? index}`}
+                                >
+                                  <dt>
+                                    {source.role === "category"
+                                      ? "카테고리"
+                                      : source.role === "series"
+                                        ? source.label || "계열"
+                                        : "표 범위"}
+                                  </dt>
+                                  <dd>
+                                    {source.sheetName} · {source.address}
+                                  </dd>
+                                </div>
+                              ),
+                            )}
+                          </dl>
+                          <small>
+                            MappingSet{" "}
+                            {
+                              provenance.materialization.provenance
+                                .mappingSetResourceVersionId
+                            }
+                          </small>
+                        </div>
+                      )}
                     {provenance.calculation && (
                       <div className={styles.noticeBox}>
                         <strong>검증된 계산 경로</strong>

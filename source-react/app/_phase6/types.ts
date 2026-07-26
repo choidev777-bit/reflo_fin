@@ -1,5 +1,80 @@
 import type { StageState } from "../_phase4/types";
 
+export type ReportChartType = "line" | "bar" | "area" | "combo";
+
+export type ReportMaterializedCell = {
+  address: string;
+  row: number;
+  column: number;
+  valueType: string;
+  rawValue: string | null;
+  formattedText: string;
+  formula: string | null;
+  numberFormat: string;
+};
+
+export type ReportMaterializationProvenance = {
+  mappingSetResourceVersionId: string;
+  workbookArtifactId: string;
+  workbookVersion: number;
+  workbookHash: string | null;
+  slotId: string;
+  sources: Array<{
+    role: "table" | "category" | "series";
+    seriesId: string | null;
+    label: string | null;
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    structureFingerprint: string | null;
+  }>;
+};
+
+type ReportMaterializationState = {
+  status: "ready" | "blocked";
+  blockerCode: string | null;
+  provenance: ReportMaterializationProvenance;
+};
+
+export type ReportTableSnapshot = ReportMaterializationState & {
+  kind: "table";
+  headerRow: number | null;
+  columns: Array<{
+    column: number;
+    address: string;
+    label: string;
+  }>;
+  headers: ReportMaterializedCell[];
+  rows: Array<{
+    rowNumber: number;
+    rowKey: string | null;
+    cells: ReportMaterializedCell[];
+  }>;
+};
+
+export type ReportChartSnapshot = ReportMaterializationState & {
+  kind: "chart";
+  supportedChartTypes: ReportChartType[];
+  categories: ReportMaterializedCell[];
+  series: Array<{
+    seriesId: string;
+    label: string;
+    values: ReportMaterializedCell[];
+  }>;
+};
+
+export type ReportFixedVisualSnapshot = {
+  kind: "fixed_visual";
+  status: "ready";
+  blockerCode: null;
+  provenance: null;
+};
+
+export type ReportMaterializedData =
+  | ReportTableSnapshot
+  | ReportChartSnapshot
+  | ReportFixedVisualSnapshot;
+
 export type OutlineTitle = {
   blockId: string;
   value: string;
@@ -132,6 +207,7 @@ export type ReportBlock = {
   sourceCoverage?: "complete" | "review_required";
   uncoveredSourceObjectIds?: string[];
   dataBinding?: {
+    slotId?: string;
     metric: string;
     kind: "scalar" | "table" | "chart";
     status: "confirmed" | "suggested" | "unmapped" | "invalid";
@@ -139,6 +215,8 @@ export type ReportBlock = {
     sourceAddress: string | null;
     sourceType: string | null;
   } | null;
+  materializedData?: ReportMaterializedData;
+  chartType?: ReportChartType;
   patchStrategy:
     | "fixed"
     | "operator_replace"
@@ -282,6 +360,7 @@ export type ProvenanceDetail = {
     numericAuthority: string | null;
   };
   binding: ReportBlock["dataBinding"];
+  materialization: ReportMaterializedData | null;
   evidence: EvidenceSummary[];
   calculation: {
     workbookVersion: number;

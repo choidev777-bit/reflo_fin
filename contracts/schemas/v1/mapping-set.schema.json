@@ -106,7 +106,8 @@
           "enum": [
             "cell",
             "range",
-            "chart"
+            "chart",
+            "market_data"
           ]
         },
         "source": {
@@ -116,8 +117,14 @@
             },
             {
               "$ref": "#/$defs/RangeSource"
+            },
+            {
+              "$ref": "#/$defs/MarketDataSource"
             }
           ]
+        },
+        "chartDefinition": {
+          "$ref": "#/$defs/ChartCandidateDefinition"
         },
         "label": {
           "type": "string",
@@ -139,7 +146,31 @@
         "selected": {
           "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "chart"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "chartDefinition": {
+                "$ref": "#/$defs/ChartCandidateDefinition"
+              }
+            },
+            "required": [
+              "chartDefinition"
+            ]
+          }
+        }
+      ]
     },
     "CellSource": {
       "title": "CellSource",
@@ -224,6 +255,80 @@
           ]
         },
         "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        }
+      }
+    },
+    "MarketDataSource": {
+      "title": "MarketDataSource",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sheetId",
+        "sheet",
+        "address",
+        "authority",
+        "structureFingerprint",
+        "provider",
+        "ticker",
+        "exchange",
+        "requestedDate",
+        "tradingDate",
+        "closePrice",
+        "currency",
+        "sourceApiId",
+        "sourcePayloadHash"
+      ],
+      "properties": {
+        "sheetId": {
+          "const": "krx-open-api"
+        },
+        "sheet": {
+          "const": "KRX"
+        },
+        "address": {
+          "type": "string",
+          "format": "date"
+        },
+        "authority": {
+          "const": "authoritative"
+        },
+        "structureFingerprint": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "provider": {
+          "const": "KRX_OPEN_API"
+        },
+        "ticker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "exchange": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "requestedDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "tradingDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "closePrice": {
+          "type": "number"
+        },
+        "currency": {
+          "const": "KRW"
+        },
+        "sourceApiId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "sourcePayloadHash": {
           "$ref": "common.schema.json#/$defs/Sha256"
         }
       }
@@ -427,6 +532,42 @@
         },
         "source": {
           "$ref": "#/$defs/RangeSource"
+        },
+        "axis": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary"
+          ]
+        }
+      }
+    },
+    "ChartCandidateDefinition": {
+      "title": "ChartCandidateDefinition",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "categories",
+        "series"
+      ],
+      "properties": {
+        "categories": {
+          "$ref": "#/$defs/RangeSource"
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ChartSeries"
+          }
+        },
+        "chartTypes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,99}$"
+          }
         }
       }
     },

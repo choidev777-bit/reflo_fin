@@ -1027,6 +1027,19 @@
   background: rgba(255, 255, 255, .08);
 }
 
+.pdfEditHotspot[data-kind="chart"] {
+  border-style: dashed;
+  border-color: rgba(117, 169, 0, .78);
+  background: rgba(255, 255, 255, .04);
+}
+
+.pdfEditHotspot[data-kind="chart"]:hover,
+.pdfEditHotspot[data-kind="chart"][data-active="true"] {
+  border-style: solid;
+  border-color: #75a900;
+  background: rgba(200, 255, 61, .12);
+}
+
 .pdfEditHotspot[data-kind="data"][data-status="unmapped"],
 .pdfEditHotspot[data-kind="data"][data-status="invalid"] {
   border-style: dashed;
@@ -1039,10 +1052,18 @@
   pointer-events: none;
 }
 
-.pdfEditHotspot span {
+.pdfEditHotspot[data-enabled="false"][data-materialized="ready"] {
+  opacity: 1;
+  border-color: transparent;
+  background: transparent;
+  pointer-events: none;
+}
+
+.pdfEditHotspotLabel {
   position: absolute;
   top: 3px;
   right: 3px;
+  z-index: 3;
   min-height: 24px;
   padding: 0 7px;
   border-radius: 5px;
@@ -1057,13 +1078,195 @@
   font-weight: 750;
 }
 
-.pdfEditHotspot:hover span,
-.pdfEditHotspot[data-active="true"] span {
+.pdfEditHotspot:hover .pdfEditHotspotLabel,
+.pdfEditHotspot[data-active="true"] .pdfEditHotspotLabel {
   opacity: 1;
 }
 
-.pdfEditHotspot[data-kind="data"] span {
+.pdfEditHotspot[data-kind="data"] .pdfEditHotspotLabel {
   opacity: 1;
+}
+
+.pdfEditHotspot[data-enabled="false"] .pdfEditHotspotLabel {
+  opacity: 0;
+}
+
+.pdfChartReplacement {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 7% 8% 6%;
+  border-radius: 2px;
+  background: #fff;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 5%;
+  color: #111410;
+  text-align: left;
+  pointer-events: none;
+}
+
+.pdfTableReplacement {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 2.5% 2.8% 2%;
+  background: #fff;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1.5%;
+  color: #111410;
+  pointer-events: none;
+}
+
+.pdfTableReplacementTitle {
+  overflow: hidden;
+  padding-bottom: 1.2%;
+  border-bottom: 1px solid #aeb5aa;
+  font-size: clamp(4px, .72vw, 8px);
+  font-weight: 750;
+  line-height: 1.2;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdfTableGrid {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.pdfTableHeaderCell,
+.pdfTableCell {
+  min-width: 0;
+  padding: 0 3%;
+  border-bottom: 1px solid #e4e8e1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  font-size: clamp(3px, .48vw, 6px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdfTableHeaderCell {
+  background: #f5f7f3;
+  font-weight: 750;
+}
+
+.pdfTableHeaderCell:first-child,
+.pdfTableCell[data-row-key="true"] {
+  justify-content: flex-start;
+  font-weight: 650;
+}
+
+.pdfChartReplacementHeader {
+  min-width: 0;
+  padding-bottom: 4%;
+  border-bottom: 1px solid #e4e8e1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.pdfChartReplacementHeader strong {
+  overflow: hidden;
+  color: #111410;
+  font-size: clamp(5px, .85vw, 9px);
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdfChartReplacementHeader small {
+  overflow: hidden;
+  max-width: 40%;
+  color: #697066;
+  font-size: clamp(4px, .68vw, 7px);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chartPreviewSvg {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+.chartPreviewEmpty {
+  width: 100%;
+  height: 100%;
+  min-height: 72px;
+  border: 1px dashed #c9cec6;
+  border-radius: 6px;
+  background: #f5f7f3;
+  color: #697066;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.chartPreviewEmpty span {
+  max-width: 150px;
+  padding: 8px;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.chartPreviewGrid line {
+  stroke: #e4e8e1;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartPreviewBars rect {
+  fill: #dce8d2;
+}
+
+.chartPreviewBars rect[data-emphasis="true"] {
+  fill: #9fc734;
+}
+
+.chartPreviewPrimaryLine {
+  fill: none;
+  stroke: #274b44;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartPreviewSeriesLine {
+  fill: none;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartPreviewBandLine {
+  fill: none;
+  stroke: #b7c99a;
+  stroke-width: 1.3;
+  vector-effect: non-scaling-stroke;
+}
+
+.chartPreviewAreaFill {
+  fill: rgba(200, 255, 61, .34);
+  stroke: none;
+}
+
+.chartPreviewPoints circle {
+  fill: #c8ff3d;
+  stroke: #274b44;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
 }
 
 .pdfEditorLoading,
@@ -1441,6 +1644,369 @@
   line-height: 1.5;
 }
 
+.materializationCard {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid #e4e8e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #111410;
+}
+
+.materializationCard[data-status="ready"] {
+  border-color: #b7d765;
+  background: #fbfff0;
+}
+
+.materializationCard[data-status="blocked"] {
+  border-color: #d7908a;
+  background: #ffebe9;
+}
+
+.materializationSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.materializationSummary > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.materializationSummary span,
+.materializationCard > small {
+  color: #697066;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.materializationSummary strong {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materializationBlocker {
+  margin: 12px 0 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .7);
+  color: #9e2f26;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.materializationSources {
+  margin: 12px 0;
+  display: grid;
+  gap: 7px;
+}
+
+.materializationSources > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.materializationSources dt {
+  color: #697066;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.materializationSources dd {
+  margin: 0;
+  color: #111410;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.chartEditorTarget {
+  padding: 14px;
+  border: 1px solid #e4e8e1;
+  border-radius: 10px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chartEditorIcon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #efffc5;
+  color: #557909;
+  display: grid;
+  place-items: center;
+}
+
+.chartEditorTarget div {
+  min-width: 0;
+}
+
+.chartEditorTarget small,
+.chartEditorTarget strong {
+  display: block;
+}
+
+.chartEditorTarget small {
+  margin-bottom: 3px;
+  color: #697066;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.chartEditorTarget strong {
+  overflow: hidden;
+  color: #111410;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chartSourceCard {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid #e4e8e1;
+  border-radius: 10px;
+  background: #f5f7f3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #697066;
+}
+
+.chartSourceCard[data-status="confirmed"] {
+  border-color: #b7d765;
+  background: #efffc5;
+  color: #557909;
+}
+
+.chartSourceCard[data-status="invalid"] {
+  border-color: #d7908a;
+  background: #ffebe9;
+}
+
+.chartSourceCard div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chartSourceCard span,
+.chartSourceCard strong {
+  display: block;
+}
+
+.chartSourceCard span {
+  margin-bottom: 2px;
+  color: #697066;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.chartSourceCard strong {
+  overflow: hidden;
+  color: #111410;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chartConnectionButton {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #cdd3c9;
+  border-radius: 8px;
+  background: #fff;
+  color: #111410;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chartConnectionButton:hover {
+  border-color: #75a900;
+}
+
+.chartConnectionButton:focus-visible {
+  outline: 2px solid #75a900;
+  outline-offset: 2px;
+}
+
+.chartEditorHeading {
+  margin-top: 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+}
+
+.chartEditorHeading .panelLabel {
+  margin-bottom: 3px;
+}
+
+.chartEditorHeading span {
+  color: #697066;
+  font-size: 10px;
+}
+
+.chartEditorHeading > strong {
+  color: #75a900;
+  font-size: 10px;
+}
+
+.reportChartOptionGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chartOptionBlocked {
+  margin-top: 12px;
+  min-height: 96px;
+  padding: 16px;
+  border: 1px dashed #cdd3c9;
+  border-radius: 10px;
+  background: #f5f7f3;
+  color: #697066;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chartOptionBlocked > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.chartOptionBlocked strong {
+  color: #111410;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.chartOptionBlocked span {
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.reportChartOption {
+  position: relative;
+  min-height: 174px;
+  padding: 10px;
+  border: 1px solid #e4e8e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #111410;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms cubic-bezier(.25, .1, .25, 1),
+    background 120ms cubic-bezier(.25, .1, .25, 1);
+}
+
+.reportChartOption:hover {
+  border-color: #b7c4b0;
+  background: #fbfcfa;
+}
+
+.reportChartOption:focus-visible {
+  outline: 2px solid #75a900;
+  outline-offset: 2px;
+}
+
+.reportChartOption[data-selected="true"] {
+  border-color: #75a900;
+  background: #efffc5;
+}
+
+.reportChartOptionPreview {
+  height: 92px;
+  padding: 10px 8px 6px;
+  border-radius: 8px;
+  background: #f5f7f3;
+  display: block;
+}
+
+.reportChartOptionCopy {
+  display: block;
+  margin-top: 9px;
+}
+
+.reportChartOptionCopy strong,
+.reportChartOptionCopy small {
+  display: block;
+}
+
+.reportChartOptionCopy strong {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.reportChartOptionCopy small {
+  margin-top: 3px;
+  color: #697066;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.reportChartSelected {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-height: 24px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: #c8ff3d;
+  color: #111410;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.chartEditorActions {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e4e8e1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.chartEditorActions > span {
+  max-width: 230px;
+  color: #697066;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.chartEditorActions .limeButton {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+
 .blockDraft {
   width: 100%;
   min-height: 150px;
@@ -1610,10 +2176,33 @@
   .aiDiff {
     grid-template-columns: 1fr;
   }
+
+  .reportChartOptionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .chartSourceCard {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chartConnectionButton {
+    width: 100%;
+  }
+
+  .chartEditorActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chartEditorActions > span {
+    max-width: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chevron {
+  .chevron,
+  .reportChartOption {
     transition: none;
   }
 }

@@ -5,10 +5,12 @@ import type {
   WorkbookAnalysis,
   WorkbookCandidateCell,
   WorkbookCandidateRange,
+  WorkbookChartAnalysis,
+  WorkbookChartDataReference,
 } from "./types";
 import type { MarketPriceSnapshot } from "../../server/infrastructure/market-data/krx";
 
-type MappingSource = {
+export type MappingSource = {
   sheetId: string;
   sheet: string;
   address?: string;
@@ -29,33 +31,70 @@ type MappingSource = {
   sourcePayloadHash?: string;
 };
 
+export type MappingChartSeries = {
+  seriesId: string;
+  label?: string;
+  source: MappingSource;
+  axis?: "primary" | "secondary";
+};
+
+export type MappingChartDefinition = {
+  categories: MappingSource;
+  series: MappingChartSeries[];
+  chartTypes?: string[];
+};
+
 export type MappingCandidate = {
   candidateId: string;
   slotId: string;
-  kind: "cell" | "range" | "market_data";
+  kind: "cell" | "range" | "chart" | "market_data";
   source: MappingSource;
+  chartDefinition?: MappingChartDefinition;
   label: string;
   score: number;
   reasonCodes: string[];
   selected: boolean;
 };
 
-export type MappingBinding = {
+type ScalarMappingBinding = {
   bindingId: string;
   slotId: string;
-  kind: "scalar" | "table";
+  kind: "scalar";
   valueType?: string;
   source: MappingSource;
   verificationSources?: MappingSource[];
   display?: Record<string, unknown>;
-  rowKeyColumn?: string;
-  columnHeaderRow?: number;
-  expectedRows?: number;
-  expectedColumns?: number;
-  subtotalRows?: number[];
-  unitRows?: number[];
   status: "suggested" | "confirmed" | "invalid";
 };
+
+type TableMappingBinding = {
+  bindingId: string;
+  slotId: string;
+  kind: "table";
+  source: MappingSource;
+  rowKeyColumn: string;
+  columnHeaderRow: number;
+  expectedRows: number;
+  expectedColumns: number;
+  subtotalRows?: number[];
+  unitRows?: number[];
+  display?: Record<string, unknown>;
+  status: "suggested" | "confirmed" | "invalid";
+};
+
+type ChartMappingBinding = {
+  bindingId: string;
+  slotId: string;
+  kind: "chart";
+  categories: MappingSource;
+  series: MappingChartSeries[];
+  status: "suggested" | "confirmed" | "invalid";
+};
+
+export type MappingBinding =
+  | ScalarMappingBinding
+  | TableMappingBinding
+  | ChartMappingBinding;
 
 export type MappingSet = {
   schemaVersion: "1.0";
@@ -83,19 +122,43 @@ export type MappingSummary = {
 };
 
 const metricAliases: Record<string, string[]> = {
-  target_price: ["목표주가", "targetprice", "적정주가"],
-  current_price: ["현재주가", "currentprice", "종가"],
+  target_price: ["목표주가", "target price", "적정주가"],
+  current_price: ["현재주가", "current price", "종가"],
   revenue: ["매출액", "매출", "revenue", "sales"],
-  operating_profit: ["영업이익", "operatingprofit", "op"],
-  net_income: ["지배주주순이익", "순이익", "netincome"],
-  eps: ["forwardeps", "fwdeps", "eps"],
-  per: ["targetper", "적용per", "per"],
-  investment_opinion: ["투자의견", "investmentopinion", "rating"],
-  quarterly_performance_table: ["분기실적", "quarterly", "분기"],
-  segment_revenue_table: ["부문매출", "부문별", "segment"],
-  financial_statements_table: ["재무제표", "재무상태표", "financialstatement"],
-  target_price_history_table: ["목표주가추이", "targetpricehistory", "목표주가"],
-  valuation_bridge_table: ["valuationbridge", "밸류에이션", "valuation"],
+  operating_profit: ["영업이익", "operating profit", "op"],
+  net_income: ["지배주주순이익", "순이익", "net income"],
+  eps: ["forward eps", "fwd eps", "eps"],
+  per: ["target per", "적용 per", "per"],
+  investment_opinion: ["투자의견", "investment opinion", "rating"],
+  quarterly_performance_table: ["분기실적", "quarterly performance", "분기"],
+  segment_revenue_table: ["부문매출", "부문별", "segment revenue", "segment"],
+  target_price_history_table: ["목표주가추이", "target price history", "목표주가"],
+  valuation_bridge_table: ["valuation bridge", "밸류에이션", "valuation"],
+  income_statement_table: ["손익계산서", "income statement", "profit and loss"],
+  financial_income_statement_table: [
+    "손익계산서",
+    "income statement",
+    "profit and loss",
+  ],
+  balance_sheet_table: ["대차대조표", "재무상태표", "balance sheet"],
+  financial_balance_sheet_table: [
+    "대차대조표",
+    "재무상태표",
+    "balance sheet",
+  ],
+  investment_indicators_table: [
+    "투자지표",
+    "investment indicators",
+    "valuation metrics",
+  ],
+  financial_investment_indicators_table: [
+    "투자지표",
+    "investment indicators",
+    "valuation metrics",
+  ],
+  cash_flow_statement_table: ["현금흐름표", "cash flow statement", "cash flow"],
+  financial_cash_flow_table: ["현금흐름표", "cash flow statement", "cash flow"],
+  stock_price: ["주가추이", "stock price", "price trend"],
 };
 
 const fixedCellHints: Record<string, Array<[string, string]>> = {
@@ -111,10 +174,26 @@ const fixedCellHints: Record<string, Array<[string, string]>> = {
 const fixedRangeHints: Record<string, Array<[string, string]>> = {
   quarterly_performance_table: [["01_실적추이", "A5:L25"]],
   segment_revenue_table: [["01_실적추이", "A5:L13"]],
-  financial_statements_table: [["06_재무요약", "A5:M45"]],
   target_price_history_table: [["03_목표주가", "A5:F20"]],
   valuation_bridge_table: [["09_Target_PER", "A5:I26"]],
+  income_statement_table: [["15_p5_손익계산서", "A4:G35"]],
+  financial_income_statement_table: [["15_p5_손익계산서", "A4:G35"]],
+  balance_sheet_table: [["16_p5_대차대조표", "A4:G37"]],
+  financial_balance_sheet_table: [["16_p5_대차대조표", "A4:G37"]],
+  investment_indicators_table: [["17_p5_투자지표", "A4:G25"]],
+  financial_investment_indicators_table: [["17_p5_투자지표", "A4:G25"]],
+  cash_flow_statement_table: [["18_p5_현금흐름표", "A4:G25"]],
+  financial_cash_flow_table: [["18_p5_현금흐름표", "A4:G25"]],
 };
+
+const ignoredRangeContext = [
+  "정합성체크",
+  "출처",
+  "감사",
+  "audit",
+  "source",
+  "reference",
+];
 
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -138,41 +217,132 @@ function columnNumber(value: string): number {
   );
 }
 
+function columnName(value: number): string {
+  let current = value;
+  let result = "";
+  while (current > 0) {
+    current -= 1;
+    result = String.fromCharCode(65 + (current % 26)) + result;
+    current = Math.floor(current / 26);
+  }
+  return result || "A";
+}
+
 function parseAddress(value: string): [number, number] {
-  const match = /^([A-Z]+)(\d+)$/i.exec(value);
+  const match = /^([A-Z]+)(\d+)$/i.exec(value.replaceAll("$", ""));
   return match ? [columnNumber(match[1]), Number(match[2])] : [0, 0];
 }
 
-function rangeDimensions(value: string): { rows: number; columns: number } {
-  const [first, last] = value.split(":");
+function normalizedRange(value: string): string | null {
+  const cleaned = value.replaceAll("$", "").trim();
+  if (/^[A-Za-z]{1,3}[1-9][0-9]*$/.test(cleaned)) {
+    return `${cleaned.toUpperCase()}:${cleaned.toUpperCase()}`;
+  }
+  const match =
+    /^([A-Za-z]{1,3}[1-9][0-9]*):([A-Za-z]{1,3}[1-9][0-9]*)$/.exec(
+      cleaned,
+    );
+  return match ? `${match[1].toUpperCase()}:${match[2].toUpperCase()}` : null;
+}
+
+function rangeCoordinates(value: string): {
+  firstColumn: number;
+  firstRow: number;
+  lastColumn: number;
+  lastRow: number;
+} {
+  const normalized = normalizedRange(value) ?? "A1:A1";
+  const [first, last] = normalized.split(":");
   const [firstColumn, firstRow] = parseAddress(first);
-  const [lastColumn, lastRow] = parseAddress(last ?? first);
+  const [lastColumn, lastRow] = parseAddress(last);
+  return { firstColumn, firstRow, lastColumn, lastRow };
+}
+
+function rangeDimensions(value: string): { rows: number; columns: number } {
+  const range = rangeCoordinates(value);
   return {
-    rows: Math.max(1, lastRow - firstRow + 1),
-    columns: Math.max(1, lastColumn - firstColumn + 1),
+    rows: Math.max(1, range.lastRow - range.firstRow + 1),
+    columns: Math.max(1, range.lastColumn - range.firstColumn + 1),
   };
 }
 
+function rangeLength(value: string): number | null {
+  const dimensions = rangeDimensions(value);
+  if (dimensions.rows > 1 && dimensions.columns > 1) return null;
+  return Math.max(dimensions.rows, dimensions.columns);
+}
+
 function containsAddress(range: string, address: string): boolean {
-  const [first, last] = range.split(":");
-  const [firstColumn, firstRow] = parseAddress(first);
-  const [lastColumn, lastRow] = parseAddress(last ?? first);
+  const outer = rangeCoordinates(range);
   const [column, row] = parseAddress(address);
   return (
-    column >= firstColumn &&
-    column <= lastColumn &&
-    row >= firstRow &&
-    row <= lastRow
+    column >= outer.firstColumn &&
+    column <= outer.lastColumn &&
+    row >= outer.firstRow &&
+    row <= outer.lastRow
   );
 }
 
 function containsRange(outer: string, inner: string): boolean {
-  const [first, last] = inner.split(":");
-  return containsAddress(outer, first) && containsAddress(outer, last ?? first);
+  const range = rangeCoordinates(inner);
+  return (
+    containsAddress(outer, `${columnName(range.firstColumn)}${range.firstRow}`) &&
+    containsAddress(outer, `${columnName(range.lastColumn)}${range.lastRow}`)
+  );
 }
 
 function aliases(metric: string): string[] {
-  return (metricAliases[metric] ?? [metric]).map(normalize);
+  const values = metricAliases[metric] ?? [metric];
+  return [...new Set([metric, ...values].map(normalize).filter(Boolean))];
+}
+
+function figureNumber(metric: string): number | null {
+  const normalized = normalize(metric);
+  const match =
+    /(?:figure|chart|도표)(\d+)/.exec(normalized) ??
+    /(\d+)(?:figure|chart|도표)/.exec(normalized);
+  return match ? Number(match[1]) : null;
+}
+
+function figureContextMatches(value: string, figure: number): boolean {
+  const normalized = normalize(value);
+  return (
+    normalized.includes(`도표${figure}`) ||
+    normalized.includes(`figure${figure}`) ||
+    normalized.includes(`chart${figure}`)
+  );
+}
+
+function meaningfulTokens(value: string): string[] {
+  const ignored = new Set([
+    "도표",
+    "차트",
+    "그래프",
+    "추이",
+    "전망",
+    "figure",
+    "chart",
+    "graph",
+    "trend",
+    "outlook",
+    "isc",
+    "vs",
+  ]);
+  return [
+    ...new Set(
+      value
+        .normalize("NFKC")
+        .toLowerCase()
+        .split(/[\s/_·:()[\],.-]+/)
+        .map(normalize)
+        .filter((token) => token.length >= 2 && !ignored.has(token)),
+    ),
+  ];
+}
+
+function ignoredContext(value: string): boolean {
+  const normalized = normalize(value);
+  return ignoredRangeContext.some((token) => normalized.includes(normalize(token)));
 }
 
 function cellSource(cell: WorkbookCandidateCell): MappingSource {
@@ -192,9 +362,23 @@ function rangeSource(range: WorkbookCandidateRange): MappingSource {
   return {
     sheetId: range.sheetId,
     sheet: range.sheetName,
-    range: range.range,
+    range: normalizedRange(range.range) ?? range.range,
     authority: "authoritative",
     structureFingerprint: range.structureFingerprint,
+  };
+}
+
+function derivedRangeSource(
+  sheet: WorkbookAnalysis["sheets"][number],
+  range: string,
+  seed: string,
+): MappingSource {
+  return {
+    sheetId: sheet.sheetId,
+    sheet: sheet.name,
+    range,
+    authority: "authoritative",
+    structureFingerprint: hash(`${sheet.structureHash}:${range}:${seed}`),
   };
 }
 
@@ -283,12 +467,18 @@ function scalarCandidates(
 ): MappingCandidate[] {
   const fixed = fixedCellCandidates(slot, workbook);
   const fixedIds = new Set(
-    fixed.map((candidate) => `${candidate.source.sheet}!${candidate.source.address}`),
+    fixed.map(
+      (candidate) => `${candidate.source.sheet}!${candidate.source.address}`,
+    ),
   );
   const ranked = workbook.candidateCells
     .map((cell) => ({ cell, ...candidateScore(slot, cell) }))
     .filter(({ score }) => score >= 0.36)
-    .sort((left, right) => right.score - left.score)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.cell.candidateId.localeCompare(right.cell.candidateId),
+    )
     .filter(
       ({ cell }) => !fixedIds.has(`${cell.sheetName}!${cell.address}`),
     )
@@ -304,7 +494,9 @@ function scalarCandidates(
       selected: false,
     }));
   const candidates = [...fixed, ...ranked].sort(
-    (left, right) => right.score - left.score,
+    (left, right) =>
+      right.score - left.score ||
+      left.candidateId.localeCompare(right.candidateId),
   );
   const top = candidates[0];
   const next = candidates[1];
@@ -379,20 +571,58 @@ function synthesizeRange(
   rangeValue: string,
 ): WorkbookCandidateRange | null {
   const sheet = workbook.sheets.find((item) => item.name === sheetName);
-  if (!sheet || !containsRange(sheet.usedRange, rangeValue)) return null;
-  const dimensions = rangeDimensions(rangeValue);
+  const normalized = normalizedRange(rangeValue);
+  if (!sheet || !normalized || !containsRange(sheet.usedRange, normalized)) {
+    return null;
+  }
+  const existing = workbook.candidateRanges.find(
+    (range) =>
+      range.sheetId === sheet.sheetId &&
+      normalizedRange(range.range) === normalized,
+  );
+  if (existing) return existing;
+  const dimensions = rangeDimensions(normalized);
   return {
-    candidateId: opaque("range", `${sheet.sheetId}:${rangeValue}`),
+    candidateId: opaque("range", `${sheet.sheetId}:${normalized}`),
     sheetId: sheet.sheetId,
     sheetName,
-    range: rangeValue,
-    label: `${sheetName} ${rangeValue}`,
+    range: normalized,
+    label: `${sheetName} ${normalized}`,
     rowCount: dimensions.rows,
     columnCount: dimensions.columns,
     structureFingerprint: hash(
-      `${sheet.structureHash}:${rangeValue}:${dimensions.rows}:${dimensions.columns}`,
+      `${sheet.structureHash}:${normalized}:${dimensions.rows}:${dimensions.columns}`,
     ),
   };
+}
+
+function rangeMatch(
+  slot: TemplateSlot,
+  range: WorkbookCandidateRange,
+): { score: number; reasons: string[] } {
+  const context = normalize(
+    `${range.sheetName} ${range.label} ${(range.headerValues ?? []).join(" ")}`,
+  );
+  if (ignoredContext(`${range.label} ${(range.headerValues ?? []).join(" ")}`)) {
+    return { score: 0, reasons: ["NON_REPORT_RANGE"] };
+  }
+  const targetAliases = aliases(slot.semanticKey.metric);
+  const exact = targetAliases.some(
+    (alias) => alias && (context.includes(alias) || alias.includes(context)),
+  );
+  const scope = normalize(slot.semanticKey.scope ?? "");
+  const scopeMatch = Boolean(scope && context.includes(scope));
+  let score = exact ? 0.84 : 0.24;
+  const reasons = exact ? ["RANGE_CONTEXT_MATCH"] : ["SHEET_RANGE"];
+  if (scopeMatch) {
+    score += 0.1;
+    reasons.push("SCOPE_MATCH");
+  }
+  if (range.kind === "dense_region" || range.kind === "excel_table") {
+    score += 0.04;
+    reasons.push("STRUCTURED_RANGE");
+  }
+  return { score: Math.min(0.98, score), reasons };
 }
 
 function tableCandidates(
@@ -412,22 +642,25 @@ function tableCandidates(
       reasonCodes: ["DOCUMENTED_MODEL_CONTRACT", "EXACT_RANGE"],
       selected: true,
     }));
-  const targetAliases = aliases(slot.semanticKey.metric);
   const fixedIds = new Set(
-    fixed.map((candidate) => `${candidate.source.sheet}!${candidate.source.range}`),
+    fixed.map(
+      (candidate) => `${candidate.source.sheet}!${candidate.source.range}`,
+    ),
   );
   const ranked = workbook.candidateRanges
-    .map((range) => {
-      const context = normalize(`${range.sheetName} ${range.label}`);
-      const matched = targetAliases.some((alias) => context.includes(alias));
-      return {
-        range,
-        score: matched ? 0.82 : 0.3,
-        reasons: matched ? ["RANGE_CONTEXT_MATCH"] : ["SHEET_RANGE"],
-      };
-    })
-    .filter(({ range }) => !fixedIds.has(`${range.sheetName}!${range.range}`))
-    .sort((left, right) => right.score - left.score)
+    .map((range) => ({ range, ...rangeMatch(slot, range) }))
+    .filter(({ score }) => score >= 0.36)
+    .filter(
+      ({ range }) =>
+        !fixedIds.has(
+          `${range.sheetName}!${normalizedRange(range.range) ?? range.range}`,
+        ),
+    )
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.range.candidateId.localeCompare(right.range.candidateId),
+    )
     .slice(0, Math.max(0, 5 - fixed.length))
     .map(({ range, score, reasons }) => ({
       candidateId: opaque("mapcand", `${slot.slotId}:${range.candidateId}`),
@@ -435,40 +668,533 @@ function tableCandidates(
       kind: "range" as const,
       source: rangeSource(range),
       label: range.label,
-      score,
+      score: Number(score.toFixed(4)),
       reasonCodes: reasons,
       selected: false,
     }));
   const candidates = [...fixed, ...ranked].sort(
-    (left, right) => right.score - left.score,
+    (left, right) =>
+      right.score - left.score ||
+      left.candidateId.localeCompare(right.candidateId),
   );
+  const top = candidates[0];
+  const next = candidates[1];
+  const unambiguous =
+    top &&
+    (top.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
+      (top.score >= 0.88 && (!next || top.score - next.score >= 0.1)));
   return candidates.map((candidate, index) => ({
     ...candidate,
-    selected:
-      index === 0 &&
-      (candidate.reasonCodes.includes("DOCUMENTED_MODEL_CONTRACT") ||
-        candidate.score >= 0.92),
+    selected: Boolean(unambiguous && index === 0),
   }));
+}
+
+function sourceFromChartReference(
+  workbook: WorkbookAnalysis,
+  reference: WorkbookChartDataReference,
+  fallbackSheet: WorkbookAnalysis["sheets"][number],
+  seed: string,
+): { source: MappingSource; length: number } | null {
+  const sheet =
+    workbook.sheets.find(
+      (item) =>
+        (reference.sheetId && item.sheetId === reference.sheetId) ||
+        (reference.sheetName && item.name === reference.sheetName),
+    ) ?? fallbackSheet;
+  const range = reference.range ? normalizedRange(reference.range) : null;
+  if (!range || !containsRange(sheet.usedRange, range)) return null;
+  const length = rangeLength(range);
+  if (
+    length == null ||
+    length < 2 ||
+    (reference.pointCount > 0 && reference.pointCount !== length)
+  ) {
+    return null;
+  }
+  return {
+    source: derivedRangeSource(sheet, range, seed),
+    length,
+  };
+}
+
+function sameRange(left: MappingSource, right: MappingSource): boolean {
+  return (
+    left.sheetId === right.sheetId &&
+    left.sheet === right.sheet &&
+    left.range === right.range
+  );
+}
+
+function explicitChartDefinition(
+  workbook: WorkbookAnalysis,
+  chart: WorkbookChartAnalysis,
+): MappingChartDefinition | null {
+  const fallbackSheet = workbook.sheets.find(
+    (sheet) => sheet.sheetId === chart.sheetId || sheet.name === chart.sheetName,
+  );
+  if (!fallbackSheet) return null;
+  const categoryReference =
+    chart.category ??
+    chart.series.find((series) => series.category)?.category ??
+    null;
+  if (!categoryReference) return null;
+  const categories = sourceFromChartReference(
+    workbook,
+    categoryReference,
+    fallbackSheet,
+    `${chart.structureFingerprint}:categories`,
+  );
+  if (!categories) return null;
+  const series = chart.series.flatMap((item) => {
+    if (!item.values) return [];
+    const values = sourceFromChartReference(
+      workbook,
+      item.values,
+      fallbackSheet,
+      `${chart.structureFingerprint}:series:${item.seriesId}`,
+    );
+    if (!values || values.length !== categories.length) return [];
+    if (item.category) {
+      const itemCategories = sourceFromChartReference(
+        workbook,
+        item.category,
+        fallbackSheet,
+        `${chart.structureFingerprint}:series:${item.seriesId}:categories`,
+      );
+      if (
+        !itemCategories ||
+        itemCategories.length !== categories.length ||
+        !sameRange(itemCategories.source, categories.source)
+      ) {
+        return [];
+      }
+    }
+    return [
+      {
+        seriesId: item.seriesId,
+        ...(item.name ? { label: item.name.slice(0, 500) } : {}),
+        source: values.source,
+        axis: item.axis,
+      },
+    ];
+  });
+  if (series.length === 0 || series.length !== chart.series.length) return null;
+  return {
+    categories: categories.source,
+    series,
+    chartTypes: [...new Set(chart.chartTypes)],
+  };
+}
+
+function chartContextScore(
+  slot: TemplateSlot,
+  context: string,
+  explicit: boolean,
+): { score: number; reasons: string[] } {
+  const normalizedContext = normalize(context);
+  const reasons: string[] = [];
+  let score = explicit ? 0.12 : 0.08;
+  if (explicit) reasons.push("EMBEDDED_CHART_DEFINITION");
+  const figure = figureNumber(slot.semanticKey.metric);
+  if (figure != null && figureContextMatches(context, figure)) {
+    score += 0.56;
+    reasons.push("FIGURE_NUMBER_MATCH");
+  }
+  const targetAliases = aliases(slot.semanticKey.metric);
+  if (
+    targetAliases.some(
+      (alias) => alias && normalizedContext.includes(alias),
+    )
+  ) {
+    score += 0.22;
+    reasons.push("CHART_CONTEXT_MATCH");
+  }
+  const scope = slot.semanticKey.scope ?? "";
+  const normalizedScope = normalize(scope);
+  if (normalizedScope && normalizedContext.includes(normalizedScope)) {
+    score += 0.28;
+    reasons.push("SCOPE_MATCH");
+  } else {
+    const tokens = meaningfulTokens(scope);
+    const matches = tokens.filter((token) => normalizedContext.includes(token));
+    if (tokens.length > 0 && matches.length > 0) {
+      score += 0.24 * (matches.length / tokens.length);
+      reasons.push("SCOPE_TOKEN_MATCH");
+    }
+  }
+  return { score: Math.min(0.99, score), reasons };
+}
+
+function selectChartCandidate(
+  candidates: MappingCandidate[],
+): MappingCandidate[] {
+  const ordered = [...candidates].sort(
+    (left, right) =>
+      right.score - left.score ||
+      left.candidateId.localeCompare(right.candidateId),
+  );
+  const top = ordered[0];
+  const next = ordered[1];
+  const unambiguous =
+    top &&
+    top.score >= 0.62 &&
+    (!next || top.score - next.score >= 0.08);
+  return ordered.map((candidate, index) => ({
+    ...candidate,
+    selected: Boolean(unambiguous && index === 0),
+  }));
+}
+
+function explicitChartCandidates(
+  slot: TemplateSlot,
+  workbook: WorkbookAnalysis,
+): MappingCandidate[] {
+  const candidates = (workbook.charts ?? []).flatMap((chart) => {
+    const definition = explicitChartDefinition(workbook, chart);
+    if (!definition) return [];
+    const context = `${chart.sheetName} ${chart.title} ${chart.chartTypes.join(
+      " ",
+    )} ${chart.series.map((series) => series.name).join(" ")}`;
+    const scored = chartContextScore(slot, context, true);
+    if (scored.score < 0.42) return [];
+    return [
+      {
+        candidateId: opaque("mapcand", `${slot.slotId}:${chart.chartId}`),
+        slotId: slot.slotId,
+        kind: "chart" as const,
+        source: definition.categories,
+        chartDefinition: definition,
+        label: chart.title || `${chart.sheetName} 차트`,
+        score: Number(scored.score.toFixed(4)),
+        reasonCodes: scored.reasons,
+        selected: false,
+      },
+    ];
+  });
+  return selectChartCandidate(candidates).slice(0, 5);
+}
+
+function cellIndex(
+  workbook: WorkbookAnalysis,
+  sheetId: string,
+): Map<string, WorkbookCandidateCell> {
+  return new Map(
+    workbook.candidateCells
+      .filter((cell) => cell.sheetId === sheetId)
+      .map((cell) => [cell.address.toUpperCase(), cell]),
+  );
+}
+
+function cellText(cell: WorkbookCandidateCell | undefined): string {
+  if (!cell) return "";
+  if (typeof cell.rawValue === "string") return cell.rawValue.trim();
+  return cell.displayValue.trim();
+}
+
+function numericCell(cell: WorkbookCandidateCell | undefined): boolean {
+  if (!cell) return false;
+  if (typeof cell.rawValue === "number") return Number.isFinite(cell.rawValue);
+  if (cell.valueType === "decimal") {
+    const parsed = Number(String(cell.rawValue ?? cell.displayValue).replaceAll(",", ""));
+    return Number.isFinite(parsed);
+  }
+  return false;
+}
+
+function contiguous(values: number[]): boolean {
+  return values.every((value, index) => index === 0 || value === values[index - 1] + 1);
+}
+
+function denseChartDefinition(
+  workbook: WorkbookAnalysis,
+  range: WorkbookCandidateRange,
+): MappingChartDefinition | null {
+  const sourceRange = normalizedRange(range.range);
+  const sheet = workbook.sheets.find((item) => item.sheetId === range.sheetId);
+  if (!sourceRange || !sheet) return null;
+  const coordinates = rangeCoordinates(sourceRange);
+  const cells = cellIndex(workbook, range.sheetId);
+  const headerRows = (range.headerRows ?? [])
+    .filter(
+      (row) => row >= coordinates.firstRow && row <= coordinates.lastRow,
+    )
+    .sort((left, right) => left - right);
+  const headerRow = headerRows.at(-1) ?? coordinates.firstRow;
+  const rowKeyColumn = range.rowKeyColumns?.[0]?.column
+    ? columnNumber(range.rowKeyColumns[0].column)
+    : coordinates.firstColumn;
+  if (
+    rowKeyColumn < coordinates.firstColumn ||
+    rowKeyColumn > coordinates.lastColumn ||
+    headerRow >= coordinates.lastRow
+  ) {
+    return null;
+  }
+
+  const periodColumnNumbers = [...new Set(
+    (range.periodColumns ?? [])
+      .map((period) => columnNumber(period.column))
+      .filter(
+        (column) =>
+          column >= coordinates.firstColumn &&
+          column <= coordinates.lastColumn,
+      ),
+  )].sort((left, right) => left - right);
+
+  if (periodColumnNumbers.length >= 2 && contiguous(periodColumnNumbers)) {
+    const firstPeriodColumn = periodColumnNumbers[0];
+    const lastPeriodColumn = periodColumnNumbers.at(-1)!;
+    const categoryValues = periodColumnNumbers.map((column) =>
+      cellText(cells.get(`${columnName(column)}${headerRow}`)),
+    );
+    if (categoryValues.some((value) => !value)) return null;
+    const chartSeries: MappingChartSeries[] = [];
+    for (let row = headerRow + 1; row <= coordinates.lastRow; row += 1) {
+      const label = cellText(cells.get(`${columnName(rowKeyColumn)}${row}`));
+      if (!label || ignoredContext(label)) continue;
+      const populated = periodColumnNumbers.filter((column) =>
+        numericCell(cells.get(`${columnName(column)}${row}`)),
+      ).length;
+      if (
+        populated < 2 ||
+        populated / periodColumnNumbers.length < 0.6
+      ) {
+        continue;
+      }
+      const seriesRange = `${columnName(firstPeriodColumn)}${row}:${columnName(
+        lastPeriodColumn,
+      )}${row}`;
+      chartSeries.push({
+        seriesId: opaque(
+          "series",
+          `${range.candidateId}:${row}:${seriesRange}`,
+        ),
+        label: label.slice(0, 500),
+        source: derivedRangeSource(
+          sheet,
+          seriesRange,
+          `${range.structureFingerprint}:series:${row}`,
+        ),
+      });
+    }
+    if (chartSeries.length === 0) return null;
+    const categoriesRange = `${columnName(firstPeriodColumn)}${headerRow}:${columnName(
+      lastPeriodColumn,
+    )}${headerRow}`;
+    return {
+      categories: derivedRangeSource(
+        sheet,
+        categoriesRange,
+        `${range.structureFingerprint}:categories`,
+      ),
+      series: chartSeries,
+    };
+  }
+
+  const seriesColumns: number[] = [];
+  for (
+    let column = coordinates.firstColumn;
+    column <= coordinates.lastColumn;
+    column += 1
+  ) {
+    if (column === rowKeyColumn) continue;
+    const label =
+      cellText(cells.get(`${columnName(column)}${headerRow}`)) ||
+      range.headerValues?.[column - coordinates.firstColumn] ||
+      "";
+    if (!label || ignoredContext(label)) continue;
+    let numericCount = 0;
+    for (let row = headerRow + 1; row <= coordinates.lastRow; row += 1) {
+      if (numericCell(cells.get(`${columnName(column)}${row}`))) numericCount += 1;
+    }
+    if (numericCount >= 2) seriesColumns.push(column);
+  }
+  if (seriesColumns.length === 0) return null;
+  const dataRows: number[] = [];
+  for (let row = headerRow + 1; row <= coordinates.lastRow; row += 1) {
+    const category = cellText(cells.get(`${columnName(rowKeyColumn)}${row}`));
+    const numericCount = seriesColumns.filter((column) =>
+      numericCell(cells.get(`${columnName(column)}${row}`)),
+    ).length;
+    if (category && numericCount > 0) dataRows.push(row);
+  }
+  if (
+    dataRows.length < 2 ||
+    !contiguous(dataRows) ||
+    dataRows[0] !== headerRow + 1
+  ) {
+    return null;
+  }
+  const firstDataRow = dataRows[0];
+  const lastDataRow = dataRows.at(-1)!;
+  const chartSeries = seriesColumns.flatMap((column) => {
+    const populated = dataRows.filter((row) =>
+      numericCell(cells.get(`${columnName(column)}${row}`)),
+    ).length;
+    if (populated / dataRows.length < 0.8) return [];
+    const label =
+      cellText(cells.get(`${columnName(column)}${headerRow}`)) ||
+      range.headerValues?.[column - coordinates.firstColumn] ||
+      columnName(column);
+    const seriesRange = `${columnName(column)}${firstDataRow}:${columnName(
+      column,
+    )}${lastDataRow}`;
+    return [
+      {
+        seriesId: opaque(
+          "series",
+          `${range.candidateId}:${column}:${seriesRange}`,
+        ),
+        label: label.slice(0, 500),
+        source: derivedRangeSource(
+          sheet,
+          seriesRange,
+          `${range.structureFingerprint}:series:${column}`,
+        ),
+      },
+    ];
+  });
+  if (chartSeries.length === 0) return null;
+  const categoriesRange = `${columnName(rowKeyColumn)}${firstDataRow}:${columnName(
+    rowKeyColumn,
+  )}${lastDataRow}`;
+  return {
+    categories: derivedRangeSource(
+      sheet,
+      categoriesRange,
+      `${range.structureFingerprint}:categories`,
+    ),
+    series: chartSeries,
+  };
+}
+
+function denseChartCandidates(
+  slot: TemplateSlot,
+  workbook: WorkbookAnalysis,
+): MappingCandidate[] {
+  const slotContext = normalize(
+    `${slot.semanticKey.metric} ${slot.semanticKey.scope ?? ""}`,
+  );
+  const bandChart =
+    [2, 3].includes(figureNumber(slot.semanticKey.metric) ?? -1) ||
+    slotContext.includes("band") ||
+    slotContext.includes("밴드");
+  const candidates = workbook.candidateRanges.flatMap((range) => {
+    if (
+      !["dense_region", "excel_table"].includes(range.kind ?? "") ||
+      ignoredContext(`${range.label} ${(range.headerValues ?? []).join(" ")}`)
+    ) {
+      return [];
+    }
+    const definition = denseChartDefinition(workbook, range);
+    if (!definition) return [];
+    if (bandChart) {
+      const periodCount = range.periodColumns?.length ?? 0;
+      const pointCount = rangeLength(definition.categories.range ?? "");
+      const labels = definition.series.map((series) =>
+        normalize(series.label ?? ""),
+      );
+      const hasPriceSeries = labels.some(
+        (label) => label.includes("주가") || label.includes("price"),
+      );
+      const hasBandSeries = labels.some(
+        (label) =>
+          label.includes("band") ||
+          label.includes("밴드") ||
+          label.includes("per") ||
+          label.includes("pbr") ||
+          label.includes("배수") ||
+          label.includes("x"),
+      );
+      if (
+        periodCount < 4 ||
+        pointCount == null ||
+        pointCount < 4 ||
+        definition.series.length < 2 ||
+        !hasPriceSeries ||
+        !hasBandSeries
+      ) {
+        return [];
+      }
+    }
+    const context = `${range.sheetName} ${range.label} ${(range.headerValues ?? []).join(
+      " ",
+    )}`;
+    const scored = chartContextScore(slot, context, false);
+    if (scored.score < 0.42) return [];
+    return [
+      {
+        candidateId: opaque("mapcand", `${slot.slotId}:${range.candidateId}`),
+        slotId: slot.slotId,
+        kind: "chart" as const,
+        source: definition.categories,
+        chartDefinition: definition,
+        label: range.label || `${range.sheetName} ${range.range}`,
+        score: Number(scored.score.toFixed(4)),
+        reasonCodes: [
+          ...scored.reasons,
+          "DENSE_RANGE_TOPOLOGY",
+          "CATEGORY_SERIES_LENGTH_VALIDATED",
+        ],
+        selected: false,
+      },
+    ];
+  });
+  return selectChartCandidate(candidates).slice(0, 5);
+}
+
+function chartCandidates(
+  slot: TemplateSlot,
+  workbook: WorkbookAnalysis,
+): MappingCandidate[] {
+  const explicit = explicitChartCandidates(slot, workbook);
+  if (explicit.length > 0) return explicit;
+  return denseChartCandidates(slot, workbook);
 }
 
 function bindingFor(
   slot: TemplateSlot,
   candidate: MappingCandidate,
+  workbook: WorkbookAnalysis,
 ): MappingBinding {
+  if (slot.valueType === "chart") {
+    if (
+      candidate.kind !== "chart" ||
+      !candidate.chartDefinition ||
+      candidate.chartDefinition.series.length === 0
+    ) {
+      throw new Error(`Chart candidate ${candidate.candidateId} has no definition.`);
+    }
+    return {
+      bindingId: opaque("binding", `${slot.slotId}:${candidate.candidateId}`),
+      slotId: slot.slotId,
+      kind: "chart",
+      categories: candidate.chartDefinition.categories,
+      series: candidate.chartDefinition.series,
+      status: "confirmed",
+    };
+  }
   if (slot.valueType === "table") {
-    const dimensions = rangeDimensions(candidate.source.range ?? "A1:A1");
+    const sourceRange = candidate.source.range ?? "A1:A1";
+    const dimensions = rangeDimensions(sourceRange);
+    const topology = workbook.candidateRanges.find(
+      (range) =>
+        range.sheetId === candidate.source.sheetId &&
+        normalizedRange(range.range) === normalizedRange(sourceRange),
+    );
+    const first = rangeCoordinates(sourceRange);
     return {
       bindingId: opaque("binding", `${slot.slotId}:${candidate.candidateId}`),
       slotId: slot.slotId,
       kind: "table",
       source: candidate.source,
-      rowKeyColumn: (candidate.source.range ?? "A1").match(/^[A-Z]+/i)?.[0] ?? "A",
-      columnHeaderRow: parseAddress(
-        (candidate.source.range ?? "A1").split(":")[0],
-      )[1],
+      rowKeyColumn:
+        topology?.rowKeyColumns?.[0]?.column ?? columnName(first.firstColumn),
+      columnHeaderRow:
+        topology?.headerRows?.at(-1) ?? first.firstRow,
       expectedRows: dimensions.rows,
       expectedColumns: dimensions.columns,
-      subtotalRows: [],
+      subtotalRows: topology?.subtotalRows ?? [],
       unitRows: [],
       display: {},
       status: "confirmed",
@@ -494,7 +1220,7 @@ export function buildMappingSet(
   const slots = template.pages.flatMap((page) => page.slots);
   const candidates = slots.flatMap((slot) => {
     if (slot.valueType === "table") return tableCandidates(slot, workbook);
-    if (slot.valueType === "chart") return [];
+    if (slot.valueType === "chart") return chartCandidates(slot, workbook);
     const workbookCandidates = scalarCandidates(slot, workbook);
     const krxCandidate = marketPrice
       ? marketPriceCandidate(slot, marketPrice)
@@ -518,7 +1244,7 @@ export function buildMappingSet(
       (candidate) => candidate.slotId === slot.slotId && candidate.selected,
     );
     if (!selected) return [];
-    const binding = bindingFor(slot, selected);
+    const binding = bindingFor(slot, selected, workbook);
     if (selected.kind === "market_data" && binding.kind === "scalar") {
       binding.verificationSources = candidates
         .filter(

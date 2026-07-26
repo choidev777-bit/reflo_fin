@@ -75,6 +75,55 @@ DATA_REGION_HEADINGS: tuple[
     ),
 )
 
+FIGURE_HEADING_PATTERN = re.compile(
+    r"^\s*(?:도표|figure)\s*(\d+)\s*[.．:]?\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+DATA_CHART_TITLE_PATTERNS = (
+    re.compile(r"\bband\b", re.IGNORECASE),
+    re.compile(r"\btrend\b", re.IGNORECASE),
+    re.compile(r"\bvs\.?\b", re.IGNORECASE),
+    re.compile(r"\bversus\b", re.IGNORECASE),
+    re.compile(r"추이"),
+)
+FIXED_VISUAL_TITLE_TERMS = (
+    "사업개요",
+    "시너지 효과",
+    "시너지효과",
+    "조직도",
+    "프로세스",
+    "개념도",
+    "구조도",
+    "business overview",
+    "synergy",
+    "organization chart",
+    "process diagram",
+)
+FINANCIAL_TABLE_HEADINGS: tuple[
+    tuple[str, tuple[str, ...], str], ...
+] = (
+    (
+        "income_statement_table",
+        ("손익계산서", "income statement", "profit and loss"),
+        "손익계산서",
+    ),
+    (
+        "balance_sheet_table",
+        ("대차대조표", "재무상태표", "balance sheet"),
+        "대차대조표",
+    ),
+    (
+        "investment_indicators_table",
+        ("투자지표", "investment indicators", "valuation metrics"),
+        "투자지표",
+    ),
+    (
+        "cash_flow_statement_table",
+        ("현금흐름표", "cash flow statement", "cash flow"),
+        "현금흐름표",
+    ),
+)
+
 
 def digest(value: bytes | str) -> str:
     if isinstance(value, str):
@@ -200,6 +249,204 @@ def boxes_intersect(left: list[float], right: list[float]) -> bool:
         or left[3] <= right[1]
         or left[1] >= right[3]
     )
+
+
+def figure_heading(value: str) -> tuple[int, str] | None:
+    match = FIGURE_HEADING_PATTERN.match(re.sub(r"\s+", " ", value).strip())
+    if not match:
+        return None
+    return int(match.group(1)), match.group(2).strip()
+
+
+def is_data_chart_title(value: str) -> bool:
+    return any(pattern.search(value) for pattern in DATA_CHART_TITLE_PATTERNS)
+
+
+def is_fixed_visual_title(value: str) -> bool:
+    normalized = normalize_text(value)
+    return any(term in normalized for term in FIXED_VISUAL_TITLE_TERMS)
+
+
+def is_source_caption(value: str) -> bool:
+    normalized = normalize_text(value)
+    return normalized.startswith(("자료:", "자료：", "source:", "source："))
+
+
+def region_column(
+    heading_box: list[float],
+    page_box: list[float],
+) -> tuple[float, float]:
+    page_width = max(1.0, page_box[2] - page_box[0])
+    midpoint = page_box[0] + page_width / 2
+    margin = max(24.0, page_width * 0.07)
+    gutter = max(8.0, page_width * 0.017)
+    if float(heading_box[0]) < midpoint:
+        return page_box[0] + margin, midpoint - gutter
+    return midpoint + gutter, page_box[2] - margin
+
+
+def object_ids_in_region(
+    page_objects: list[dict[str, Any]],
+    region_box: list[float],
+) -> list[str]:
+    return [
+        str(item["objectId"])
+        for item in page_objects
+        if boxes_intersect(list(item.get("bbox") or [0, 0, 0, 0]), region_box)
+    ]
+
+
+def source_caption_bottom(
+    spans: list[dict[str, Any]],
+    heading_box: list[float],
+    column: tuple[float, float] | None,
+) -> float | None:
+    captions = [
+        span
+        for span in spans
+        if is_source_caption(str(span.get("text") or ""))
+        and float(span["bbox"][1]) > float(heading_box[3])
+        and (
+            column is None
+            or column[0] - 8
+            <= (float(span["bbox"][0]) + float(span["bbox"][2])) / 2
+            <= column[1] + 8
+        )
+    ]
+    if not captions:
+        return None
+    nearest = min(captions, key=lambda span: float(span["bbox"][1]))
+    return float(nearest["bbox"][3])
+
+
+def detect_figure_regions(
+    spans: list[dict[str, Any]],
+    page_box: list[float],
+) -> list[dict[str, Any]]:
+    headings: list[dict[str, Any]] = []
+    for span in spans:
+        detected = figure_heading(str(span.get("text") or ""))
+        if not detected:
+            continue
+        number, title = detected
+        if is_fixed_visual_title(title):
+            kind = "fixed_visual"
+        elif is_data_chart_title(title):
+            kind = "data_chart"
+        else:
+            continue
+        headings.append(
+            {
+                "span": span,
+                "figureNumber": number,
+                "title": title,
+                "kind": kind,
+            }
+        )
+
+    regions: list[dict[str, Any]] = []
+    page_width = max(1.0, page_box[2] - page_box[0])
+    full_margin = max(24.0, page_width * 0.07)
+    for heading in headings:
+        heading_box = list(heading["span"]["bbox"])
+        if heading["kind"] == "fixed_visual":
+            column = None
+            left = page_box[0] + full_margin
+            right = page_box[2] - full_margin
+        else:
+            column = region_column(heading_box, page_box)
+            left, right = column
+        caption_bottom = source_caption_bottom(spans, heading_box, column)
+        if caption_bottom is None:
+            later_headings = [
+                item
+                for item in headings
+                if float(item["span"]["bbox"][1]) > float(heading_box[1]) + 4
+            ]
+            next_top = (
+                min(float(item["span"]["bbox"][1]) for item in later_headings)
+                if later_headings
+                else page_box[3] - 60
+            )
+            caption_bottom = min(
+                next_top - 8,
+                float(heading_box[1]) + (page_box[3] - page_box[1]) * 0.28,
+            )
+        regions.append(
+            {
+                **heading,
+                "bbox": [
+                    round(left, 4),
+                    round(float(heading_box[1]), 4),
+                    round(right, 4),
+                    round(max(float(heading_box[3]), caption_bottom + 2), 4),
+                ],
+            }
+        )
+    return regions
+
+
+def financial_table_heading(value: str) -> tuple[str, str] | None:
+    normalized = normalized_heading(value)
+    for metric, aliases, label in FINANCIAL_TABLE_HEADINGS:
+        if any(normalized == normalized_heading(alias) for alias in aliases):
+            return metric, label
+    return None
+
+
+def detect_financial_table_regions(
+    spans: list[dict[str, Any]],
+    page_box: list[float],
+) -> list[dict[str, Any]]:
+    headings: list[dict[str, Any]] = []
+    for span in spans:
+        detected = financial_table_heading(str(span.get("text") or ""))
+        if not detected:
+            continue
+        metric, label = detected
+        headings.append({"span": span, "metric": metric, "label": label})
+    required_metrics = {item[0] for item in FINANCIAL_TABLE_HEADINGS}
+    if {item["metric"] for item in headings} != required_metrics:
+        return []
+
+    all_source_bottoms = [
+        float(span["bbox"][3])
+        for span in spans
+        if is_source_caption(str(span.get("text") or ""))
+    ]
+    page_width = max(1.0, page_box[2] - page_box[0])
+    default_bottom = (
+        max(all_source_bottoms) + 2
+        if all_source_bottoms
+        else page_box[3] - max(60.0, page_width * 0.1)
+    )
+    regions: list[dict[str, Any]] = []
+    for heading in headings:
+        heading_box = list(heading["span"]["bbox"])
+        column = region_column(heading_box, page_box)
+        next_in_column = [
+            item
+            for item in headings
+            if float(item["span"]["bbox"][1]) > float(heading_box[1]) + 4
+            and region_column(list(item["span"]["bbox"]), page_box) == column
+        ]
+        bottom = (
+            min(float(item["span"]["bbox"][1]) for item in next_in_column) - 12
+            if next_in_column
+            else default_bottom
+        )
+        regions.append(
+            {
+                **heading,
+                "bbox": [
+                    round(column[0], 4),
+                    round(float(heading_box[1]), 4),
+                    round(column[1], 4),
+                    round(max(float(heading_box[3]), bottom), 4),
+                ],
+            }
+        )
+    return regions
 
 
 def detect_data_regions(
@@ -698,6 +945,142 @@ def build_blocks_and_slots(
             }
         )
 
+    figure_regions = detect_figure_regions(spans, page_box)
+    for region in figure_regions:
+        number = int(region["figureNumber"])
+        title = str(region["title"])
+        box = list(region["bbox"])
+        object_ids = object_ids_in_region(page_objects, box)
+        data_region_object_ids.update(object_ids)
+        if region["kind"] == "fixed_visual":
+            block_id = opaque(
+                "block",
+                f"{page_id}:fixed-visual:figure:{number}:{title}",
+            )
+            blocks.append(
+                {
+                    "blockId": block_id,
+                    "role": "fixed_design",
+                    "bbox": box,
+                    "objectIds": object_ids,
+                    "slotIds": [],
+                    "allowedRegion": box,
+                    "patchStrategy": "operator_replace",
+                    "fallbackStrategies": [],
+                    "overflow": "reject",
+                    "validationMaskIds": [],
+                    "intersections": [],
+                    "generationRule": f"도표 {number}. {title}",
+                }
+            )
+            continue
+
+        metric = f"figure_{number}_chart"
+        if metric in document_metrics:
+            continue
+        document_metrics.add(metric)
+        block_id = opaque("block", f"{page_id}:chart:{metric}:{title}")
+        slot_id = opaque("slot", f"{page_id}:chart:{metric}:{title}")
+        mask_id = opaque("mask", f"{page_id}:{slot_id}")
+        blocks.append(
+            {
+                "blockId": block_id,
+                "role": "chart",
+                "bbox": box,
+                "objectIds": object_ids,
+                "slotIds": [slot_id],
+                "allowedRegion": box,
+                "patchStrategy": "block_vector_replace",
+                "fallbackStrategies": ["region_background_patch"],
+                "overflow": "reject",
+                "validationMaskIds": [mask_id],
+                "intersections": [],
+                "generationRule": f"도표 {number}. {title}",
+            }
+        )
+        slots.append(
+            {
+                "slotId": slot_id,
+                "blockId": block_id,
+                "valueType": "chart",
+                "semanticKey": {
+                    "metric": metric,
+                    "scope": title[:100],
+                    **({"period": document_period} if document_period else {}),
+                },
+                "required": True,
+                "targetObjectIds": object_ids,
+                "bindingRefs": [],
+                "valueAuthority": "mapping",
+                "overflow": "reject",
+            }
+        )
+        masks.append(
+            {
+                "maskId": mask_id,
+                "kind": "dynamic",
+                "geometry": box,
+                "blockIds": [block_id],
+                "objectIds": object_ids,
+                "reason": f"도표 {number} 데이터 차트 재생성 영역",
+            }
+        )
+
+    financial_table_regions = detect_financial_table_regions(spans, page_box)
+    for region in financial_table_regions:
+        metric = str(region["metric"])
+        label = str(region["label"])
+        box = list(region["bbox"])
+        object_ids = object_ids_in_region(page_objects, box)
+        data_region_object_ids.update(object_ids)
+        document_metrics.add(metric)
+        block_id = opaque("block", f"{page_id}:table:{metric}")
+        slot_id = opaque("slot", f"{page_id}:table:{metric}")
+        mask_id = opaque("mask", f"{page_id}:{slot_id}")
+        blocks.append(
+            {
+                "blockId": block_id,
+                "role": "table",
+                "bbox": box,
+                "objectIds": object_ids,
+                "slotIds": [slot_id],
+                "allowedRegion": box,
+                "patchStrategy": "block_vector_replace",
+                "fallbackStrategies": ["region_background_patch"],
+                "overflow": "reject",
+                "validationMaskIds": [mask_id],
+                "intersections": [],
+                "generationRule": label,
+            }
+        )
+        slots.append(
+            {
+                "slotId": slot_id,
+                "blockId": block_id,
+                "valueType": "table",
+                "semanticKey": {
+                    "metric": metric,
+                    "scope": label,
+                    **({"period": document_period} if document_period else {}),
+                },
+                "required": True,
+                "targetObjectIds": object_ids,
+                "bindingRefs": [],
+                "valueAuthority": "mapping",
+                "overflow": "reject",
+            }
+        )
+        masks.append(
+            {
+                "maskId": mask_id,
+                "kind": "dynamic",
+                "geometry": box,
+                "blockIds": [block_id],
+                "objectIds": object_ids,
+                "reason": f"{label} 재생성 영역",
+            }
+        )
+
     for span in spans:
         metric_info = span["metric"]
         if not metric_info:
@@ -787,6 +1170,8 @@ def build_blocks_and_slots(
     table_metric = infer_table_metric(page_number, page_text)
     if (
         table_metric
+        and not financial_table_regions
+        and not figure_regions
         and table_metric[0] not in document_metrics
         and (
             sum(1 for item in page_objects if item.get("type") == "path") >= 3

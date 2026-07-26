@@ -971,6 +971,7 @@ async function inspectionProjection(
         score: number;
         reasonCodes: string[];
         source: unknown;
+        chartDefinition: Record<string, unknown> | null;
         selected: boolean;
       }>;
     }
@@ -1001,6 +1002,9 @@ async function inspectionProjection(
       item.address &&
       item.score != null
     ) {
+      const storedSource = deserializeMappingCandidateSource(
+        item.candidate_source_json,
+      );
       entry.candidates.push({
         candidateId: item.mapping_candidate_id,
         sourceType: item.source_type,
@@ -1010,7 +1014,8 @@ async function inspectionProjection(
         label: item.label,
         score: Number(item.score),
         reasonCodes: item.reason_codes ?? [],
-        source: item.candidate_source_json,
+        source: storedSource.source,
+        chartDefinition: storedSource.chartDefinition,
         selected: item.mapping_candidate_id === item.selected_candidate_id,
       });
     }
@@ -1730,7 +1735,7 @@ type MappingRevisionSelection = {
   candidateId: string | null;
 };
 
-type MappingRevisionEntry = {
+export type MappingRevisionEntry = {
   entryId: string;
   slotId: string;
   metric: string;
@@ -1748,8 +1753,47 @@ type MappingRevisionEntry = {
     score: number;
     reasonCodes: string[];
     source: Record<string, unknown>;
+    chartDefinition: Record<string, unknown> | null;
   }>;
 };
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+export function deserializeMappingCandidateSource(value: unknown): {
+  source: Record<string, unknown>;
+  chartDefinition: Record<string, unknown> | null;
+} {
+  const stored = recordValue(value) ?? {};
+  const { chartDefinition, ...source } = stored;
+  return {
+    source,
+    chartDefinition: recordValue(chartDefinition),
+  };
+}
+
+export function serializeMappingCandidateSource(input: {
+  source: Record<string, unknown>;
+  chartDefinition?: unknown;
+}): Record<string, unknown> {
+  const chartDefinition = recordValue(input.chartDefinition);
+  return chartDefinition
+    ? { ...input.source, chartDefinition }
+    : input.source;
+}
+
+function mappingBindingSource(
+  binding: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (!binding) return null;
+  return (
+    recordValue(binding.source) ??
+    recordValue(binding.categories)
+  );
+}
 
 function parseMappingSelections(input: unknown): MappingRevisionSelection[] {
   if (!Array.isArray(input) || input.length > 500) {
@@ -1821,10 +1865,32 @@ function mappingRangeDimensions(address: string): {
   };
 }
 
-function mappingBinding(
+export function buildMappingRevisionBinding(
   entry: MappingRevisionEntry,
   candidate: MappingRevisionEntry["candidates"][number],
 ) {
+  if (entry.kind === "chart") {
+    const definition = candidate.chartDefinition;
+    const categories = recordValue(definition?.categories);
+    const series = Array.isArray(definition?.series)
+      ? definition.series.filter((item) => recordValue(item))
+      : [];
+    if (!categories || series.length === 0) {
+      throw new ApiError(
+        409,
+        "CHART_MAPPING_DEFINITION_MISSING",
+        "선택한 차트 후보의 범주·계열 정의를 다시 확인해 주세요.",
+      );
+    }
+    return {
+      bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
+      slotId: entry.slotId,
+      kind: "chart",
+      categories,
+      series,
+      status: "confirmed",
+    };
+  }
   if (entry.kind === "table") {
     const dimensions = mappingRangeDimensions(candidate.address);
     return {
@@ -1845,7 +1911,7 @@ function mappingBinding(
   return {
     bindingId: `binding_${entry.entryId.replaceAll("-", "")}`,
     slotId: entry.slotId,
-    kind: entry.kind,
+    kind: "scalar",
     valueType: entry.valueType,
     source: candidate.source,
     verificationSources: [],
@@ -1986,6 +2052,7 @@ export async function createMappingRevision(input: {
         row.score != null &&
         row.source_json
       ) {
+        const storedSource = deserializeMappingCandidateSource(row.source_json);
         entry.candidates.push({
           candidateId: row.mapping_candidate_id,
           sourceType: row.source_type,
@@ -1995,7 +2062,8 @@ export async function createMappingRevision(input: {
           label: row.label,
           score: Number(row.score),
           reasonCodes: row.reason_codes ?? [],
-          source: row.source_json,
+          source: storedSource.source,
+          chartDefinition: storedSource.chartDefinition,
         });
       }
     }
@@ -2040,7 +2108,7 @@ export async function createMappingRevision(input: {
     const candidate = entry.candidates.find(
       (item) => item.candidateId === entry.selectedCandidateId,
     );
-    return candidate ? [mappingBinding(entry, candidate)] : [];
+    return candidate ? [buildMappingRevisionBinding(entry, candidate)] : [];
   });
   const candidates = revisedEntries.flatMap((entry) =>
     entry.candidates.map((candidate) => ({
@@ -2048,6 +2116,9 @@ export async function createMappingRevision(input: {
       slotId: entry.slotId,
       kind: candidate.sourceType,
       source: candidate.source,
+      ...(candidate.sourceType === "chart" && candidate.chartDefinition
+        ? { chartDefinition: candidate.chartDefinition }
+        : {}),
       label: candidate.label ?? `${candidate.sheetName}!${candidate.address}`,
       score: candidate.score,
       reasonCodes: candidate.reasonCodes,
@@ -2184,7 +2255,14 @@ export async function createMappingRevision(input: {
           entry.required,
           selected ? "confirmed" : "unmapped",
           selected?.score ?? entry.candidates[0]?.score ?? null,
-          selected ? JSON.stringify(selected.source) : null,
+          selected
+            ? JSON.stringify(
+                entry.kind === "chart"
+                  ? recordValue(selected.chartDefinition?.categories) ??
+                      selected.source
+                  : selected.source,
+              )
+            : null,
         ],
       );
       let selectedId: string | null = null;
@@ -2211,7 +2289,12 @@ export async function createMappingRevision(input: {
             candidate.label,
             candidate.score,
             candidate.reasonCodes,
-            JSON.stringify(candidate.source),
+            JSON.stringify(
+              serializeMappingCandidateSource({
+                source: candidate.source,
+                chartDefinition: candidate.chartDefinition,
+              }),
+            ),
             index + 1,
           ],
         );
@@ -2546,7 +2629,9 @@ export type InspectionResultPayload = {
         slotId: string;
         kind: string;
         valueType?: string;
-        source: Record<string, unknown>;
+        source?: Record<string, unknown>;
+        categories?: Record<string, unknown>;
+        series?: Array<Record<string, unknown>>;
         display?: Record<string, unknown>;
         status: string;
       }>;
@@ -2560,6 +2645,11 @@ export type InspectionResultPayload = {
           address?: string;
           range?: string;
           [key: string]: unknown;
+        };
+        chartDefinition?: {
+          categories: Record<string, unknown>;
+          series: Array<Record<string, unknown>>;
+          chartTypes?: string[];
         };
         label?: string;
         score: number;
@@ -2848,7 +2938,13 @@ export async function commitInspectionResult(
             slot.required,
             binding ? "confirmed" : "unmapped",
             candidatesBySlot.get(slot.slotId)?.[0]?.score ?? null,
-            binding ? JSON.stringify(binding.source) : null,
+            binding
+              ? JSON.stringify(
+                  mappingBindingSource(
+                    binding as unknown as Record<string, unknown>,
+                  ),
+                )
+              : null,
             JSON.stringify(binding?.display ?? {}),
           ],
         );
@@ -2875,7 +2971,12 @@ export async function commitInspectionResult(
               candidate.label ?? null,
               candidate.score,
               candidate.reasonCodes,
-              JSON.stringify(candidate.source),
+              JSON.stringify(
+                serializeMappingCandidateSource({
+                  source: candidate.source,
+                  chartDefinition: candidate.chartDefinition,
+                }),
+              ),
               index + 1,
             ],
           );

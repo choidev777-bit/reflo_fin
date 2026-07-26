@@ -8,6 +8,7 @@ import {
   attachTemplateGeometry,
   buildInitialOutline,
   buildReportDocument,
+  materializeReportBindings,
   normalizeOutlineContent,
   patchOutline,
   proposeReportRewrite,
@@ -18,8 +19,13 @@ import {
   type OutlineChange,
   type OutlineContent,
   type ReportDocument,
+  type ReportChartType,
+  type ReportBindingDefinition,
+  type ReportMaterializationsBySlotId,
   type ReportMappingBinding,
+  type ReportRangeSource,
   type ReportTemplatePage,
+  type ReportWorkbookReadModel,
 } from "../../domain/report";
 import {
   withTransaction,
@@ -60,6 +66,7 @@ type Context = {
   mappingVersion: number;
   mappingConfirmed: boolean;
   mappingBindings: ReportMappingBinding[];
+  materializationsBySlotId: ReportMaterializationsBySlotId;
   validationApprovalId: string;
   validationRunId: string;
   validationVersion: number;
@@ -236,6 +243,7 @@ async function hydrateReportDocument(
     document,
     await resolvedTemplatePages(context),
     context.mappingBindings,
+    context.materializationsBySlotId,
   );
 }
 
@@ -437,6 +445,100 @@ async function loadEvidence(
   }));
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function rangeSource(value: unknown): ReportRangeSource | null {
+  const source = objectRecord(value);
+  const sheetId = source?.sheetId;
+  const sheetName = source?.sheet ?? source?.sheetName;
+  const address = source?.range ?? source?.address;
+  if (
+    typeof sheetId !== "string" ||
+    typeof sheetName !== "string" ||
+    typeof address !== "string"
+  ) {
+    return null;
+  }
+  return {
+    sheetId,
+    sheetName,
+    address,
+    structureFingerprint:
+      typeof source?.structureFingerprint === "string"
+        ? source.structureFingerprint
+        : null,
+  };
+}
+
+function bindingDefinition(value: unknown): ReportBindingDefinition | null {
+  const binding = objectRecord(value);
+  if (binding?.kind === "table") {
+    const source = rangeSource(binding.source);
+    const rowKeyColumn = binding.rowKeyColumn;
+    const columnHeaderRow = Number(binding.columnHeaderRow);
+    const expectedRows = Number(binding.expectedRows);
+    const expectedColumns = Number(binding.expectedColumns);
+    if (
+      !source ||
+      typeof rowKeyColumn !== "string" ||
+      !/^[A-Za-z]{1,3}$/.test(rowKeyColumn) ||
+      !Number.isInteger(columnHeaderRow) ||
+      !Number.isInteger(expectedRows) ||
+      !Number.isInteger(expectedColumns)
+    ) {
+      return null;
+    }
+    return {
+      kind: "table",
+      source,
+      rowKeyColumn,
+      columnHeaderRow,
+      expectedRows,
+      expectedColumns,
+    };
+  }
+  if (binding?.kind === "chart") {
+    const categories = rangeSource(binding.categories);
+    const rawSeries = Array.isArray(binding.series) ? binding.series : [];
+    const series = rawSeries.flatMap((value) => {
+      const item = objectRecord(value);
+      const source = rangeSource(item?.source);
+      if (!source || typeof item?.seriesId !== "string") return [];
+      return [
+        {
+          seriesId: item.seriesId,
+          label: typeof item?.label === "string" ? item.label : null,
+          source,
+        },
+      ];
+    });
+    if (!categories || series.length !== rawSeries.length || series.length === 0) {
+      return null;
+    }
+    return { kind: "chart", categories, series };
+  }
+  return null;
+}
+
+function mappingDefinitions(value: unknown): Map<string, ReportBindingDefinition> {
+  const mapping = objectRecord(value);
+  const bindings = Array.isArray(mapping?.bindings) ? mapping.bindings : [];
+  return new Map(
+    bindings.flatMap((value) => {
+      const binding = objectRecord(value);
+      const slotId = binding?.slotId;
+      const definition = bindingDefinition(value);
+      return typeof slotId === "string" && definition
+        ? [[slotId, definition] as const]
+        : [];
+    }),
+  );
+}
+
 async function projectContext(
   client: TransactionClient,
   projectId: string,
@@ -460,6 +562,7 @@ async function projectContext(
     mapping_version: string;
     mapping_status: string;
     unmapped_required_count: number;
+    mapping_json: unknown;
     validation_approval_id: string;
     validation_run_id: string;
     validation_version: string;
@@ -468,6 +571,7 @@ async function projectContext(
     valuation_version: string;
     workbook_version: string;
     workbook_artifact_id: string;
+    approved_workbook_read_model: ReportWorkbookReadModel | null;
     forward_eps: string;
     target_per: string;
     target_price: string;
@@ -489,13 +593,14 @@ async function projectContext(
        template_rv.version_no AS template_version, template.template_ir_json,
        mapping.resource_version_id AS mapping_set_resource_version_id,
        mapping_rv.version_no AS mapping_version, mapping.mapping_status,
-       mapping.unmapped_required_count,
+       mapping.unmapped_required_count, mapping.mapping_json,
        validation.approval_id AS validation_approval_id,
        validation.validation_run_id, validation.validation_version,
        valuation.approval_id AS valuation_approval_id,
        valuation.resource_version_id AS valuation_resource_version_id,
        valuation.approval_version AS valuation_version,
        valuation.workbook_version, valuation.workbook_artifact_id,
+       report_workbook.read_model_json AS approved_workbook_read_model,
        valuation.forward_eps, valuation.target_per, valuation.target_price,
        valuation.current_price, valuation.upside,
        hypothesis.resource_version_id AS hypothesis_resource_version_id,
@@ -571,6 +676,13 @@ async function projectContext(
       AND valuation.status = 'approved'
       AND valuation.mapping_set_resource_version_id =
           mapping.resource_version_id
+     LEFT JOIN valuation_workbook report_workbook
+       ON report_workbook.project_id = p.project_id
+      AND report_workbook.mapping_set_resource_version_id =
+          mapping.resource_version_id
+      AND report_workbook.workbook_version = valuation.workbook_version
+      AND report_workbook.current_artifact_id = valuation.workbook_artifact_id
+      AND report_workbook.calculation_status = 'success'
      JOIN LATERAL (
        SELECT hypothesis_version.*
        FROM project_hypothesis_version hypothesis_version
@@ -630,12 +742,14 @@ async function projectContext(
     binding_kind: "scalar" | "table" | "chart";
     mapping_status: "confirmed" | "suggested" | "unmapped" | "invalid";
     source_type: string | null;
+    sheet_id: string | null;
     sheet_name: string | null;
     address: string | null;
     label: string | null;
   }>(
     `SELECT entry.slot_id, entry.semantic_metric, entry.binding_kind,
-       entry.mapping_status, candidate.source_type, candidate.sheet_name,
+       entry.mapping_status, candidate.source_type, candidate.sheet_id,
+       candidate.sheet_name,
        candidate.address, candidate.label
      FROM mapping_entry entry
      LEFT JOIN mapping_candidate candidate
@@ -643,20 +757,36 @@ async function projectContext(
      WHERE entry.mapping_set_version_id = $1`,
     [row.mapping_set_resource_version_id],
   );
+  const definitions = mappingDefinitions(row.mapping_json);
   const mappedBindings: ReportMappingBinding[] = mappingResult.rows.map(
-    (item) => ({
-      slotId: item.slot_id,
-      metric: item.semantic_metric,
-      kind: item.binding_kind,
-      status: item.mapping_status,
-      sourceLabel:
-        item.label ??
-        (item.sheet_name && item.address
-          ? `${item.sheet_name} ${item.address}`
-          : null),
-      sourceAddress: item.address,
-      sourceType: item.source_type,
-    }),
+    (item) => {
+      const definition = definitions.get(item.slot_id) ?? null;
+      const primarySource =
+        definition?.kind === "table"
+          ? definition.source
+          : definition?.kind === "chart"
+            ? definition.categories
+            : null;
+      const sourceAddress = item.address ?? primarySource?.address ?? null;
+      const sourceSheetName =
+        item.sheet_name ?? primarySource?.sheetName ?? null;
+      return {
+        slotId: item.slot_id,
+        metric: item.semantic_metric,
+        kind: item.binding_kind,
+        status: item.mapping_status,
+        sourceLabel:
+          item.label ??
+          (sourceSheetName && sourceAddress
+            ? `${sourceSheetName} ${sourceAddress}`
+            : null),
+        sourceAddress,
+        sourceType: item.source_type,
+        sourceSheetId: item.sheet_id ?? primarySource?.sheetId ?? null,
+        sourceSheetName,
+        definition,
+      };
+    },
   );
   const authoritativeBindings: ReportMappingBinding[] = [
     {
@@ -714,6 +844,20 @@ async function projectContext(
     ),
     ...authoritativeBindings,
   ];
+  const approvedWorkbookReadModel =
+    row.approved_workbook_read_model?.schemaVersion === "1.2" &&
+    Array.isArray(row.approved_workbook_read_model.sheets)
+      ? row.approved_workbook_read_model
+      : null;
+  const materializationsBySlotId = materializeReportBindings(
+    mappingBindings,
+    {
+      mappingSetResourceVersionId: row.mapping_set_resource_version_id,
+      workbookArtifactId: row.workbook_artifact_id,
+      workbookVersion: Number(row.workbook_version),
+      readModel: approvedWorkbookReadModel,
+    },
+  );
   const refs = {
     templateResourceVersionId: row.template_resource_version_id,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
@@ -738,6 +882,7 @@ async function projectContext(
     mappingConfirmed:
       row.mapping_status === "confirmed" && row.unmapped_required_count === 0,
     mappingBindings,
+    materializationsBySlotId,
     validationApprovalId: row.validation_approval_id,
     validationRunId: row.validation_run_id,
     validationVersion: Number(row.validation_version),
@@ -1454,6 +1599,7 @@ async function createReport(
     currentPrice: input.context.currentPrice,
     forwardEps: input.context.forwardEps,
     draftTextByBlockId,
+    materializationsBySlotId: input.context.materializationsBySlotId,
   });
   await client.query(
     `INSERT INTO versioned_resource (
@@ -1866,6 +2012,7 @@ export async function getReportWorkspace(projectId: string, userId: string) {
       report.content_json,
       templatePages,
       context.mappingBindings,
+      context.materializationsBySlotId,
     );
     return {
       project: {
@@ -2229,8 +2376,24 @@ export async function patchReportVersion(input: {
   }
   const operations = input.operations.map((raw) => {
     const value = raw as Record<string, unknown>;
+    const type = String(value.type);
     if (
-      !["replace_text", "replace_block_text"].includes(String(value.type)) ||
+      type === "replace_chart_type" &&
+      typeof value.blockId === "string" &&
+      ["line", "bar", "area", "combo"].includes(String(value.chartType))
+    ) {
+      return {
+        type,
+        blockId: value.blockId,
+        baseBlockRevision: requireVersion(
+          value.baseBlockRevision,
+          "block revision",
+        ),
+        chartType: value.chartType as ReportChartType,
+      } as const;
+    }
+    if (
+      !["replace_text", "replace_block_text"].includes(type) ||
       typeof value.blockId !== "string" ||
       typeof value.text !== "string"
     ) {
@@ -2241,7 +2404,7 @@ export async function patchReportVersion(input: {
       );
     }
     return {
-      type: value.type as "replace_text" | "replace_block_text",
+      type: type as "replace_text" | "replace_block_text",
       blockId: value.blockId,
       baseBlockRevision: requireVersion(
         value.baseBlockRevision,
@@ -2721,6 +2884,7 @@ export async function getReportProvenance(
         numericAuthority: block.numericAuthority,
       },
       binding: block.dataBinding ?? null,
+      materialization: block.materializedData ?? null,
       evidence: context.evidence.filter((item) =>
         block.evidenceIds.includes(item.evidenceId),
       ),
@@ -2807,6 +2971,7 @@ export async function createReportPreview(input: {
     snapshot.report.content_json,
     templatePages,
     snapshot.context.mappingBindings,
+    snapshot.context.materializationsBySlotId,
   );
   const patches = document.pages.flatMap((page) =>
     page.blocks
@@ -3021,6 +3186,7 @@ export async function createReportValidation(input: {
       report.content_json,
       templatePages,
       context.mappingBindings,
+      context.materializationsBySlotId,
     );
     const issues = validateReportDocument({
       document: hydrated,

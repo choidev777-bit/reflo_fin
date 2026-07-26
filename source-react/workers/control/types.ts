@@ -223,6 +223,74 @@ export type WorkbookCandidateRange = {
   rowCount: number;
   columnCount: number;
   structureFingerprint: string;
+  kind?: "excel_table" | "dense_region" | "used_range";
+  headerRows?: number[];
+  headerValues?: string[];
+  rowKeyColumns?: Array<{
+    index: number;
+    column: string;
+    label: string;
+  }>;
+  periodColumns?: Array<{
+    index: number;
+    column: string;
+    label: string;
+    role: "actual" | "forecast" | "unknown";
+  }>;
+  unitHints?: string[];
+  subtotalRows?: number[];
+};
+
+export type WorkbookChartCachedValue = {
+  index: number;
+  value: string | null;
+};
+
+export type WorkbookChartDataReference = {
+  formula: string;
+  sheetId: string | null;
+  sheetName: string | null;
+  range: string | null;
+  cacheType: "string" | "number" | "none";
+  pointCount: number;
+  cachedValues: WorkbookChartCachedValue[];
+};
+
+export type WorkbookChartSeries = {
+  seriesId: string;
+  index: number;
+  name: string;
+  nameFormula: string | null;
+  chartType: string;
+  axis: "primary" | "secondary";
+  category: WorkbookChartDataReference | null;
+  values: WorkbookChartDataReference | null;
+};
+
+export type WorkbookChartAnalysis = {
+  chartId: string;
+  sheetId: string;
+  sheetName: string;
+  partPath: string;
+  title: string;
+  anchor: {
+    kind: "two_cell" | "one_cell" | "absolute" | "unknown";
+    fromCell: string | null;
+    toCell: string | null;
+  };
+  chartTypes: string[];
+  category: WorkbookChartDataReference | null;
+  series: WorkbookChartSeries[];
+  axes: Array<{
+    axisId: string;
+    type: "category" | "date" | "value" | "series";
+    position: "left" | "right" | "top" | "bottom" | "unknown";
+    title: string;
+    numberFormat: string | null;
+    crossAxisId: string | null;
+    secondary: boolean;
+  }>;
+  structureFingerprint: string;
 };
 
 export type WorkbookAnalysis = {
@@ -235,6 +303,9 @@ export type WorkbookAnalysis = {
   calculationStatus: string;
   sheets: Array<{
     sheetId: string;
+    ooxmlSheetId?: string;
+    relationshipId?: string;
+    partPath?: string;
     name: string;
     index: number;
     visibility: string;
@@ -249,6 +320,7 @@ export type WorkbookAnalysis = {
   editableCells: unknown[];
   candidateCells: WorkbookCandidateCell[];
   candidateRanges: WorkbookCandidateRange[];
+  charts?: WorkbookChartAnalysis[];
   externalLinks: unknown[];
   namedRanges?: unknown[];
   warnings: Array<{ code: string; message: string }>;

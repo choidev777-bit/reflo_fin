@@ -12,6 +12,8 @@ const int MaxSheets = 50;
 const long MaxSheetCells = 500_000;
 const long MaxWorkbookCells = 2_000_000;
 const int MaxCandidateCells = 50_000;
+const int MaxTableCandidates = 1_000;
+const int MaxChartCachedPoints = 20_000;
 const string EngineName = "ClosedXML";
 const string EngineVersion = "0.105.0";
 
@@ -49,10 +51,9 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
         var bytes = buffer.ToArray();
         var originalSha256 = Sha(bytes);
         var zip = ReadZipInsights(bytes);
-        buffer.Position = 0;
-        using var workbook = new XLWorkbook(buffer);
         var issues = new List<Issue>();
         var warnings = new List<ContractWarning>();
+        using var workbook = OpenWorkbookForInspection(bytes, warnings);
         var calculationErrors = new List<CalculationError>();
         var functions = new SortedSet<string>(StringComparer.Ordinal);
         var externalLinks = new List<ExternalLink>();
@@ -89,7 +90,8 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
         foreach (var worksheet in workbook.Worksheets.OrderBy(sheet => sheet.Position))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sheetId = $"sheet_{worksheet.Position}";
+            var sheetIdentity = zip.SheetsByPosition.GetValueOrDefault(worksheet.Position);
+            var sheetId = sheetIdentity?.StableSheetId ?? $"sheet_{worksheet.Position}";
             var visibility = worksheet.Visibility switch
             {
                 XLWorksheetVisibility.Hidden => "hidden",
@@ -114,7 +116,7 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
             var sheetFormulaCount = 0;
             var structureParts = new List<string>
             {
-                $"{worksheet.Position}:{worksheet.Name}:{visibility}:{usedRange}",
+                $"{sheetId}:{visibility}:{usedRange}",
             };
             if (used is not null)
             {
@@ -126,7 +128,9 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                     {
                         sheetFormulaCount++;
                         formulaCount++;
-                        structureParts.Add($"{address}:{formula}:{cell.Style.NumberFormat.Format}");
+                        structureParts.Add(
+                            $"{address}:{CanonicalFormulaForStructure(formula, zip.SheetsByPosition.Values)}:" +
+                            $"{cell.Style.NumberFormat.Format}");
                         foreach (Match match in Regex.Matches(
                                      formula.ToUpperInvariant(),
                                      @"(?<![A-Z0-9_.])([A-Z][A-Z0-9._]*)\s*\("))
@@ -172,9 +176,11 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                         if (cell.HasFormula || IsCandidateValue(cell, label))
                         {
                             var structureFingerprint = ShaText(
-                                $"{sheetId}:{address}:{formula}:{cell.Style.NumberFormat.Format}:{label}");
+                                $"{sheetId}:{address}:" +
+                                $"{CanonicalFormulaForStructure(formula ?? "", zip.SheetsByPosition.Values)}:" +
+                                $"{cell.Style.NumberFormat.Format}:{label}");
                             candidateCells.Add(new CandidateCell(
-                                Opaque("cell", $"{worksheet.Position}:{address}:{structureFingerprint}"),
+                                Opaque("cell", $"{sheetId}:{address}:{structureFingerprint}"),
                                 sheetId,
                                 worksheet.Name,
                                 address,
@@ -193,7 +199,7 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
 
             var sheetMergedCount = worksheet.MergedRanges.Count();
             var sheetTableCount = worksheet.Tables.Count();
-            var sheetChartCount = zip.ChartCountBySheetPosition.GetValueOrDefault(worksheet.Position);
+            var sheetChartCount = zip.Charts.Count(chart => chart.SheetId == sheetId);
             mergedRangeCount += sheetMergedCount;
             tableCount += sheetTableCount;
             chartCount += sheetChartCount;
@@ -212,30 +218,63 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
                     table.RangeAddress.FirstAddress.ColumnNumber + 1;
                 structureParts.Add($"table:{table.Name}:{range}");
                 candidateRanges.Add(new CandidateRange(
-                    Opaque("range", $"{worksheet.Position}:table:{table.Name}:{range}"),
+                    Opaque("range", $"{sheetId}:table:{table.Name}:{range}"),
                     sheetId,
                     worksheet.Name,
                     range,
                     Trim(table.Name, 500),
                     rangeRows,
                     rangeColumns,
-                    ShaText($"{sheetId}:{range}:table:{table.Name}")));
+                    ShaText($"{sheetId}:{range}:table:{table.Name}"),
+                    "excel_table",
+                    InferTableTopology(worksheet, table.RangeAddress)));
             }
             if (used is not null)
             {
                 candidateRanges.Add(new CandidateRange(
-                    Opaque("range", $"{worksheet.Position}:used:{usedRange}"),
+                    Opaque("range", $"{sheetId}:used:{usedRange}"),
                     sheetId,
                     worksheet.Name,
                     usedRange,
                     $"{worksheet.Name} 사용 범위",
                     used.RowCount(),
                     used.ColumnCount(),
-                    ShaText($"{sheetId}:{usedRange}:{string.Join("|", structureParts)}")));
+                    ShaText($"{sheetId}:{usedRange}:{string.Join("|", structureParts)}"),
+                    "used_range",
+                    InferTableTopology(worksheet, used.RangeAddress)));
+                foreach (var denseRange in FindDenseTableRanges(worksheet, used))
+                {
+                    if (candidateRanges.Count >= MaxTableCandidates) break;
+                    var denseAddress = RelativeAddress(denseRange);
+                    if (denseAddress == usedRange ||
+                        worksheet.Tables.Any(table =>
+                            RelativeAddressFromAddress(table.RangeAddress) == denseAddress))
+                    {
+                        continue;
+                    }
+                    candidateRanges.Add(new CandidateRange(
+                        Opaque("range", $"{sheetId}:dense:{denseAddress}"),
+                        sheetId,
+                        worksheet.Name,
+                        denseAddress,
+                        InferRangeLabel(worksheet, denseRange),
+                        denseRange.RowCount(),
+                        denseRange.ColumnCount(),
+                        TableStructureFingerprint(
+                            sheetId,
+                            worksheet,
+                            denseRange,
+                            zip.SheetsByPosition.Values),
+                        "dense_region",
+                        InferTableTopology(worksheet, denseRange.RangeAddress)));
+                }
             }
 
             sheetAnalyses.Add(new SheetAnalysis(
                 sheetId,
+                sheetIdentity?.OoxmlSheetId ?? worksheet.Position.ToString(CultureInfo.InvariantCulture),
+                sheetIdentity?.RelationshipId ?? $"position_{worksheet.Position}",
+                sheetIdentity?.PartPath ?? $"xl/worksheets/sheet{worksheet.Position}.xml",
                 worksheet.Name,
                 worksheet.Position - 1,
                 visibility,
@@ -260,6 +299,12 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
             warnings.Add(new ContractWarning(
                 "WORKBOOK_CANDIDATE_LIMIT_REACHED",
                 $"매핑 후보 셀은 상위 {MaxCandidateCells:N0}개까지만 인덱싱했습니다."));
+        }
+        if (candidateRanges.Count >= MaxTableCandidates)
+        {
+            warnings.Add(new ContractWarning(
+                "WORKBOOK_RANGE_CANDIDATE_LIMIT_REACHED",
+                $"표 매핑 후보 범위는 상위 {MaxTableCandidates:N0}개까지만 인덱싱했습니다."));
         }
         if (zip.HasMacro)
         {
@@ -292,14 +337,37 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
 
         var structureHash = ShaText(JsonSerializer.Serialize(new
         {
-            sheets = sheetAnalyses.Select(sheet => new
+            sheets = sheetAnalyses.OrderBy(sheet => sheet.SheetId).Select(sheet => new
             {
-                sheet.Name,
+                sheet.SheetId,
                 sheet.Visibility,
                 sheet.UsedRange,
                 sheet.StructureHash,
             }),
-            namedRanges = zip.NamedRanges,
+            charts = zip.Charts
+                .OrderBy(chart => chart.ChartId)
+                .Select(chart => new
+                {
+                    chart.ChartId,
+                    chart.StructureFingerprint,
+                }),
+            ranges = candidateRanges
+                .OrderBy(range => range.CandidateId)
+                .Select(range => new
+                {
+                    range.CandidateId,
+                    range.Kind,
+                    range.StructureFingerprint,
+                }),
+            namedRanges = zip.NamedRanges.Select(range => new
+            {
+                range.Name,
+                range.Scope,
+                range.SheetId,
+                RefersTo = CanonicalFormulaForStructure(
+                    range.RefersTo,
+                    zip.SheetsByPosition.Values),
+            }),
             externalLinks = externalLinks.Select(link => link.Target),
         }));
         var compatible = issues.All(issue => issue.Severity != "blocking");
@@ -321,6 +389,7 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
             editableCells,
             candidateCells,
             candidateRanges,
+            zip.Charts,
             externalLinks,
             zip.NamedRanges,
             warnings,
@@ -354,6 +423,7 @@ app.MapPost("/inspect", async (InspectRequest request, CancellationToken cancell
     }
     catch (Exception error)
     {
+        app.Logger.LogError(error, "Workbook inspection failed.");
         return Results.Ok(EmptyResult(
             [new Issue(
                 "WORKBOOK_PARSE_FAILED",
@@ -369,13 +439,15 @@ app.MapPost("/valuation/read-model", async (
     try
     {
         var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
-        using var stream = new MemoryStream(bytes);
-        using var workbook = new XLWorkbook(stream);
+        var zip = ReadZipInsights(bytes);
+        var warnings = new List<ContractWarning>();
+        using var workbook = OpenWorkbookForInspection(bytes, warnings);
         workbook.RecalculateAllFormulas();
         return Results.Ok(BuildValuationReadModel(
             workbook,
             Sha(bytes),
-            request.OutputBindings ?? []));
+            request.OutputBindings ?? [],
+            zip));
     }
     catch (Exception error)
     {
@@ -401,6 +473,7 @@ app.MapPost("/valuation/calculate", async (
     try
     {
         var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
+        var zip = ReadZipInsights(bytes);
         using var stream = new MemoryStream(bytes);
         using var workbook = new XLWorkbook(stream);
         var before = new List<ValuationAppliedCell>();
@@ -429,7 +502,7 @@ app.MapPost("/valuation/calculate", async (
         {
             var worksheet = workbook.Worksheets
                 .FirstOrDefault(sheet =>
-                    $"sheet_{sheet.Position}" == change.SheetId &&
+                    StableSheetId(zip, sheet) == change.SheetId &&
                     sheet.Visibility == XLWorksheetVisibility.Visible);
             if (worksheet is null || !TryCell(worksheet, change.Address, out var cell))
             {
@@ -462,7 +535,7 @@ app.MapPost("/valuation/calculate", async (
         foreach (var change in request.Changes)
         {
             var worksheet = workbook.Worksheets.First(sheet =>
-                $"sheet_{sheet.Position}" == change.SheetId);
+                StableSheetId(zip, sheet) == change.SheetId);
             var cell = worksheet.Cell(change.Address);
             ApplyTypedValue(cell, change);
         }
@@ -473,7 +546,7 @@ app.MapPost("/valuation/calculate", async (
                 .Where(IsCalculationError)
                 .Select(cell => new
                 {
-                    sheetId = $"sheet_{sheet.Position}",
+                    sheetId = StableSheetId(zip, sheet),
                     sheetName = sheet.Name,
                     address = cell.Address.ToString(),
                     code = SafeFormattedText(cell),
@@ -499,11 +572,12 @@ app.MapPost("/valuation/calculate", async (
         var readModel = BuildValuationReadModel(
             workbook,
             Sha(outputBytes),
-            request.OutputBindings ?? []);
+            request.OutputBindings ?? [],
+            zip);
         var applied = request.Changes.Select(change =>
         {
             var worksheet = workbook.Worksheets.First(sheet =>
-                $"sheet_{sheet.Position}" == change.SheetId);
+                StableSheetId(zip, sheet) == change.SheetId);
             var cell = worksheet.Cell(change.Address);
             return new ValuationAppliedCell(
                 change.SheetId,
@@ -544,6 +618,87 @@ app.MapPost("/valuation/calculate", async (
 
 app.Run();
 
+static XLWorkbook OpenWorkbookForInspection(
+    byte[] bytes,
+    ICollection<ContractWarning> warnings)
+{
+    try
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        return new XLWorkbook(stream);
+    }
+    catch (InvalidOperationException originalError)
+    {
+        var sanitizedBytes = RemoveNonDataDrawingRelationships(bytes);
+        try
+        {
+            using var stream = new MemoryStream(sanitizedBytes, writable: false);
+            var workbook = new XLWorkbook(stream);
+            warnings.Add(new ContractWarning(
+                "WORKBOOK_NON_DATA_DRAWINGS_IGNORED",
+                "셀 분석 호환성을 위해 메모·그리기 개체를 읽기 전용 분석 복사본에서 제외했습니다. 원본 파일과 차트 OOXML은 변경하지 않았습니다."));
+            return workbook;
+        }
+        catch
+        {
+            throw originalError;
+        }
+    }
+}
+
+static byte[] RemoveNonDataDrawingRelationships(byte[] bytes)
+{
+    using var sourceStream = new MemoryStream(bytes, writable: false);
+    using var source = new ZipArchive(sourceStream, ZipArchiveMode.Read, leaveOpen: false);
+    using var outputStream = new MemoryStream();
+    using (var output = new ZipArchive(
+               outputStream,
+               ZipArchiveMode.Create,
+               leaveOpen: true))
+    {
+        foreach (var entry in source.Entries)
+        {
+            var outputEntry = output.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+            outputEntry.LastWriteTime = entry.LastWriteTime;
+            using var input = entry.Open();
+            using var target = outputEntry.Open();
+            if (Regex.IsMatch(
+                    entry.FullName,
+                    @"^xl/worksheets/sheet\d+\.xml$",
+                    RegexOptions.IgnoreCase))
+            {
+                var document = XDocument.Load(input);
+                document.Descendants()
+                    .Where(element => element.Name.LocalName is "drawing" or "legacyDrawing")
+                    .Remove();
+                document.Save(target, System.Xml.Linq.SaveOptions.DisableFormatting);
+                continue;
+            }
+            if (Regex.IsMatch(
+                    entry.FullName,
+                    @"^xl/worksheets/_rels/sheet\d+\.xml\.rels$",
+                    RegexOptions.IgnoreCase))
+            {
+                var document = XDocument.Load(input);
+                document.Descendants()
+                    .Where(element =>
+                    {
+                        if (element.Name.LocalName != "Relationship") return false;
+                        var type = element.Attribute("Type")?.Value ?? "";
+                        return type.EndsWith("/drawing", StringComparison.OrdinalIgnoreCase) ||
+                               type.EndsWith("/vmlDrawing", StringComparison.OrdinalIgnoreCase) ||
+                               type.EndsWith("/comments", StringComparison.OrdinalIgnoreCase);
+                    })
+                    .Remove();
+                document.Save(target, System.Xml.Linq.SaveOptions.DisableFormatting);
+                continue;
+            }
+            input.CopyTo(target);
+        }
+    }
+    return outputStream.ToArray();
+}
+
 static async Task<byte[]> DownloadWorkbook(
     string downloadUrl,
     CancellationToken cancellationToken)
@@ -565,13 +720,14 @@ static async Task<byte[]> DownloadWorkbook(
 static ValuationReadModel BuildValuationReadModel(
     XLWorkbook workbook,
     string workbookHash,
-    IReadOnlyList<ValuationOutputBinding> outputBindings)
+    IReadOnlyList<ValuationOutputBinding> outputBindings,
+    ZipInsights zip)
 {
     var sheets = new List<ValuationSheet>();
     var editable = new List<ValuationEditableCell>();
     foreach (var worksheet in workbook.Worksheets.OrderBy(sheet => sheet.Position))
     {
-        var sheetId = $"sheet_{worksheet.Position}";
+        var sheetId = StableSheetId(zip, worksheet);
         var visibility = WorksheetVisibility(worksheet);
         var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
         var cells = new List<ValuationCell>();
@@ -685,11 +841,12 @@ static ValuationReadModel BuildValuationReadModel(
             cells));
     }
 
-    var outputs = BuildValuationOutputs(workbook, outputBindings);
+    var outputs = BuildValuationOutputs(workbook, outputBindings, zip);
     var dependencyAnalysis = AnalyzeValuationDependencies(
         workbook,
         outputBindings,
-        editable);
+        editable,
+        zip);
     editable = editable
         .Select(cell =>
         {
@@ -724,10 +881,15 @@ static string WorksheetVisibility(IXLWorksheet worksheet)
     };
 }
 
+static string StableSheetId(ZipInsights zip, IXLWorksheet worksheet) =>
+    zip.SheetsByPosition.GetValueOrDefault(worksheet.Position)?.StableSheetId ??
+    $"sheet_{worksheet.Position}";
+
 static DependencyImpactResult AnalyzeValuationDependencies(
     XLWorkbook workbook,
     IReadOnlyList<ValuationOutputBinding> outputBindings,
-    IReadOnlyList<ValuationEditableCell> editableCells)
+    IReadOnlyList<ValuationEditableCell> editableCells,
+    ZipInsights zip)
 {
     var editableKeys = editableCells
         .Select(cell => $"{cell.SheetId}:{cell.Address}")
@@ -757,7 +919,7 @@ static DependencyImpactResult AnalyzeValuationDependencies(
     foreach (var binding in outputBindings)
     {
         var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
-            $"sheet_{sheet.Position}" == binding.SheetId);
+            StableSheetId(zip, sheet) == binding.SheetId);
         if (worksheet is null)
         {
             warnings.Add($"OUTPUT_SHEET_MISSING:{binding.Metric}");
@@ -785,7 +947,7 @@ static DependencyImpactResult AnalyzeValuationDependencies(
         while (stack.Count > 0)
         {
             var current = stack.Pop();
-            var currentSheetId = $"sheet_{current.Worksheet.Position}";
+            var currentSheetId = StableSheetId(zip, current.Worksheet);
             var currentKey = $"{currentSheetId}:{current.Address}";
             if (!visited.Add(
                     $"{currentKey}:{current.ConditionalPath}"))
@@ -832,7 +994,7 @@ static DependencyImpactResult AnalyzeValuationDependencies(
                         $"REFERENCE_SHEET_MISSING:{reference.SheetName}");
                     continue;
                 }
-                var referencedSheetId = $"sheet_{referencedSheet.Position}";
+                var referencedSheetId = StableSheetId(zip, referencedSheet);
                 var edgeKey =
                     $"{binding.Metric}:{currentSheetId}:{current.Address}:" +
                     $"{referencedSheetId}:{reference.Address}";
@@ -1032,11 +1194,12 @@ static string NormalizeCellAddress(string address)
 
 static ValuationOutputs BuildValuationOutputs(
     XLWorkbook workbook,
-    IReadOnlyList<ValuationOutputBinding> bindings)
+    IReadOnlyList<ValuationOutputBinding> bindings,
+    ZipInsights zip)
 {
     var values = bindings.ToDictionary(
         binding => binding.Metric,
-        binding => BoundOutput(workbook, binding),
+        binding => BoundOutput(workbook, binding, zip),
         StringComparer.Ordinal);
     return new ValuationOutputs(
         values.GetValueOrDefault("forward_eps"),
@@ -1046,10 +1209,11 @@ static ValuationOutputs BuildValuationOutputs(
 
 static ValuationOutput BoundOutput(
     XLWorkbook workbook,
-    ValuationOutputBinding binding)
+    ValuationOutputBinding binding,
+    ZipInsights zip)
 {
     var worksheet = workbook.Worksheets.FirstOrDefault(sheet =>
-        $"sheet_{sheet.Position}" == binding.SheetId &&
+        StableSheetId(zip, sheet) == binding.SheetId &&
         sheet.Visibility == XLWorksheetVisibility.Visible);
     if (worksheet is null || !TryCell(worksheet, binding.Address, out var cell))
     {
@@ -1419,6 +1583,284 @@ static string ExtractExternalTarget(string formula)
     return match.Success ? match.Groups[1].Value : "external_workbook";
 }
 
+static IReadOnlyList<IXLRange> FindDenseTableRanges(
+    IXLWorksheet worksheet,
+    IXLRange used)
+{
+    var contentCells = used.CellsUsed(XLCellsUsedOptions.Contents)
+        .Where(cell => cell.HasFormula || cell.Value.Type != XLDataType.Blank)
+        .Select(cell => (
+            Row: cell.Address!.RowNumber,
+            Column: cell.Address.ColumnNumber))
+        .ToArray();
+    if (contentCells.Length < 4) return [];
+    var occupied = contentCells.ToHashSet();
+    var rowGroups = ConsecutiveGroups(contentCells.Select(cell => cell.Row));
+    var columnGroups = ConsecutiveGroups(contentCells.Select(cell => cell.Column));
+    var candidates = new List<IXLRange>();
+    foreach (var rows in rowGroups)
+    {
+        foreach (var columns in columnGroups)
+        {
+            var rowCount = rows.Last - rows.First + 1;
+            var columnCount = columns.Last - columns.First + 1;
+            if (rowCount < 2 || columnCount < 2) continue;
+            var occupiedCount = 0;
+            for (var row = rows.First; row <= rows.Last; row++)
+            {
+                for (var column = columns.First; column <= columns.Last; column++)
+                {
+                    if (occupied.Contains((row, column))) occupiedCount++;
+                }
+            }
+            var density = (double)occupiedCount / (rowCount * columnCount);
+            if (occupiedCount < 4 || density < 0.15) continue;
+            candidates.Add(worksheet.Range(
+                rows.First,
+                columns.First,
+                rows.Last,
+                columns.Last));
+        }
+    }
+    return candidates;
+}
+
+static IReadOnlyList<ConsecutiveGroup> ConsecutiveGroups(IEnumerable<int> values)
+{
+    var sorted = values.Distinct().Order().ToArray();
+    if (sorted.Length == 0) return [];
+    var groups = new List<ConsecutiveGroup>();
+    var first = sorted[0];
+    var last = first;
+    foreach (var value in sorted.Skip(1))
+    {
+        if (value == last + 1)
+        {
+            last = value;
+            continue;
+        }
+        groups.Add(new ConsecutiveGroup(first, last));
+        first = value;
+        last = value;
+    }
+    groups.Add(new ConsecutiveGroup(first, last));
+    return groups;
+}
+
+static TableTopology InferTableTopology(
+    IXLWorksheet worksheet,
+    IXLRangeAddress address)
+{
+    var firstRow = address.FirstAddress.RowNumber;
+    var lastRow = address.LastAddress.RowNumber;
+    var firstColumn = address.FirstAddress.ColumnNumber;
+    var lastColumn = address.LastAddress.ColumnNumber;
+    var headerRow = Enumerable.Range(
+            firstRow,
+            Math.Min(4, lastRow - firstRow + 1))
+        .Select(row =>
+        {
+            var values = Enumerable.Range(
+                    firstColumn,
+                    lastColumn - firstColumn + 1)
+                .Select(column => Trim(
+                    SafeFormattedText(worksheet.Cell(row, column)),
+                    500))
+                .ToArray();
+            return new
+            {
+                Row = row,
+                Values = values,
+                PeriodCount = values.Count(LooksLikePeriod),
+                NonBlankCount = values.Count(value => value.Length > 0),
+            };
+        })
+        .OrderByDescending(candidate => candidate.PeriodCount)
+        .ThenByDescending(candidate => candidate.NonBlankCount)
+        .ThenBy(candidate => candidate.Row)
+        .First();
+    var headerValues = headerRow.Values;
+    var hasHeaderText = Enumerable.Range(
+            firstColumn,
+            lastColumn - firstColumn + 1)
+        .Select(column => worksheet.Cell(headerRow.Row, column))
+        .Any(cell => cell.Value.Type == XLDataType.Text && !string.IsNullOrWhiteSpace(SafeCellText(cell)));
+    var headerRows = hasHeaderText ? new[] { headerRow.Row } : [];
+    var dataFirstRow = hasHeaderText && headerRow.Row < lastRow
+        ? headerRow.Row + 1
+        : headerRow.Row;
+    var rowKeyColumns = new List<TableColumnRef>();
+    for (var column = firstColumn; column <= lastColumn; column++)
+    {
+        var nonBlank = 0;
+        var text = 0;
+        for (var row = dataFirstRow; row <= lastRow; row++)
+        {
+            var cell = worksheet.Cell(row, column);
+            if (cell.Value.Type == XLDataType.Blank && !cell.HasFormula) continue;
+            nonBlank++;
+            if (cell.Value.Type == XLDataType.Text && !cell.HasFormula) text++;
+        }
+        if (nonBlank == 0 || (double)text / nonBlank < 0.5) continue;
+        rowKeyColumns.Add(new TableColumnRef(
+            column - firstColumn,
+            ColumnName(column),
+            headerValues[column - firstColumn]));
+        if (rowKeyColumns.Count == 3) break;
+    }
+    var periodColumns = new List<PeriodColumn>();
+    for (var column = firstColumn; column <= lastColumn; column++)
+    {
+        var label = headerValues[column - firstColumn].Trim();
+        if (!LooksLikePeriod(label)) continue;
+        periodColumns.Add(new PeriodColumn(
+            column - firstColumn,
+            ColumnName(column),
+            label,
+            PeriodRole(label)));
+    }
+    var firstForecastColumn = periodColumns
+        .Where(column => column.Role == "forecast")
+        .Select(column => (int?)column.Index)
+        .Min();
+    if (firstForecastColumn is not null)
+    {
+        for (var index = 0; index < periodColumns.Count; index++)
+        {
+            var period = periodColumns[index];
+            if (period.Role == "unknown" && period.Index < firstForecastColumn)
+            {
+                periodColumns[index] = period with { Role = "actual" };
+            }
+        }
+    }
+    if (periodColumns.Count > 0)
+    {
+        var firstPeriodColumn = periodColumns.Min(column => column.Index);
+        rowKeyColumns.RemoveAll(column => column.Index >= firstPeriodColumn);
+    }
+    var unitHints = new SortedSet<string>(StringComparer.Ordinal);
+    for (var row = firstRow; row <= Math.Min(lastRow, firstRow + 3); row++)
+    {
+        for (var column = firstColumn; column <= lastColumn; column++)
+        {
+            var value = SafeCellText(worksheet.Cell(row, column)).Trim();
+            if (Regex.IsMatch(value, @"(?:단위|unit)\s*[:：]?", RegexOptions.IgnoreCase))
+            {
+                unitHints.Add(Trim(value, 100));
+            }
+        }
+    }
+    var subtotalRows = new List<int>();
+    for (var row = dataFirstRow; row <= lastRow; row++)
+    {
+        var label = Enumerable.Range(firstColumn, lastColumn - firstColumn + 1)
+            .Select(column => SafeCellText(worksheet.Cell(row, column)).Trim())
+            .FirstOrDefault(value => value.Length > 0) ?? "";
+        if (Regex.IsMatch(
+                label,
+                @"(?:^|\s)(합계|소계|total|subtotal)(?:\s|$)",
+                RegexOptions.IgnoreCase))
+        {
+            subtotalRows.Add(row);
+        }
+    }
+    return new TableTopology(
+        headerRows,
+        headerValues,
+        rowKeyColumns,
+        periodColumns,
+        unitHints.ToArray(),
+        subtotalRows);
+}
+
+static bool LooksLikePeriod(string label)
+{
+    var normalized = Regex.Replace(
+        label.Trim().Replace("'", "", StringComparison.Ordinal),
+        @"\s+",
+        "");
+    return Regex.IsMatch(
+        normalized,
+        @"^(?:FY)?(?:19|20)?[0-9]{2}(?:[AEFP])?$",
+        RegexOptions.IgnoreCase) ||
+        Regex.IsMatch(
+            normalized,
+            @"^(?:[1-4]Q(?:19|20)?[0-9]{2}|(?:19|20)?[0-9]{2}[1-4]Q)(?:[AEFP])?$",
+            RegexOptions.IgnoreCase);
+}
+
+static string PeriodRole(string label)
+{
+    if (Regex.IsMatch(
+            label,
+            @"(?:추정|전망|예상|forecast|estimate|(?:19|20)?[0-9]{2}[EFP])",
+            RegexOptions.IgnoreCase))
+    {
+        return "forecast";
+    }
+    if (Regex.IsMatch(label, @"(?:실적|actual|(?:19|20)?[0-9]{2}A)", RegexOptions.IgnoreCase))
+    {
+        return "actual";
+    }
+    return "unknown";
+}
+
+static string InferRangeLabel(IXLWorksheet worksheet, IXLRange range)
+{
+    var text = range.CellsUsed(XLCellsUsedOptions.Contents)
+        .Where(cell => cell.Value.Type == XLDataType.Text && !cell.HasFormula)
+        .Select(cell => SafeCellText(cell).Trim())
+        .FirstOrDefault(value => value.Length > 0);
+    return Trim(text ?? $"{worksheet.Name} {RelativeAddress(range)}", 500);
+}
+
+static string TableStructureFingerprint(
+    string sheetId,
+    IXLWorksheet worksheet,
+    IXLRange range,
+    IEnumerable<OoxmlSheetIdentity> sheets)
+{
+    var parts = range.CellsUsed(XLCellsUsedOptions.Contents)
+        .Select(cell => string.Join(":",
+            cell.Address?.ToString(),
+            cell.HasFormula
+                ? CanonicalFormulaForStructure(cell.FormulaA1, sheets)
+                : "",
+            ValueType(cell),
+            cell.Value.Type == XLDataType.Text && !cell.HasFormula
+                ? SafeCellText(cell).Trim()
+                : "",
+            cell.Style.NumberFormat.Format ?? ""));
+    return ShaText($"{sheetId}:{RelativeAddress(range)}:{string.Join("|", parts)}");
+}
+
+static string CanonicalFormulaForStructure(
+    string formula,
+    IEnumerable<OoxmlSheetIdentity> sheets)
+{
+    var result = formula;
+    foreach (var sheet in sheets.OrderByDescending(
+                 candidate => candidate.Name.Length))
+    {
+        var replacement = $"[{sheet.StableSheetId}]!";
+        var escapedName = sheet.Name.Replace("'", "''", StringComparison.Ordinal);
+        result = result.Replace(
+            $"'{escapedName}'!",
+            replacement,
+            StringComparison.OrdinalIgnoreCase);
+        if (Regex.IsMatch(sheet.Name, @"^[A-Za-z0-9_\p{L}]+$"))
+        {
+            result = Regex.Replace(
+                result,
+                $@"(?<![A-Za-z0-9_']){Regex.Escape(sheet.Name)}!",
+                replacement,
+                RegexOptions.IgnoreCase);
+        }
+    }
+    return result;
+}
+
 static ZipInsights ReadZipInsights(byte[] bytes)
 {
     using var stream = new MemoryStream(bytes);
@@ -1431,46 +1873,535 @@ static ZipInsights ReadZipInsights(byte[] bytes)
                        !name.Contains("/_rels/", StringComparison.OrdinalIgnoreCase))
         .Order()
         .ToList();
-    var namedRanges = new List<NamedRange>();
-    var workbookEntry = archive.GetEntry("xl/workbook.xml");
-    if (workbookEntry is not null)
+    var workbookPath = "xl/workbook.xml";
+    var workbookDocument = ReadXmlPart(archive, workbookPath);
+    var workbookRelationships = ReadRelationships(archive, workbookPath);
+    var sheetIdentities = new List<OoxmlSheetIdentity>();
+    if (workbookDocument is not null)
     {
-        using var workbookStream = workbookEntry.Open();
-        var document = XDocument.Load(workbookStream);
-        foreach (var element in document.Descendants().Where(node => node.Name.LocalName == "definedName"))
+        var position = 0;
+        foreach (var element in workbookDocument.Descendants()
+                     .Where(node => node.Name.LocalName == "sheet"))
+        {
+            position++;
+            var name = element.Attribute("name")?.Value ?? $"Sheet{position}";
+            var ooxmlSheetId =
+                element.Attribute("sheetId")?.Value ??
+                position.ToString(CultureInfo.InvariantCulture);
+            var relationshipId = element.Attributes()
+                .FirstOrDefault(attribute =>
+                    attribute.Name.LocalName == "id" &&
+                    attribute.Name.NamespaceName.Contains("relationships", StringComparison.Ordinal))
+                ?.Value ?? $"position_{position}";
+            var partPath = workbookRelationships
+                .GetValueOrDefault(relationshipId)?.PartPath ??
+                $"xl/worksheets/sheet{position}.xml";
+            sheetIdentities.Add(new OoxmlSheetIdentity(
+                position,
+                $"sheet_{SafeIdentifierSegment(ooxmlSheetId)}",
+                ooxmlSheetId,
+                relationshipId,
+                partPath,
+                name));
+        }
+    }
+    var sheetsByPosition = sheetIdentities.ToDictionary(
+        sheet => sheet.Position,
+        sheet => sheet);
+    var namedRanges = new List<NamedRange>();
+    if (workbookDocument is not null)
+    {
+        foreach (var element in workbookDocument.Descendants()
+                     .Where(node => node.Name.LocalName == "definedName"))
         {
             var name = element.Attribute("name")?.Value;
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(element.Value)) continue;
             var localSheetId = element.Attribute("localSheetId")?.Value;
+            var localSheetPosition = localSheetId is null
+                ? (int?)null
+                : int.Parse(localSheetId, CultureInfo.InvariantCulture) + 1;
             namedRanges.Add(new NamedRange(
                 Trim(name, 255),
                 Trim(element.Value, 2000),
                 localSheetId is null ? "workbook" : "worksheet",
-                localSheetId is null ? null : $"sheet_{int.Parse(localSheetId, CultureInfo.InvariantCulture) + 1}"));
+                localSheetPosition is null
+                    ? null
+                    : sheetsByPosition.GetValueOrDefault(localSheetPosition.Value)?.StableSheetId ??
+                      $"sheet_{localSheetPosition.Value}"));
         }
     }
 
-    var chartCounts = new Dictionary<int, int>();
-    foreach (var entry in archive.Entries.Where(entry =>
-                 Regex.IsMatch(entry.FullName, @"^xl/worksheets/sheet\d+\.xml$", RegexOptions.IgnoreCase)))
+    var charts = new List<ChartAnalysis>();
+    foreach (var sheet in sheetIdentities)
     {
-        var match = Regex.Match(entry.FullName, @"sheet(\d+)\.xml$", RegexOptions.IgnoreCase);
-        if (!match.Success) continue;
-        var position = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        using var entryStream = entry.Open();
-        var document = XDocument.Load(entryStream);
-        var drawingCount = document.Descendants().Count(node => node.Name.LocalName == "drawing");
-        var tablePartCount = document.Descendants().Count(node => node.Name.LocalName == "tablePart");
-        chartCounts[position] = drawingCount + tablePartCount * 0;
+        var worksheetDocument = ReadXmlPart(archive, sheet.PartPath);
+        if (worksheetDocument is null) continue;
+        var worksheetRelationships = ReadRelationships(archive, sheet.PartPath);
+        foreach (var drawingElement in worksheetDocument.Descendants()
+                     .Where(node => node.Name.LocalName == "drawing"))
+        {
+            var relationshipId = RelationshipId(drawingElement);
+            if (relationshipId is null ||
+                !worksheetRelationships.TryGetValue(relationshipId, out var drawingRelationship))
+            {
+                continue;
+            }
+            var drawingDocument = ReadXmlPart(archive, drawingRelationship.PartPath);
+            if (drawingDocument is null) continue;
+            var drawingRelationships = ReadRelationships(archive, drawingRelationship.PartPath);
+            foreach (var chartElement in drawingDocument.Descendants()
+                         .Where(node => node.Name.LocalName == "chart"))
+            {
+                var chartRelationshipId = RelationshipId(chartElement);
+                if (chartRelationshipId is null ||
+                    !drawingRelationships.TryGetValue(
+                        chartRelationshipId,
+                        out var chartRelationship) ||
+                    !chartRelationship.Type.EndsWith("/chart", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                var chartDocument = ReadXmlPart(archive, chartRelationship.PartPath);
+                if (chartDocument is null) continue;
+                charts.Add(ParseChartAnalysis(
+                    sheet,
+                    chartRelationship.PartPath,
+                    ChartAnchorFromElement(chartElement),
+                    chartDocument,
+                    sheetIdentities));
+            }
+        }
     }
-    var totalCharts = names.Count(name =>
-        Regex.IsMatch(name, @"^xl/charts/chart\d+\.xml$", RegexOptions.IgnoreCase));
-    var assignedCharts = chartCounts.Values.Sum();
-    if (totalCharts > assignedCharts)
+    return new ZipInsights(
+        hasMacro,
+        externalTargets,
+        namedRanges,
+        sheetsByPosition,
+        charts
+            .OrderBy(chart => chart.SheetId, StringComparer.Ordinal)
+            .ThenBy(chart => chart.PartPath, StringComparer.Ordinal)
+            .ToArray());
+}
+
+static XDocument? ReadXmlPart(ZipArchive archive, string partPath)
+{
+    var entry = archive.Entries.FirstOrDefault(candidate =>
+        string.Equals(candidate.FullName, partPath, StringComparison.OrdinalIgnoreCase));
+    if (entry is null) return null;
+    using var stream = entry.Open();
+    return XDocument.Load(stream);
+}
+
+static IReadOnlyDictionary<string, PackageRelationship> ReadRelationships(
+    ZipArchive archive,
+    string sourcePartPath)
+{
+    var slash = sourcePartPath.LastIndexOf('/');
+    var directory = slash < 0 ? "" : sourcePartPath[..slash];
+    var fileName = slash < 0 ? sourcePartPath : sourcePartPath[(slash + 1)..];
+    var relationshipPath =
+        $"{(directory.Length == 0 ? "" : directory + "/")}_rels/{fileName}.rels";
+    var document = ReadXmlPart(archive, relationshipPath);
+    if (document is null)
     {
-        chartCounts[1] = chartCounts.GetValueOrDefault(1) + totalCharts - assignedCharts;
+        return new Dictionary<string, PackageRelationship>(StringComparer.Ordinal);
     }
-    return new ZipInsights(hasMacro, externalTargets, namedRanges, chartCounts);
+    return document.Descendants()
+        .Where(node => node.Name.LocalName == "Relationship")
+        .Select(element =>
+        {
+            var id = element.Attribute("Id")?.Value ?? "";
+            var type = element.Attribute("Type")?.Value ?? "";
+            var target = element.Attribute("Target")?.Value ?? "";
+            var targetMode = element.Attribute("TargetMode")?.Value;
+            return new PackageRelationship(
+                id,
+                type,
+                string.Equals(targetMode, "External", StringComparison.OrdinalIgnoreCase)
+                    ? target
+                    : ResolvePartPath(sourcePartPath, target),
+                targetMode);
+        })
+        .Where(relationship => relationship.Id.Length > 0)
+        .ToDictionary(relationship => relationship.Id, StringComparer.Ordinal);
+}
+
+static string ResolvePartPath(string sourcePartPath, string target)
+{
+    if (target.StartsWith('/')) return target.TrimStart('/');
+    var slash = sourcePartPath.LastIndexOf('/');
+    var directory = slash < 0 ? "" : sourcePartPath[..slash];
+    var segments = new List<string>();
+    foreach (var segment in $"{directory}/{target}".Split(
+                 '/',
+                 StringSplitOptions.RemoveEmptyEntries))
+    {
+        if (segment == ".") continue;
+        if (segment == "..")
+        {
+            if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+            continue;
+        }
+        segments.Add(segment);
+    }
+    return string.Join("/", segments);
+}
+
+static string? RelationshipId(XElement element) => element.Attributes()
+    .FirstOrDefault(attribute =>
+        attribute.Name.LocalName == "id" &&
+        attribute.Name.NamespaceName.Contains("relationships", StringComparison.Ordinal))
+    ?.Value;
+
+static string SafeIdentifierSegment(string value)
+{
+    var normalized = Regex.Replace(value, @"[^A-Za-z0-9._-]", "_");
+    return normalized.Length == 0 ? ShaText(value)[..12] : normalized;
+}
+
+static ChartAnalysis ParseChartAnalysis(
+    OoxmlSheetIdentity sheet,
+    string partPath,
+    ChartAnchor anchor,
+    XDocument document,
+    IReadOnlyList<OoxmlSheetIdentity> sheets)
+{
+    var chartElement = document.Descendants()
+        .FirstOrDefault(node => node.Name.LocalName == "chart");
+    var plotArea = chartElement?.Elements()
+        .FirstOrDefault(node => node.Name.LocalName == "plotArea");
+    var axes = (plotArea?.Elements() ?? [])
+        .Where(element => element.Name.LocalName is "catAx" or "dateAx" or "valAx" or "serAx")
+        .Select(ParseChartAxis)
+        .Where(axis => axis is not null)
+        .Cast<ChartAxis>()
+        .ToArray();
+    var axisById = axes.ToDictionary(axis => axis.AxisId, StringComparer.Ordinal);
+    var plotElements = (plotArea?.Elements() ?? [])
+        .Where(element => IsChartPlotElement(element.Name.LocalName))
+        .ToArray();
+    var chartTypes = plotElements
+        .Select(ChartType)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+    var series = new List<ChartSeries>();
+    var seriesIndex = 0;
+    foreach (var plot in plotElements)
+    {
+        var chartType = ChartType(plot);
+        var plotAxisIds = plot.Elements()
+            .Where(element => element.Name.LocalName == "axId")
+            .Select(element => element.Attribute("val")?.Value)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Cast<string>()
+            .ToArray();
+        var valueAxis = plotAxisIds
+            .Select(id => axisById.GetValueOrDefault(id))
+            .FirstOrDefault(axis => axis?.Type == "value");
+        foreach (var seriesElement in plot.Elements()
+                     .Where(element => element.Name.LocalName == "ser"))
+        {
+            var sourceIndex = int.TryParse(
+                seriesElement.Elements()
+                    .FirstOrDefault(element => element.Name.LocalName == "idx")
+                    ?.Attribute("val")?.Value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var parsedIndex)
+                ? parsedIndex
+                : seriesIndex;
+            var nameElement = seriesElement.Elements()
+                .FirstOrDefault(element => element.Name.LocalName == "tx");
+            var nameFormula = nameElement?.Descendants()
+                .FirstOrDefault(element => element.Name.LocalName == "f")?.Value;
+            var name = ChartText(nameElement);
+            var categoryElement = seriesElement.Elements()
+                .FirstOrDefault(element => element.Name.LocalName is "cat" or "xVal");
+            var valuesElement = seriesElement.Elements()
+                .FirstOrDefault(element => element.Name.LocalName is "val" or "yVal" or "bubbleSize");
+            var category = ParseChartDataReference(categoryElement, sheets);
+            var values = ParseChartDataReference(valuesElement, sheets);
+            var normalizedKey = string.Join("|",
+                sheet.StableSheetId,
+                chartType,
+                sourceIndex.ToString(CultureInfo.InvariantCulture),
+                category?.SheetId,
+                category?.Range,
+                values?.SheetId,
+                values?.Range);
+            series.Add(new ChartSeries(
+                Opaque("series", normalizedKey),
+                sourceIndex,
+                Trim(name, 1000),
+                string.IsNullOrWhiteSpace(nameFormula) ? null : Trim(nameFormula, 2000),
+                chartType,
+                valueAxis?.Secondary == true ? "secondary" : "primary",
+                category,
+                values));
+            seriesIndex++;
+        }
+    }
+    var categoryReference = series
+        .Select(item => item.Category)
+        .FirstOrDefault(reference => reference is not null);
+    var structuralDescription = JsonSerializer.Serialize(new
+    {
+        sheet = sheet.StableSheetId,
+        anchor,
+        chartTypes,
+        series = series.Select(item => new
+        {
+            item.Index,
+            item.ChartType,
+            item.Axis,
+            categorySheet = item.Category?.SheetId,
+            categoryRange = item.Category?.Range,
+            valueSheet = item.Values?.SheetId,
+            valueRange = item.Values?.Range,
+        }),
+        axes = axes.Select(axis => new
+        {
+            axis.AxisId,
+            axis.Type,
+            axis.Position,
+            axis.Secondary,
+            axis.CrossAxisId,
+        }),
+    });
+    var structureFingerprint = ShaText(structuralDescription);
+    var stableChartKey = string.Join("|",
+        sheet.StableSheetId,
+        anchor.Kind,
+        anchor.FromCell,
+        anchor.ToCell,
+        structureFingerprint);
+    return new ChartAnalysis(
+        Opaque("chart", stableChartKey),
+        sheet.StableSheetId,
+        sheet.Name,
+        partPath,
+        Trim(ChartTitle(chartElement), 1000),
+        anchor,
+        chartTypes.Length == 0 ? ["unknown_chart"] : chartTypes,
+        categoryReference,
+        series,
+        axes,
+        structureFingerprint);
+}
+
+static bool IsChartPlotElement(string localName) => localName is
+    "areaChart" or "area3DChart" or
+    "barChart" or "bar3DChart" or
+    "bubbleChart" or "doughnutChart" or
+    "lineChart" or "line3DChart" or
+    "ofPieChart" or "pieChart" or "pie3DChart" or
+    "radarChart" or "scatterChart" or
+    "stockChart" or "surfaceChart" or "surface3DChart";
+
+static string ChartType(XElement plot)
+{
+    var baseType = plot.Name.LocalName.Replace("Chart", "", StringComparison.Ordinal);
+    if (baseType.StartsWith("bar", StringComparison.Ordinal))
+    {
+        var direction = plot.Elements()
+            .FirstOrDefault(element => element.Name.LocalName == "barDir")
+            ?.Attribute("val")?.Value == "bar"
+            ? "bar"
+            : "column";
+        var grouping = plot.Elements()
+            .FirstOrDefault(element => element.Name.LocalName == "grouping")
+            ?.Attribute("val")?.Value;
+        return grouping switch
+        {
+            "stacked" => $"stacked_{direction}",
+            "percentStacked" => $"percent_stacked_{direction}",
+            _ => direction,
+        };
+    }
+    return Regex.Replace(baseType, @"([a-z0-9])([A-Z])", "$1_$2")
+        .Replace("3_d", "3d", StringComparison.Ordinal)
+        .ToLowerInvariant();
+}
+
+static ChartAxis? ParseChartAxis(XElement element)
+{
+    var axisId = element.Elements()
+        .FirstOrDefault(child => child.Name.LocalName == "axId")
+        ?.Attribute("val")?.Value;
+    if (string.IsNullOrWhiteSpace(axisId)) return null;
+    var rawPosition = element.Elements()
+        .FirstOrDefault(child => child.Name.LocalName == "axPos")
+        ?.Attribute("val")?.Value;
+    var position = rawPosition switch
+    {
+        "l" => "left",
+        "r" => "right",
+        "t" => "top",
+        "b" => "bottom",
+        _ => "unknown",
+    };
+    var type = element.Name.LocalName switch
+    {
+        "catAx" => "category",
+        "dateAx" => "date",
+        "valAx" => "value",
+        _ => "series",
+    };
+    var title = element.Elements()
+        .FirstOrDefault(child => child.Name.LocalName == "title");
+    var numberFormat = element.Elements()
+        .FirstOrDefault(child => child.Name.LocalName == "numFmt")
+        ?.Attribute("formatCode")?.Value;
+    var crossAxisId = element.Elements()
+        .FirstOrDefault(child => child.Name.LocalName == "crossAx")
+        ?.Attribute("val")?.Value;
+    return new ChartAxis(
+        axisId,
+        type,
+        position,
+        Trim(ChartText(title), 1000),
+        string.IsNullOrWhiteSpace(numberFormat) ? null : Trim(numberFormat, 500),
+        string.IsNullOrWhiteSpace(crossAxisId) ? null : crossAxisId,
+        position is "right" or "top");
+}
+
+static ChartDataReference? ParseChartDataReference(
+    XElement? container,
+    IReadOnlyList<OoxmlSheetIdentity> sheets)
+{
+    if (container is null) return null;
+    var formula = container.Descendants()
+        .FirstOrDefault(element => element.Name.LocalName == "f")?.Value ?? "";
+    var cache = container.Descendants()
+        .FirstOrDefault(element => element.Name.LocalName is
+            "strCache" or "numCache" or "strLit" or "numLit");
+    var cacheType = cache?.Name.LocalName.StartsWith("str", StringComparison.Ordinal) == true
+        ? "string"
+        : cache is null
+            ? "none"
+            : "number";
+    var cachedValues = (cache?.Elements() ?? [])
+        .Where(element => element.Name.LocalName == "pt")
+        .Select(element =>
+        {
+            var index = int.TryParse(
+                element.Attribute("idx")?.Value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var parsed)
+                ? parsed
+                : 0;
+            var value = element.Elements()
+                .FirstOrDefault(child => child.Name.LocalName == "v")?.Value;
+            return new ChartCachedValue(index, value is null ? null : Trim(value, 2000));
+        })
+        .Take(MaxChartCachedPoints)
+        .ToArray();
+    var pointCount = int.TryParse(
+        cache?.Elements()
+            .FirstOrDefault(element => element.Name.LocalName == "ptCount")
+            ?.Attribute("val")?.Value,
+        NumberStyles.Integer,
+        CultureInfo.InvariantCulture,
+        out var parsedCount)
+        ? parsedCount
+        : cachedValues.Length == 0
+            ? 0
+            : cachedValues.Max(point => point.Index) + 1;
+    var parsedReference = ParseRangeFormula(formula, sheets);
+    return new ChartDataReference(
+        Trim(formula, 2000),
+        parsedReference?.SheetId,
+        parsedReference?.SheetName,
+        parsedReference?.Range,
+        cacheType,
+        pointCount,
+        cachedValues);
+}
+
+static ParsedRangeReference? ParseRangeFormula(
+    string formula,
+    IReadOnlyList<OoxmlSheetIdentity> sheets)
+{
+    var match = Regex.Match(
+        formula.Trim(),
+        @"^(?:'(?<quoted>(?:[^']|'')+)'|(?<plain>[^!]+))!(?<range>\$?[A-Za-z]{1,3}\$?[1-9][0-9]*(?::\$?[A-Za-z]{1,3}\$?[1-9][0-9]*)?)$");
+    if (!match.Success) return null;
+    var sheetName = match.Groups["quoted"].Success
+        ? match.Groups["quoted"].Value.Replace("''", "'", StringComparison.Ordinal)
+        : match.Groups["plain"].Value;
+    if (sheetName.Contains('[')) return null;
+    var range = match.Groups["range"].Value
+        .Replace("$", "", StringComparison.Ordinal)
+        .ToUpperInvariant();
+    var sheet = sheets.FirstOrDefault(candidate =>
+        string.Equals(candidate.Name, sheetName, StringComparison.OrdinalIgnoreCase));
+    return new ParsedRangeReference(
+        sheet?.StableSheetId,
+        sheet?.Name ?? sheetName,
+        range);
+}
+
+static ChartAnchor ChartAnchorFromElement(XElement chartElement)
+{
+    var anchor = chartElement.Ancestors()
+        .FirstOrDefault(element => element.Name.LocalName.EndsWith(
+            "Anchor",
+            StringComparison.Ordinal));
+    if (anchor is null) return new ChartAnchor("unknown", null, null);
+    var kind = anchor.Name.LocalName switch
+    {
+        "twoCellAnchor" => "two_cell",
+        "oneCellAnchor" => "one_cell",
+        "absoluteAnchor" => "absolute",
+        _ => "unknown",
+    };
+    return new ChartAnchor(
+        kind,
+        AnchorCell(anchor, "from"),
+        AnchorCell(anchor, "to"));
+}
+
+static string? AnchorCell(XElement anchor, string markerName)
+{
+    var marker = anchor.Elements()
+        .FirstOrDefault(element => element.Name.LocalName == markerName);
+    if (marker is null) return null;
+    var column = int.TryParse(
+        marker.Elements().FirstOrDefault(element => element.Name.LocalName == "col")?.Value,
+        NumberStyles.Integer,
+        CultureInfo.InvariantCulture,
+        out var parsedColumn)
+        ? parsedColumn + 1
+        : 1;
+    var row = int.TryParse(
+        marker.Elements().FirstOrDefault(element => element.Name.LocalName == "row")?.Value,
+        NumberStyles.Integer,
+        CultureInfo.InvariantCulture,
+        out var parsedRow)
+        ? parsedRow + 1
+        : 1;
+    return $"{ColumnName(column)}{row}";
+}
+
+static string ChartTitle(XElement? chartElement)
+{
+    var title = chartElement?.Elements()
+        .FirstOrDefault(element => element.Name.LocalName == "title");
+    return ChartText(title);
+}
+
+static string ChartText(XElement? element)
+{
+    if (element is null) return "";
+    var richText = element.Descendants()
+        .Where(node => node.Name.LocalName == "t")
+        .Select(node => node.Value)
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .ToArray();
+    if (richText.Length > 0) return string.Join("", richText);
+    return element.Descendants()
+        .FirstOrDefault(node => node.Name.LocalName == "v")?.Value ?? "";
 }
 
 public sealed record InspectRequest(string DownloadUrl);
@@ -1628,6 +2559,9 @@ public sealed record ExternalLink(string Target, string Status, IReadOnlyList<st
 public sealed record NamedRange(string Name, string RefersTo, string Scope, string? SheetId);
 public sealed record SheetAnalysis(
     string SheetId,
+    string OoxmlSheetId,
+    string RelationshipId,
+    string PartPath,
     string Name,
     int Index,
     string Visibility,
@@ -1669,7 +2603,105 @@ public sealed record CandidateRange(
     string Label,
     int RowCount,
     int ColumnCount,
+    string StructureFingerprint,
+    string Kind,
+    IReadOnlyList<int> HeaderRows,
+    IReadOnlyList<string> HeaderValues,
+    IReadOnlyList<TableColumnRef> RowKeyColumns,
+    IReadOnlyList<PeriodColumn> PeriodColumns,
+    IReadOnlyList<string> UnitHints,
+    IReadOnlyList<int> SubtotalRows)
+{
+    public CandidateRange(
+        string candidateId,
+        string sheetId,
+        string sheetName,
+        string range,
+        string label,
+        int rowCount,
+        int columnCount,
+        string structureFingerprint,
+        string kind,
+        TableTopology topology)
+        : this(
+            candidateId,
+            sheetId,
+            sheetName,
+            range,
+            label,
+            rowCount,
+            columnCount,
+            structureFingerprint,
+            kind,
+            topology.HeaderRows,
+            topology.HeaderValues,
+            topology.RowKeyColumns,
+            topology.PeriodColumns,
+            topology.UnitHints,
+            topology.SubtotalRows)
+    {
+    }
+}
+public sealed record TableTopology(
+    IReadOnlyList<int> HeaderRows,
+    IReadOnlyList<string> HeaderValues,
+    IReadOnlyList<TableColumnRef> RowKeyColumns,
+    IReadOnlyList<PeriodColumn> PeriodColumns,
+    IReadOnlyList<string> UnitHints,
+    IReadOnlyList<int> SubtotalRows);
+public sealed record TableColumnRef(
+    int Index,
+    string Column,
+    string Label);
+public sealed record PeriodColumn(
+    int Index,
+    string Column,
+    string Label,
+    string Role);
+public sealed record ChartAnalysis(
+    string ChartId,
+    string SheetId,
+    string SheetName,
+    string PartPath,
+    string Title,
+    ChartAnchor Anchor,
+    IReadOnlyList<string> ChartTypes,
+    ChartDataReference? Category,
+    IReadOnlyList<ChartSeries> Series,
+    IReadOnlyList<ChartAxis> Axes,
     string StructureFingerprint);
+public sealed record ChartAnchor(
+    string Kind,
+    string? FromCell,
+    string? ToCell);
+public sealed record ChartDataReference(
+    string Formula,
+    string? SheetId,
+    string? SheetName,
+    string? Range,
+    string CacheType,
+    int PointCount,
+    IReadOnlyList<ChartCachedValue> CachedValues);
+public sealed record ChartCachedValue(
+    int Index,
+    string? Value);
+public sealed record ChartSeries(
+    string SeriesId,
+    int Index,
+    string Name,
+    string? NameFormula,
+    string ChartType,
+    string Axis,
+    ChartDataReference? Category,
+    ChartDataReference? Values);
+public sealed record ChartAxis(
+    string AxisId,
+    string Type,
+    string Position,
+    string Title,
+    string? NumberFormat,
+    string? CrossAxisId,
+    bool Secondary);
 public sealed record WorkbookAnalysis(
     string SchemaVersion,
     string WorkbookAnalysisId,
@@ -1682,6 +2714,7 @@ public sealed record WorkbookAnalysis(
     IReadOnlyList<EditableCell> EditableCells,
     IReadOnlyList<CandidateCell> CandidateCells,
     IReadOnlyList<CandidateRange> CandidateRanges,
+    IReadOnlyList<ChartAnalysis> Charts,
     IReadOnlyList<ExternalLink> ExternalLinks,
     IReadOnlyList<NamedRange> NamedRanges,
     IReadOnlyList<ContractWarning> Warnings,
@@ -1716,4 +2749,24 @@ public sealed record ZipInsights(
     bool HasMacro,
     IReadOnlyList<string> ExternalLinkTargets,
     IReadOnlyList<NamedRange> NamedRanges,
-    IReadOnlyDictionary<int, int> ChartCountBySheetPosition);
+    IReadOnlyDictionary<int, OoxmlSheetIdentity> SheetsByPosition,
+    IReadOnlyList<ChartAnalysis> Charts);
+public sealed record OoxmlSheetIdentity(
+    int Position,
+    string StableSheetId,
+    string OoxmlSheetId,
+    string RelationshipId,
+    string PartPath,
+    string Name);
+public sealed record PackageRelationship(
+    string Id,
+    string Type,
+    string PartPath,
+    string? TargetMode);
+public sealed record ParsedRangeReference(
+    string? SheetId,
+    string SheetName,
+    string Range);
+public sealed record ConsecutiveGroup(
+    int First,
+    int Last);

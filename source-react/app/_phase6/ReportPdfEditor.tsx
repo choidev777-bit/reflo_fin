@@ -1,8 +1,13 @@
 "use client";
 
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { Database, Sparkles } from "lucide-react";
+import { ChartNoAxesCombined, Database, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  inferReportChartType,
+  ReportChartPreview,
+} from "./ReportChartPreview";
+import { ReportTablePreview } from "./ReportTablePreview";
 import styles from "./phase6.module.css";
 import type { ReportBlock, ReportPage } from "./types";
 
@@ -40,6 +45,7 @@ function PdfEditorPage({
   activeBlockId,
   onSelectBlock,
   onInspectBlock,
+  onEditChart,
 }: {
   document: PDFDocumentProxy;
   page: ReportPage;
@@ -47,6 +53,7 @@ function PdfEditorPage({
   activeBlockId: string | null;
   onSelectBlock: (blockId: string) => void;
   onInspectBlock: (blockId: string) => void;
+  onEditChart: (blockId: string) => void;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -144,7 +151,7 @@ function PdfEditorPage({
       className={styles.sourcePdfPage}
       ref={shellRef}
       style={{ aspectRatio: `${page.widthPt} / ${page.heightPt}` }}
-      aria-label={`원본 PDF ${page.pageNumber}페이지`}
+      aria-label={`보고서 초안 ${page.pageNumber}페이지`}
     >
       {error ? (
         <div className={styles.pdfPageError} role="alert">
@@ -172,6 +179,18 @@ function PdfEditorPage({
             }
             return regions.map((bbox, regionIndex) => {
               const dataBlock = Boolean(block.dataBinding);
+              const chartBlock = block.dataBinding?.kind === "chart";
+              const chartSnapshot =
+                block.materializedData?.kind === "chart"
+                  ? block.materializedData
+                  : null;
+              const tableSnapshot =
+                block.materializedData?.kind === "table"
+                  ? block.materializedData
+                  : null;
+              const displayedChartType = chartBlock
+                ? inferReportChartType(block)
+                : null;
               const connectionLabel = block.dataBinding
                 ? bindingStatusLabel(block.dataBinding.status)
                 : "";
@@ -182,17 +201,29 @@ function PdfEditorPage({
                 className={styles.pdfEditHotspot}
                 data-active={activeBlockId === block.blockId}
                 data-enabled={editable}
-                data-kind={dataBlock ? "data" : "text"}
+                data-kind={chartBlock ? "chart" : dataBlock ? "data" : "text"}
                 data-status={block.dataBinding?.status ?? "editable"}
+                data-materialized={
+                  chartSnapshot?.status ??
+                  tableSnapshot?.status ??
+                  "not-applicable"
+                }
+                data-chart-changed={Boolean(
+                  block.chartType && chartSnapshot?.status === "ready",
+                )}
                 disabled={!editable}
                 aria-label={
-                  dataBlock
+                  chartBlock
+                    ? `${block.label} ${connectionLabel}, 그래프 형태 변경`
+                    : dataBlock
                     ? `${block.label} 데이터 연결 확인`
                     : `${block.label} AI로 수정`
                 }
                 title={
                   editable
-                    ? dataBlock
+                    ? chartBlock
+                      ? `${block.label} ${connectionLabel} · 그래프 형태 변경`
+                      : dataBlock
                       ? `${block.label} 데이터 연결 확인`
                       : `${block.label} AI로 수정`
                     : "편집 모드를 켜주세요"
@@ -204,14 +235,48 @@ function PdfEditorPage({
                   height: `${((bbox[3] - bbox[1]) / page.heightPt) * 100}%`,
                 }}
                 onClick={() =>
-                  dataBlock
+                  chartBlock
+                    ? onEditChart(block.blockId)
+                    : dataBlock
                     ? onInspectBlock(block.blockId)
                     : onSelectBlock(block.blockId)
                 }
               >
-                <span>
-                  {dataBlock ? <Database size={11} /> : <Sparkles size={11} />}
-                  {dataBlock ? connectionLabel : "AI 편집"}
+                {displayedChartType && chartSnapshot?.status === "ready" && (
+                  <span className={styles.pdfChartReplacement}>
+                    <span className={styles.pdfChartReplacementHeader}>
+                      <strong>{block.label}</strong>
+                      <small>
+                        {block.dataBinding?.sourceLabel ??
+                          block.dataBinding?.sourceAddress ??
+                          "Excel 연결 필요"}
+                      </small>
+                    </span>
+                    <ReportChartPreview
+                      type={displayedChartType}
+                      data={chartSnapshot}
+                    />
+                  </span>
+                )}
+                {tableSnapshot?.status === "ready" && (
+                  <ReportTablePreview
+                    label={block.label}
+                    data={tableSnapshot}
+                  />
+                )}
+                <span className={styles.pdfEditHotspotLabel}>
+                  {chartBlock ? (
+                    <ChartNoAxesCombined size={11} />
+                  ) : dataBlock ? (
+                    <Database size={11} />
+                  ) : (
+                    <Sparkles size={11} />
+                  )}
+                  {chartBlock
+                    ? `${connectionLabel} · 그래프 변경`
+                    : dataBlock
+                      ? connectionLabel
+                      : "AI 편집"}
                 </span>
               </button>
             );
@@ -229,6 +294,7 @@ export function ReportPdfEditor({
   activeBlockId,
   onSelectBlock,
   onInspectBlock,
+  onEditChart,
 }: {
   url: string;
   pages: ReportPage[];
@@ -236,6 +302,7 @@ export function ReportPdfEditor({
   activeBlockId: string | null;
   onSelectBlock: (blockId: string) => void;
   onInspectBlock: (blockId: string) => void;
+  onEditChart: (blockId: string) => void;
 }) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -263,7 +330,7 @@ export function ReportPdfEditor({
       })
       .catch(() => {
         if (!cancelled) {
-          setError("업로드한 원본 PDF를 불러오지 못했습니다.");
+          setError("보고서 초안의 기본 레이아웃을 불러오지 못했습니다.");
         }
       });
 
@@ -276,7 +343,7 @@ export function ReportPdfEditor({
 
   if (error) return <div className={styles.errorBox}>{error}</div>;
   if (!document) {
-    return <div className={styles.pdfEditorLoading}>원본 PDF 불러오는 중…</div>;
+    return <div className={styles.pdfEditorLoading}>보고서 초안 불러오는 중…</div>;
   }
 
   return (
@@ -290,6 +357,7 @@ export function ReportPdfEditor({
           activeBlockId={activeBlockId}
           onSelectBlock={onSelectBlock}
           onInspectBlock={onInspectBlock}
+          onEditChart={onEditChart}
         />
       ))}
     </div>

@@ -1,5 +1,6 @@
 import base64
 import unittest
+from pathlib import Path
 
 import pymupdf
 
@@ -193,6 +194,85 @@ class PdfWorkerRenderTest(unittest.TestCase):
             block for block in page["blocks"] if block["blockId"] in region_block_ids
         ]
         self.assertTrue(all(block["bbox"][0] > 390 for block in region_blocks))
+
+    def test_isc_template_ir_classifies_editable_charts_fixed_visual_and_tables(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "fixtures"
+            / "ISC_4Q25_실적리뷰_하나증권.pdf"
+        )
+        if not fixture.exists():
+            self.skipTest("ISC PDF fixture is not available in this test package.")
+
+        result = inspect_pdf_bytes(fixture.read_bytes())
+        pages = {
+            page["pageNumber"]: page for page in result["templateIr"]["pages"]
+        }
+        chart_slots = {
+            slot["semanticKey"]["metric"]: slot
+            for page in pages.values()
+            for slot in page["slots"]
+            if slot["valueType"] == "chart"
+        }
+        expected_chart_scopes = {
+            "figure_2_chart": "ISC 12MF P/E Band",
+            "figure_3_chart": "ISC 12MF P/B Band",
+            "figure_7_chart": "분기 영업이익 vs 시가총액 추이",
+            "figure_8_chart": "어플리케이션 별 매출 비중 추이",
+            "figure_9_chart": "연간 실적 추이 및 전망",
+            "figure_10_chart": "제품별 매출 추이 및 전망",
+        }
+        self.assertTrue(expected_chart_scopes.keys() <= chart_slots.keys())
+        for metric, scope in expected_chart_scopes.items():
+            self.assertTrue(chart_slots[metric]["required"])
+            self.assertEqual(scope, chart_slots[metric]["semanticKey"]["scope"])
+
+        page_four = pages[4]
+        fixed_visuals = [
+            block
+            for block in page_four["blocks"]
+            if block["role"] == "fixed_design"
+            and str(block.get("generationRule") or "").startswith("도표 6.")
+        ]
+        self.assertEqual(1, len(fixed_visuals))
+        self.assertEqual([], fixed_visuals[0]["slotIds"])
+        self.assertNotIn("figure_6_chart", chart_slots)
+
+        expected_table_metrics = {
+            "income_statement_table",
+            "balance_sheet_table",
+            "investment_indicators_table",
+            "cash_flow_statement_table",
+        }
+        page_five_table_slots = [
+            slot
+            for slot in pages[5]["slots"]
+            if slot["valueType"] == "table"
+        ]
+        self.assertEqual(
+            expected_table_metrics,
+            {
+                slot["semanticKey"]["metric"]
+                for slot in page_five_table_slots
+            },
+        )
+        self.assertTrue(all(slot["required"] for slot in page_five_table_slots))
+        self.assertNotIn(
+            "financial_statements_table",
+            {
+                slot["semanticKey"]["metric"]
+                for slot in page_five_table_slots
+            },
+        )
+        page_five_blocks = [
+            block
+            for block in pages[5]["blocks"]
+            if block["role"] == "table"
+        ]
+        self.assertEqual(4, len(page_five_blocks))
+        self.assertEqual(4, len({tuple(block["bbox"]) for block in page_five_blocks}))
 
 
 if __name__ == "__main__":

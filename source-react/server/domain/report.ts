@@ -107,7 +107,148 @@ export type ReportMappingBinding = {
   sourceLabel: string | null;
   sourceAddress: string | null;
   sourceType: string | null;
+  sourceSheetId?: string | null;
+  sourceSheetName?: string | null;
+  definition?: ReportBindingDefinition | null;
 };
+
+export type ReportChartType = "line" | "bar" | "area" | "combo";
+
+export type ReportRangeSource = {
+  sheetId: string;
+  sheetName: string;
+  address: string;
+  structureFingerprint: string | null;
+};
+
+export type ReportTableBindingDefinition = {
+  kind: "table";
+  source: ReportRangeSource;
+  rowKeyColumn: string;
+  columnHeaderRow: number;
+  expectedRows: number;
+  expectedColumns: number;
+};
+
+export type ReportChartBindingDefinition = {
+  kind: "chart";
+  categories: ReportRangeSource;
+  series: Array<{
+    seriesId: string;
+    label: string | null;
+    source: ReportRangeSource;
+  }>;
+};
+
+export type ReportBindingDefinition =
+  | ReportTableBindingDefinition
+  | ReportChartBindingDefinition;
+
+export type ReportWorkbookCell = {
+  address: string;
+  row: number;
+  column: number;
+  valueType: string;
+  rawValue: string | null;
+  formattedText: string;
+  formula: string | null;
+  numberFormat: string;
+};
+
+export type ReportWorkbookReadModel = {
+  schemaVersion: string;
+  workbookHash: string;
+  sheets: Array<{
+    sheetId: string;
+    name: string;
+    cells: ReportWorkbookCell[];
+  }>;
+};
+
+export type ReportMaterializationContext = {
+  mappingSetResourceVersionId: string;
+  workbookArtifactId: string;
+  workbookVersion: number;
+  readModel: ReportWorkbookReadModel | null;
+};
+
+export type ReportMaterializedCell = {
+  address: string;
+  row: number;
+  column: number;
+  valueType: string;
+  rawValue: string | null;
+  formattedText: string;
+  formula: string | null;
+  numberFormat: string;
+};
+
+export type ReportMaterializationProvenance = {
+  mappingSetResourceVersionId: string;
+  workbookArtifactId: string;
+  workbookVersion: number;
+  workbookHash: string | null;
+  slotId: string;
+  sources: Array<{
+    role: "table" | "category" | "series";
+    seriesId: string | null;
+    label: string | null;
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    structureFingerprint: string | null;
+  }>;
+};
+
+type ReportMaterializationState = {
+  status: "ready" | "blocked";
+  blockerCode: string | null;
+  provenance: ReportMaterializationProvenance;
+};
+
+export type ReportTableSnapshot = ReportMaterializationState & {
+  kind: "table";
+  headerRow: number | null;
+  columns: Array<{
+    column: number;
+    address: string;
+    label: string;
+  }>;
+  headers: ReportMaterializedCell[];
+  rows: Array<{
+    rowNumber: number;
+    rowKey: string | null;
+    cells: ReportMaterializedCell[];
+  }>;
+};
+
+export type ReportChartSnapshot = ReportMaterializationState & {
+  kind: "chart";
+  supportedChartTypes: ReportChartType[];
+  categories: ReportMaterializedCell[];
+  series: Array<{
+    seriesId: string;
+    label: string;
+    values: ReportMaterializedCell[];
+  }>;
+};
+
+export type ReportFixedVisualSnapshot = {
+  kind: "fixed_visual";
+  status: "ready";
+  blockerCode: null;
+  provenance: null;
+};
+
+export type ReportMaterializedData =
+  | ReportTableSnapshot
+  | ReportChartSnapshot
+  | ReportFixedVisualSnapshot;
+
+export type ReportMaterializationsBySlotId = Record<
+  string,
+  ReportTableSnapshot | ReportChartSnapshot
+>;
 
 export type OutlinePage = {
   pageId: string;
@@ -147,6 +288,7 @@ export type ReportBlock = {
   sourceCoverage?: "complete" | "review_required";
   uncoveredSourceObjectIds?: string[];
   dataBinding?: {
+    slotId?: string;
     metric: string;
     kind: "scalar" | "table" | "chart";
     status: "confirmed" | "suggested" | "unmapped" | "invalid";
@@ -154,6 +296,8 @@ export type ReportBlock = {
     sourceAddress: string | null;
     sourceType: string | null;
   } | null;
+  materializedData?: ReportMaterializedData;
+  chartType?: ReportChartType;
   patchStrategy:
     | "fixed"
     | "operator_replace"
@@ -286,6 +430,677 @@ function templateTextRuns(page: ReportTemplatePage): TemplateTextRun[] {
         Number(left.bbox[0] ?? 0) - Number(right.bbox[0] ?? 0) ||
         left.zOrder - right.zOrder,
     );
+}
+
+type ParsedCellRange = {
+  startRow: number;
+  endRow: number;
+  startColumn: number;
+  endColumn: number;
+};
+
+function columnNumber(value: string): number {
+  return [...value.toUpperCase()].reduce(
+    (result, character) => result * 26 + character.charCodeAt(0) - 64,
+    0,
+  );
+}
+
+function columnLabel(value: number): string {
+  let remaining = value;
+  let result = "";
+  while (remaining > 0) {
+    const offset = (remaining - 1) % 26;
+    result = String.fromCharCode(65 + offset) + result;
+    remaining = Math.floor((remaining - 1) / 26);
+  }
+  return result;
+}
+
+function parseCellRange(value: string): ParsedCellRange | null {
+  const normalized = value.replace(/\$/g, "").trim();
+  const match = normalized.match(
+    /^([A-Za-z]{1,3})([1-9]\d*)(?::([A-Za-z]{1,3})([1-9]\d*))?$/,
+  );
+  if (!match) return null;
+  const firstColumn = columnNumber(match[1]);
+  const firstRow = Number(match[2]);
+  const secondColumn = columnNumber(match[3] ?? match[1]);
+  const secondRow = Number(match[4] ?? match[2]);
+  return {
+    startRow: Math.min(firstRow, secondRow),
+    endRow: Math.max(firstRow, secondRow),
+    startColumn: Math.min(firstColumn, secondColumn),
+    endColumn: Math.max(firstColumn, secondColumn),
+  };
+}
+
+function materializedCell(
+  cell: ReportWorkbookCell | undefined,
+  row: number,
+  column: number,
+): ReportMaterializedCell {
+  return cell
+    ? {
+        address: cell.address,
+        row: cell.row,
+        column: cell.column,
+        valueType: cell.valueType,
+        rawValue: cell.rawValue,
+        formattedText: cell.formattedText,
+        formula: cell.formula,
+        numberFormat: cell.numberFormat,
+      }
+    : {
+        address: `${columnLabel(column)}${row}`,
+        row,
+        column,
+        valueType: "blank",
+        rawValue: null,
+        formattedText: "",
+        formula: null,
+        numberFormat: "",
+      };
+}
+
+function bindingSources(
+  binding: ReportMappingBinding,
+): ReportMaterializationProvenance["sources"] {
+  const definition = binding.definition;
+  if (definition?.kind === "table") {
+    return [
+      {
+        role: "table",
+        seriesId: null,
+        label: binding.sourceLabel,
+        sheetId: definition.source.sheetId,
+        sheetName: definition.source.sheetName,
+        address: definition.source.address,
+        structureFingerprint: definition.source.structureFingerprint,
+      },
+    ];
+  }
+  if (definition?.kind === "chart") {
+    return [
+      {
+        role: "category",
+        seriesId: null,
+        label: null,
+        sheetId: definition.categories.sheetId,
+        sheetName: definition.categories.sheetName,
+        address: definition.categories.address,
+        structureFingerprint: definition.categories.structureFingerprint,
+      },
+      ...definition.series.map((series) => ({
+        role: "series" as const,
+        seriesId: series.seriesId,
+        label: series.label,
+        sheetId: series.source.sheetId,
+        sheetName: series.source.sheetName,
+        address: series.source.address,
+        structureFingerprint: series.source.structureFingerprint,
+      })),
+    ];
+  }
+  return [];
+}
+
+function materializationProvenance(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+): ReportMaterializationProvenance {
+  return {
+    mappingSetResourceVersionId: context.mappingSetResourceVersionId,
+    workbookArtifactId: context.workbookArtifactId,
+    workbookVersion: context.workbookVersion,
+    workbookHash: context.readModel?.workbookHash ?? null,
+    slotId: binding.slotId,
+    sources: bindingSources(binding),
+  };
+}
+
+function blockedTableSnapshot(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+  blockerCode: string,
+): ReportTableSnapshot {
+  return {
+    kind: "table",
+    status: "blocked",
+    blockerCode,
+    provenance: materializationProvenance(binding, context),
+    headerRow: null,
+    columns: [],
+    headers: [],
+    rows: [],
+  };
+}
+
+function blockedChartSnapshot(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+  blockerCode: string,
+): ReportChartSnapshot {
+  return {
+    kind: "chart",
+    status: "blocked",
+    blockerCode,
+    provenance: materializationProvenance(binding, context),
+    supportedChartTypes: [],
+    categories: [],
+    series: [],
+  };
+}
+
+function readRange(
+  source: ReportRangeSource,
+  context: ReportMaterializationContext,
+): {
+  range: ParsedCellRange;
+  cells: ReportMaterializedCell[];
+} | null {
+  const range = parseCellRange(source.address);
+  if (!range || !context.readModel) return null;
+  const sheet = context.readModel.sheets.find(
+    (item) => item.sheetId === source.sheetId,
+  );
+  if (!sheet) return null;
+  const cellsByCoordinate = new Map(
+    sheet.cells.map((cell) => [`${cell.row}:${cell.column}`, cell]),
+  );
+  const cells: ReportMaterializedCell[] = [];
+  for (let row = range.startRow; row <= range.endRow; row += 1) {
+    for (
+      let column = range.startColumn;
+      column <= range.endColumn;
+      column += 1
+    ) {
+      cells.push(
+        materializedCell(cellsByCoordinate.get(`${row}:${column}`), row, column),
+      );
+    }
+  }
+  return { range, cells };
+}
+
+function oneDimensionalRange(
+  source: ReportRangeSource,
+  context: ReportMaterializationContext,
+): ReportMaterializedCell[] | null {
+  const resolved = readRange(source, context);
+  if (
+    !resolved ||
+    (resolved.range.startRow !== resolved.range.endRow &&
+      resolved.range.startColumn !== resolved.range.endColumn)
+  ) {
+    return null;
+  }
+  return resolved.cells;
+}
+
+function materializeTableBinding(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+): ReportTableSnapshot {
+  if (binding.status !== "confirmed") {
+    return blockedTableSnapshot(binding, context, "BINDING_NOT_CONFIRMED");
+  }
+  if (binding.definition?.kind !== "table") {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_RANGE_BINDING_REQUIRED",
+    );
+  }
+  if (!context.readModel) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "APPROVED_WORKBOOK_READ_MODEL_MISSING",
+    );
+  }
+  const resolved = readRange(binding.definition.source, context);
+  if (!resolved) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_SOURCE_RANGE_UNAVAILABLE",
+    );
+  }
+  if (
+    resolved.cells.every(
+      (cell) => cell.rawValue === null && cell.formattedText === "",
+    )
+  ) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_SOURCE_RANGE_EMPTY",
+    );
+  }
+  const rowCount = resolved.range.endRow - resolved.range.startRow + 1;
+  const columnCount =
+    resolved.range.endColumn - resolved.range.startColumn + 1;
+  if (
+    rowCount !== binding.definition.expectedRows ||
+    columnCount !== binding.definition.expectedColumns
+  ) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_TOPOLOGY_MISMATCH",
+    );
+  }
+  const headerRow = binding.definition.columnHeaderRow;
+  const rowKeyColumn = columnNumber(binding.definition.rowKeyColumn);
+  if (
+    headerRow < resolved.range.startRow ||
+    headerRow > resolved.range.endRow ||
+    rowKeyColumn < resolved.range.startColumn ||
+    rowKeyColumn > resolved.range.endColumn
+  ) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_BINDING_METADATA_INVALID",
+    );
+  }
+  const cellsByRow = new Map<number, ReportMaterializedCell[]>();
+  for (const cell of resolved.cells) {
+    const row = cellsByRow.get(cell.row) ?? [];
+    row.push(cell);
+    cellsByRow.set(cell.row, row);
+  }
+  const headers = cellsByRow.get(headerRow) ?? [];
+  if (
+    headers.every(
+      (cell) => cell.rawValue === null && cell.formattedText === "",
+    )
+  ) {
+    return blockedTableSnapshot(
+      binding,
+      context,
+      "TABLE_HEADER_ROW_EMPTY",
+    );
+  }
+  const rows = [...cellsByRow.entries()]
+    .filter(([row]) => row !== headerRow)
+    .sort(([left], [right]) => left - right)
+    .map(([rowNumber, cells]) => {
+      const keyCell = cells.find((cell) => cell.column === rowKeyColumn);
+      return {
+        rowNumber,
+        rowKey:
+          keyCell?.formattedText ||
+          keyCell?.rawValue ||
+          null,
+        cells,
+      };
+    });
+  return {
+    kind: "table",
+    status: "ready",
+    blockerCode: null,
+    provenance: materializationProvenance(binding, context),
+    headerRow,
+    columns: headers.map((cell) => ({
+      column: cell.column,
+      address: columnLabel(cell.column),
+      label: cell.formattedText || cell.rawValue || columnLabel(cell.column),
+    })),
+    headers,
+    rows,
+  };
+}
+
+function materializeChartBinding(
+  binding: ReportMappingBinding,
+  context: ReportMaterializationContext,
+): ReportChartSnapshot {
+  if (binding.status !== "confirmed") {
+    return blockedChartSnapshot(binding, context, "BINDING_NOT_CONFIRMED");
+  }
+  if (binding.definition?.kind !== "chart") {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "CHART_SERIES_BINDING_REQUIRED",
+    );
+  }
+  if (!context.readModel) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "APPROVED_WORKBOOK_READ_MODEL_MISSING",
+    );
+  }
+  const categories = oneDimensionalRange(
+    binding.definition.categories,
+    context,
+  );
+  if (
+    !categories ||
+    categories.length === 0 ||
+    categories.every(
+      (cell) => cell.rawValue === null && cell.formattedText === "",
+    )
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "CHART_CATEGORY_RANGE_INVALID",
+    );
+  }
+  const series = binding.definition.series.map((item) => ({
+    seriesId: item.seriesId,
+    label: item.label ?? item.seriesId,
+    values: oneDimensionalRange(item.source, context),
+  }));
+  if (
+    series.length === 0 ||
+    series.some(
+      (item) => {
+        if (!item.values || item.values.length !== categories.length) {
+          return true;
+        }
+        const nonBlank = item.values.filter(
+          (cell) => cell.rawValue !== null && cell.rawValue !== "",
+        );
+        return (
+          nonBlank.length === 0 ||
+          nonBlank.some(
+            (cell) => !Number.isFinite(Number(cell.rawValue)),
+          )
+        );
+      },
+    )
+  ) {
+    return blockedChartSnapshot(
+      binding,
+      context,
+      "CHART_SERIES_RANGE_INVALID",
+    );
+  }
+  return {
+    kind: "chart",
+    status: "ready",
+    blockerCode: null,
+    provenance: materializationProvenance(binding, context),
+    supportedChartTypes: supportedChartTypesForBinding(
+      binding,
+      series.length,
+    ),
+    categories,
+    series: series.map((item) => ({
+      seriesId: item.seriesId,
+      label: item.label,
+      values: item.values!,
+    })),
+  };
+}
+
+function supportedChartTypesForBinding(
+  binding: ReportMappingBinding,
+  seriesCount: number,
+): ReportChartType[] {
+  const figureNumber = binding.metric
+    .toLowerCase()
+    .match(/figure[_\s-]*(\d+)[_\s-]*chart/)?.[1];
+
+  if (figureNumber === "2" || figureNumber === "3") {
+    return ["line", "area"];
+  }
+  if (figureNumber === "7" || figureNumber === "9") {
+    return seriesCount > 1 ? ["combo", "line"] : ["line"];
+  }
+  if (figureNumber === "8" || figureNumber === "10") {
+    return ["bar", "line", "area"];
+  }
+  return seriesCount > 1
+    ? ["line", "bar", "area", "combo"]
+    : ["line", "bar", "area"];
+}
+
+export function materializeReportBindings(
+  bindings: ReportMappingBinding[],
+  context: ReportMaterializationContext,
+): ReportMaterializationsBySlotId {
+  const result: ReportMaterializationsBySlotId = {};
+  for (const binding of bindings) {
+    if (binding.kind === "table") {
+      result[binding.slotId] = materializeTableBinding(binding, context);
+    } else if (binding.kind === "chart") {
+      result[binding.slotId] = materializeChartBinding(binding, context);
+    }
+  }
+  return result;
+}
+
+type DetectedChartRegion = {
+  figureNumber: number;
+  title: string;
+  bbox: PdfRect;
+  objectIds: string[];
+};
+
+function rectArea(rect: PdfRect): number {
+  return (rect[2] - rect[0]) * (rect[3] - rect[1]);
+}
+
+function rectCenterX(rect: PdfRect): number {
+  return (rect[0] + rect[2]) / 2;
+}
+
+function rectsIntersect(left: PdfRect, right: PdfRect): boolean {
+  return !(
+    left[2] <= right[0] ||
+    left[0] >= right[2] ||
+    left[3] <= right[1] ||
+    left[1] >= right[3]
+  );
+}
+
+function detectFigureCharts(
+  page: ReportTemplatePage,
+  pageWidth: number,
+  pageHeight: number,
+): DetectedChartRegion[] {
+  const runs = templateTextRuns(page);
+  const headings = runs
+    .map((run) => {
+      const match = run.text.match(
+        /^(?:도\s*표|그\s*림|figure|chart)\s*(\d+)\s*[.:．]?\s*(.*)$/i,
+      );
+      const bbox = pdfRect(run.bbox);
+      if (!match || !bbox) return null;
+      return {
+        ...run,
+        bbox,
+        figureNumber: Number(match[1]),
+        title: run.text.replace(/\s+/g, " ").trim(),
+      };
+    })
+    .filter(
+      (
+        heading,
+      ): heading is TemplateTextRun & {
+        bbox: PdfRect;
+        figureNumber: number;
+        title: string;
+      } => Boolean(heading && Number.isInteger(heading.figureNumber)),
+    );
+  if (headings.length === 0) return [];
+
+  const paths = (page.objects ?? [])
+    .filter((object) => object.type === "path")
+    .map((object) => {
+      const bbox = pdfRect(object.bbox);
+      return bbox ? { objectId: object.objectId, bbox } : null;
+    })
+    .filter(
+      (
+        path,
+      ): path is {
+        objectId: string;
+        bbox: PdfRect;
+      } => Boolean(path),
+    );
+
+  return headings.flatMap((heading) => {
+    const nextHeadingRow = headings
+      .filter((candidate) => candidate.bbox[1] > heading.bbox[1] + 16)
+      .sort((left, right) => left.bbox[1] - right.bbox[1])[0];
+    const verticalLimit = Math.min(
+      pageHeight - 18,
+      nextHeadingRow?.bbox[1] ?? heading.bbox[1] + pageHeight * 0.3,
+    );
+    const rowHeadings = headings.filter(
+      (candidate) => Math.abs(candidate.bbox[1] - heading.bbox[1]) <= 4,
+    );
+    const orderedRowHeadings = [...rowHeadings].sort(
+      (left, right) => rectCenterX(left.bbox) - rectCenterX(right.bbox),
+    );
+    const headingColumnIndex = orderedRowHeadings.findIndex(
+      (candidate) => candidate.objectId === heading.objectId,
+    );
+    const columnLeft =
+      headingColumnIndex > 0
+        ? (rectCenterX(orderedRowHeadings[headingColumnIndex - 1].bbox) +
+            rectCenterX(heading.bbox)) /
+          2
+        : 36;
+    const columnRight =
+      headingColumnIndex >= 0 &&
+      headingColumnIndex < orderedRowHeadings.length - 1
+        ? (rectCenterX(heading.bbox) +
+            rectCenterX(orderedRowHeadings[headingColumnIndex + 1].bbox)) /
+          2
+        : pageWidth - 36;
+    const belongsToHeadingColumn = (rect: PdfRect) => {
+      const center = rectCenterX(rect);
+      return center >= columnLeft - 8 && center <= columnRight + 8;
+    };
+    const eligiblePaths = paths.filter((path) => {
+      const width = path.bbox[2] - path.bbox[0];
+      const height = path.bbox[3] - path.bbox[1];
+      if (
+        width < Math.min(100, pageWidth * 0.18) ||
+        height < 45 ||
+        path.bbox[1] < heading.bbox[3] - 2 ||
+        path.bbox[3] > verticalLimit + 8
+      ) {
+        return false;
+      }
+      const pathCenter = rectCenterX(path.bbox);
+      const nearestHeading = [...rowHeadings].sort(
+        (left, right) =>
+          Math.abs(rectCenterX(left.bbox) - pathCenter) -
+          Math.abs(rectCenterX(right.bbox) - pathCenter),
+      )[0];
+      return nearestHeading?.objectId === heading.objectId;
+    });
+    const anchor = [...eligiblePaths].sort(
+      (left, right) => rectArea(right.bbox) - rectArea(left.bbox),
+    )[0];
+
+    const sourceRun = runs
+      .filter((run) => {
+        const bbox = pdfRect(run.bbox);
+        return (
+          bbox &&
+          /^자료\s*[:：]/.test(run.text) &&
+          bbox[1] >= (anchor?.bbox[3] ?? heading.bbox[3] + 60) - 3 &&
+          bbox[1] <=
+            Math.min(
+              verticalLimit + 8,
+              (anchor?.bbox[3] ?? verticalLimit) + 32,
+            ) &&
+          (anchor
+            ? rectCenterX(bbox) >= anchor.bbox[0] - 20 &&
+              rectCenterX(bbox) <= anchor.bbox[2] + 20
+            : belongsToHeadingColumn(bbox))
+        );
+      })
+      .sort(
+        (left, right) =>
+          Number(left.bbox[1] ?? 0) - Number(right.bbox[1] ?? 0),
+      )[0];
+    const sourceBbox = pdfRect(sourceRun?.bbox);
+    if (!anchor) {
+      if (!sourceBbox || sourceBbox[1] - heading.bbox[3] < 80) return [];
+      const bodyRuns = runs.filter((run) => {
+        if (
+          run.objectId === heading.objectId ||
+          run.objectId === sourceRun?.objectId
+        ) {
+          return false;
+        }
+        const bbox = pdfRect(run.bbox);
+        return (
+          bbox &&
+          bbox[1] >= heading.bbox[3] - 2 &&
+          bbox[3] <= sourceBbox[1] + 2 &&
+          belongsToHeadingColumn(bbox)
+        );
+      });
+      const bodyCharacterCount = bodyRuns.reduce(
+        (count, run) => count + run.text.replace(/\s+/g, "").length,
+        0,
+      );
+      if (bodyRuns.length > 12 || bodyCharacterCount > 240) return [];
+
+      const bbox: PdfRect = [
+        Math.max(0, Math.min(heading.bbox[0], sourceBbox[0], columnLeft) - 4),
+        Math.max(0, heading.bbox[1] - 3),
+        Math.min(
+          pageWidth,
+          Math.max(heading.bbox[2], sourceBbox[2], columnRight) + 4,
+        ),
+        Math.min(pageHeight, sourceBbox[3] + 3),
+      ];
+      const objectIds = (page.objects ?? [])
+        .filter((object) => {
+          const objectBbox = pdfRect(object.bbox);
+          return objectBbox ? rectsIntersect(objectBbox, bbox) : false;
+        })
+        .map((object) => object.objectId);
+      return [
+        {
+          figureNumber: heading.figureNumber,
+          title: heading.title,
+          bbox,
+          objectIds,
+        },
+      ];
+    }
+
+    const combined = unionRects([
+      heading.bbox,
+      anchor.bbox,
+      sourceBbox ?? undefined,
+    ]);
+    if (!combined) return [];
+    const bbox: PdfRect = [
+      Math.max(0, combined[0] - 4),
+      Math.max(0, combined[1] - 3),
+      Math.min(pageWidth, combined[2] + 4),
+      Math.min(pageHeight, combined[3] + 3),
+    ];
+    const objectIds = (page.objects ?? [])
+      .filter((object) => {
+        const objectBbox = pdfRect(object.bbox);
+        return objectBbox ? rectsIntersect(objectBbox, bbox) : false;
+      })
+      .map((object) => object.objectId);
+    return [
+      {
+        figureNumber: heading.figureNumber,
+        title: heading.title,
+        bbox,
+        objectIds,
+      },
+    ];
+  });
 }
 
 function isMeaningfulText(value: string): boolean {
@@ -583,6 +1398,10 @@ export function buildInitialOutline(
             : kind === "차트"
               ? ++chartIndex
               : ++scalarIndex;
+        const metricDisplay =
+          kind !== "수치" && slot.semanticKey?.scope?.trim()
+            ? slot.semanticKey.scope.trim()
+            : metricLabel(metric);
         const binding = seed.mappingBindings?.find(
           (item) =>
             item.slotId === slot.slotId ||
@@ -599,7 +1418,7 @@ export function buildInitialOutline(
           blockId: slot.blockId,
           kind,
           label: `${kind}${localIndex}`,
-          metric: metricLabel(metric),
+          metric: metricDisplay,
           required: slot.required,
           bindingStatus: binding
             ? binding.status === "confirmed"
@@ -928,6 +1747,7 @@ export function buildReportDocument(input: {
   currentPrice: string;
   forwardEps: string;
   draftTextByBlockId?: Record<string, string>;
+  materializationsBySlotId?: ReportMaterializationsBySlotId;
 }): ReportDocument {
   const outline = normalizeOutlineContent(input.outline);
   return {
@@ -1037,16 +1857,28 @@ export function buildReportDocument(input: {
         });
       }
       for (const slot of page.visualSlots) {
+        const materializedData =
+          input.materializationsBySlotId?.[slot.slotId];
+        const materializationReady =
+          materializedData?.status === "ready";
         blocks.push({
           blockId: slot.blockId,
           pageId: page.pageId,
           role: "visual",
           label: `${slot.label} · ${slot.metric}`,
-          text: `${slot.metric} · Excel 연결 완료`,
+          text:
+            slot.bindingStatus !== "confirmed"
+              ? `${slot.metric} · 연결 필요`
+              : slot.kind !== "수치" && !materializationReady
+                ? `${slot.metric} · 데이터 반영 준비 필요`
+                : `${slot.metric} · 입력값 반영 완료`,
           editable: false,
           revision: 1,
           evidenceIds: page.evidenceIds,
-          numericAuthority: "mapping_set",
+          numericAuthority:
+            slot.bindingStatus === "confirmed"
+              ? "mapping_set"
+              : "mapping_required",
           templateBlockId: slot.blockId,
           bbox: null,
           regions: [],
@@ -1054,6 +1886,7 @@ export function buildReportDocument(input: {
           sourceCoverage: "complete",
           uncoveredSourceObjectIds: [],
           dataBinding: {
+            slotId: slot.slotId,
             metric: slot.metric,
             kind:
               slot.kind === "표"
@@ -1066,6 +1899,7 @@ export function buildReportDocument(input: {
             sourceAddress: slot.sourceAddress ?? null,
             sourceType: slot.sourceType ?? null,
           },
+          materializedData,
           patchStrategy: "fixed",
         });
       }
@@ -1108,6 +1942,7 @@ export function attachTemplateGeometry(
   document: ReportDocument,
   templatePages: ReportTemplatePage[],
   mappingBindings: ReportMappingBinding[] = [],
+  materializationsBySlotId: ReportMaterializationsBySlotId = {},
 ): ReportDocument {
   const documentPagesByNumber = new Map(
     document.pages.map((page) => [page.pageNumber, page]),
@@ -1216,7 +2051,7 @@ export function attachTemplateGeometry(
       );
       let subtitleIndex = 0;
       let bodyIndex = 0;
-      const hydratedBlocks = page.blocks.map((block) => {
+      const hydratedBlocks: ReportBlock[] = page.blocks.map((block) => {
         let label = block.label;
         let text = block.text;
         let targetBbox = pdfRect(block.bbox ?? undefined);
@@ -1299,6 +2134,11 @@ export function attachTemplateGeometry(
           sourceCoverage,
           uncoveredSourceObjectIds,
           dataBinding: block.dataBinding ?? null,
+          materializedData:
+            block.materializedData ??
+            (block.dataBinding?.slotId
+              ? materializationsBySlotId[block.dataBinding.slotId]
+              : undefined),
           patchStrategy: targetBbox ? patchStrategy : "fixed",
         };
       });
@@ -1346,10 +2186,11 @@ export function attachTemplateGeometry(
             : slot.valueType === "chart"
               ? "chart"
               : "scalar";
+        const displayLabel =
+          kind !== "scalar" && slot.semanticKey?.scope?.trim()
+            ? slot.semanticKey.scope.trim()
+            : metricLabel(metric);
         const blockId = `${page.pageId}.data.${slot.slotId}`;
-        if (hydratedBlocks.some((block) => block.blockId === blockId)) {
-          continue;
-        }
         const binding = mappingBindings.find(
           (item) =>
             item.slotId === slot.slotId ||
@@ -1358,15 +2199,51 @@ export function attachTemplateGeometry(
         const templateBlock = templateBlocks.get(slot.blockId);
         const bbox = pdfRect(templateBlock?.bbox);
         const status = binding?.status ?? "unmapped";
+        const materializedData = materializationsBySlotId[slot.slotId];
+        const existingSlotBlock = hydratedBlocks.find(
+          (block) =>
+            block.blockId === blockId ||
+            block.dataBinding?.slotId === slot.slotId,
+        );
+        if (existingSlotBlock) {
+          if (kind !== "scalar" && slot.semanticKey?.scope?.trim()) {
+            existingSlotBlock.label = displayLabel;
+          }
+          existingSlotBlock.dataBinding = {
+            slotId: slot.slotId,
+            metric,
+            kind,
+            status,
+            sourceLabel: binding?.sourceLabel ?? null,
+            sourceAddress: binding?.sourceAddress ?? null,
+            sourceType: binding?.sourceType ?? null,
+          };
+          existingSlotBlock.materializedData ??=
+            materializedData;
+          existingSlotBlock.numericAuthority =
+            status === "confirmed" ? "mapping_set" : "mapping_required";
+          if (existingSlotBlock.revision === 1) {
+            existingSlotBlock.text =
+              status !== "confirmed"
+                ? `${displayLabel} · 연결 필요`
+                : kind !== "scalar" &&
+                    existingSlotBlock.materializedData?.status !== "ready"
+                  ? `${displayLabel} · 데이터 반영 준비 필요`
+                  : `${displayLabel} · 입력값 반영 완료`;
+          }
+          continue;
+        }
         hydratedBlocks.push({
           blockId,
           pageId: page.pageId,
           role: kind === "scalar" ? "numeric" : "visual",
-          label: metricLabel(metric),
+          label: displayLabel,
           text:
-            status === "confirmed"
-              ? `${metricLabel(metric)} · ${binding?.sourceLabel ?? binding?.sourceAddress ?? "연결 완료"}`
-              : `${metricLabel(metric)} · 연결 필요`,
+            status !== "confirmed"
+              ? `${displayLabel} · 연결 필요`
+              : kind !== "scalar" && materializedData?.status !== "ready"
+                ? `${displayLabel} · 데이터 반영 준비 필요`
+                : `${displayLabel} · 입력값 반영 완료`,
           editable: false,
           revision: 1,
           evidenceIds: [],
@@ -1380,6 +2257,7 @@ export function attachTemplateGeometry(
           sourceCoverage: "complete",
           uncoveredSourceObjectIds: [],
           dataBinding: {
+            slotId: slot.slotId,
             metric,
             kind,
             status,
@@ -1387,6 +2265,121 @@ export function attachTemplateGeometry(
             sourceAddress: binding?.sourceAddress ?? null,
             sourceType: binding?.sourceType ?? null,
           },
+          materializedData,
+          patchStrategy: "fixed",
+        });
+      }
+
+      const normalizeMatchValue = (value: string | null | undefined) =>
+        (value ?? "").toLowerCase().replace(/[^0-9a-z가-힣]/g, "");
+      for (const chart of detectFigureCharts(
+        template,
+        page.widthPt,
+        page.heightPt,
+      )) {
+        const normalizedChartTitle = normalizeMatchValue(chart.title);
+        const fixedVisual =
+          /(사업개요|시너지효과|조직도|프로세스|개념도|구조도|businessoverview|synergy)/.test(
+            normalizedChartTitle,
+          );
+        if (fixedVisual) {
+          for (let index = hydratedBlocks.length - 1; index >= 0; index -= 1) {
+            const block = hydratedBlocks[index];
+            if (
+              block.dataBinding?.kind === "chart" &&
+              (block.dataBinding.metric ===
+                `figure_${chart.figureNumber}_chart` ||
+                block.templateBlockId ===
+                  `${page.pageId}.detected-chart.${chart.figureNumber}`)
+            ) {
+              hydratedBlocks.splice(index, 1);
+            }
+          }
+          const blockId = `${page.pageId}.fixed-visual.figure-${chart.figureNumber}`;
+          if (!hydratedBlocks.some((block) => block.blockId === blockId)) {
+            hydratedBlocks.push({
+              blockId,
+              pageId: page.pageId,
+              role: "fixed",
+              label: chart.title,
+              text: chart.title,
+              editable: false,
+              revision: 1,
+              evidenceIds: [],
+              numericAuthority: null,
+              templateBlockId: `${page.pageId}.fixed-visual.${chart.figureNumber}`,
+              bbox: chart.bbox,
+              regions: [chart.bbox],
+              sourceObjectIds: chart.objectIds,
+              sourceCoverage: "complete",
+              uncoveredSourceObjectIds: [],
+              dataBinding: null,
+              materializedData: {
+                kind: "fixed_visual",
+                status: "ready",
+                blockerCode: null,
+                provenance: null,
+              },
+              patchStrategy: "fixed",
+            });
+          }
+          continue;
+        }
+        const overlapsExistingChart = hydratedBlocks.some(
+          (block) =>
+            block.dataBinding?.kind === "chart" &&
+            block.bbox &&
+            rectsIntersect(block.bbox, chart.bbox),
+        );
+        if (overlapsExistingChart) continue;
+
+        const figureToken = `도표${chart.figureNumber}`;
+        const binding = mappingBindings.find((item) => {
+          if (item.kind !== "chart") return false;
+          const source = normalizeMatchValue(
+            `${item.sourceLabel ?? ""} ${item.sourceAddress ?? ""}`,
+          );
+          return (
+            item.metric === `figure_${chart.figureNumber}_chart` ||
+            source.includes(figureToken)
+          );
+        });
+        const status = binding?.status ?? "unmapped";
+        const materializedData = binding
+          ? materializationsBySlotId[binding.slotId]
+          : undefined;
+        hydratedBlocks.push({
+          blockId: `${page.pageId}.chart.figure-${chart.figureNumber}`,
+          pageId: page.pageId,
+          role: "visual",
+          label: chart.title,
+          text:
+            status !== "confirmed"
+              ? `${chart.title} · 연결 필요`
+              : materializedData?.status !== "ready"
+                ? `${chart.title} · 데이터 반영 준비 필요`
+                : `${chart.title} · 입력값 반영 완료`,
+          editable: false,
+          revision: 1,
+          evidenceIds: [],
+          numericAuthority:
+            status === "confirmed" ? "mapping_set" : "mapping_required",
+          templateBlockId: `${page.pageId}.detected-chart.${chart.figureNumber}`,
+          bbox: chart.bbox,
+          regions: [chart.bbox],
+          sourceObjectIds: chart.objectIds,
+          sourceCoverage: "complete",
+          uncoveredSourceObjectIds: [],
+          dataBinding: {
+            slotId: binding?.slotId,
+            metric: `figure_${chart.figureNumber}_chart`,
+            kind: "chart",
+            status,
+            sourceLabel: binding?.sourceLabel ?? null,
+            sourceAddress: binding?.sourceAddress ?? null,
+            sourceType: binding?.sourceType ?? null,
+          },
+          materializedData,
           patchStrategy: "fixed",
         });
       }
@@ -1400,22 +2393,47 @@ export function attachTemplateGeometry(
 
 export function applyReportOperations(
   document: ReportDocument,
-  operations: Array<{
-    type: "replace_text" | "replace_block_text";
-    blockId: string;
-    baseBlockRevision: number;
-    text: string;
-  }>,
+  operations: Array<
+    | {
+        type: "replace_text" | "replace_block_text";
+        blockId: string;
+        baseBlockRevision: number;
+        text: string;
+      }
+    | {
+        type: "replace_chart_type";
+        blockId: string;
+        baseBlockRevision: number;
+        chartType: ReportChartType;
+      }
+  >,
 ): ReportDocument {
   const next = structuredClone(document);
   for (const operation of operations) {
     const block = next.pages
       .flatMap((page) => page.blocks)
       .find((item) => item.blockId === operation.blockId);
-    if (!block || !block.editable) throw new Error("INVALID_REPORT_OPERATION");
+    if (!block) throw new Error("INVALID_REPORT_OPERATION");
     if (block.revision !== operation.baseBlockRevision) {
       throw new Error("REPORT_BLOCK_CONFLICT");
     }
+    if (operation.type === "replace_chart_type") {
+      if (
+        block.dataBinding?.kind !== "chart" ||
+        block.dataBinding.status !== "confirmed" ||
+        block.materializedData?.kind !== "chart" ||
+        block.materializedData.status !== "ready" ||
+        !block.materializedData.supportedChartTypes.includes(
+          operation.chartType,
+        )
+      ) {
+        throw new Error("INVALID_REPORT_OPERATION");
+      }
+      block.chartType = operation.chartType;
+      block.revision += 1;
+      continue;
+    }
+    if (!block.editable) throw new Error("INVALID_REPORT_OPERATION");
     const text = operation.text.trim();
     if (!text || text.length > 2_000) throw new Error("BLOCK_OVERFLOW");
     block.text = text;
@@ -1480,6 +2498,33 @@ export function validateReportDocument(input: {
           code: "SOURCE_TEXT_COVERAGE_INCOMPLETE",
           severity: "blocking",
           message: `${block.label}의 원문 일부가 편집 영역에 포함되지 않았습니다.`,
+          pageId: page.pageId,
+          blockId: block.blockId,
+        });
+      }
+      if (
+        (block.dataBinding?.kind === "table" ||
+          block.dataBinding?.kind === "chart") &&
+        block.dataBinding.status !== "confirmed"
+      ) {
+        issues.push({
+          code: "REPORT_DATA_BINDING_NOT_CONFIRMED",
+          severity: "blocking",
+          message: `${block.label}의 Excel 연결을 다시 확인해주세요.`,
+          pageId: page.pageId,
+          blockId: block.blockId,
+        });
+      } else if (
+        (block.dataBinding?.kind === "table" ||
+          block.dataBinding?.kind === "chart") &&
+        (!block.materializedData ||
+          block.materializedData.kind !== block.dataBinding.kind ||
+          block.materializedData.status !== "ready")
+      ) {
+        issues.push({
+          code: "REPORT_DATA_MATERIALIZATION_INCOMPLETE",
+          severity: "blocking",
+          message: `${block.label}에 승인된 Excel 입력값이 반영되지 않았습니다.`,
           pageId: page.pageId,
           blockId: block.blockId,
         });
