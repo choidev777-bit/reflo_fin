@@ -45,7 +45,10 @@ import {
   recordLateWorkflowJobResult,
 } from "../services/source-snapshot-service";
 
-export type FileRole = "previous_report_pdf" | "analysis_workbook";
+export type FileRole =
+  | "previous_report_pdf"
+  | "analysis_workbook"
+  | "current_ir_pdf";
 export type JobStatus =
   | "queued"
   | "running"
@@ -163,6 +166,11 @@ const ROLE_CONFIG: Record<
     maxSizeBytes: 50 * 1024 * 1024,
     extension: ".pdf",
   },
+  current_ir_pdf: {
+    mediaType: "application/pdf",
+    maxSizeBytes: 50 * 1024 * 1024,
+    extension: ".pdf",
+  },
   analysis_workbook: {
     mediaType:
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -263,7 +271,8 @@ function normalizeFileRequest(input: {
 } {
   if (
     input.role !== "previous_report_pdf" &&
-    input.role !== "analysis_workbook"
+    input.role !== "analysis_workbook" &&
+    input.role !== "current_ir_pdf"
   ) {
     throw new ApiError(400, "INVALID_FILE_TYPE", "지원하지 않는 파일 역할입니다.");
   }
@@ -282,7 +291,7 @@ function normalizeFileRequest(input: {
     throw new ApiError(
       400,
       "INVALID_FILE_TYPE",
-      role === "previous_report_pdf"
+      role !== "analysis_workbook"
         ? "PDF 파일만 업로드할 수 있습니다."
         : "XLSX 파일만 업로드할 수 있습니다.",
     );
@@ -1797,7 +1806,7 @@ export async function getFilesWorkspace(
         const current = fileSummary(latest.get(role));
         return {
           role,
-          required: true,
+          required: role !== "current_ir_pdf",
           status:
             current?.status === "accepted"
               ? "ready"
@@ -1872,6 +1881,7 @@ export async function createFileInspection(input: {
   idempotencyKey: string | null;
   pdfFileVersionId: unknown;
   workbookFileVersionId: unknown;
+  currentIrFileVersionId?: unknown;
 }): Promise<IdempotentResult> {
   const key = validateIdempotencyKey(input.idempotencyKey);
   const pdfFileVersionId = validateUuid(input.pdfFileVersionId, "pdfFileVersionId");
@@ -1879,7 +1889,17 @@ export async function createFileInspection(input: {
     input.workbookFileVersionId,
     "workbookFileVersionId",
   );
-  const requestHash = contentHash({ pdfFileVersionId, workbookFileVersionId });
+  const currentIrFileVersionId =
+    input.currentIrFileVersionId === null ||
+    input.currentIrFileVersionId === undefined ||
+    input.currentIrFileVersionId === ""
+      ? null
+      : validateUuid(input.currentIrFileVersionId, "currentIrFileVersionId");
+  const requestHash = contentHash({
+    pdfFileVersionId,
+    workbookFileVersionId,
+    currentIrFileVersionId,
+  });
   return withTransaction(async (client) => {
     const replay = await idempotentReplay(client, {
       userId: input.userId,
@@ -1937,6 +1957,14 @@ export async function createFileInspection(input: {
       workbookFileVersionId,
       "analysis_workbook",
     );
+    const currentIr = currentIrFileVersionId
+      ? await acceptedFile(
+          client,
+          input.projectId,
+          currentIrFileVersionId,
+          "current_ir_pdf",
+        )
+      : null;
     const active = await client.query(
       `SELECT 1 FROM workflow_job
        WHERE project_id = $1 AND job_type = 'file_inspection'
@@ -1956,6 +1984,7 @@ export async function createFileInspection(input: {
     const fingerprint = contentHash({
       pdf: pdf.sha256,
       workbook: workbook.sha256,
+      currentIr: currentIr?.sha256 ?? null,
       marketData: setup,
     });
     await client.query(
@@ -1975,18 +2004,27 @@ export async function createFileInspection(input: {
         workbook.fileVersionId,
       ],
     );
+    if (currentIr) {
+      await client.query(
+        `INSERT INTO workflow_job_input (
+           job_id, input_role, resource_version_id
+         ) VALUES ($1, 'current_ir_file', $2)`,
+        [jobId, currentIr.fileVersionId],
+      );
+    }
     await pinWorkflowJobSourceSnapshot(client, { jobId });
     await client.query(
       `INSERT INTO file_inspection (
         inspection_id, project_id, job_id, pdf_file_version_id,
-        workbook_file_version_id
-      ) VALUES ($1, $2, $3, $4, $5)`,
+        workbook_file_version_id, current_ir_file_version_id
+      ) VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         inspectionId,
         input.projectId,
         jobId,
         pdf.fileVersionId,
         workbook.fileVersionId,
+        currentIr?.fileVersionId ?? null,
       ],
     );
     const payload = {
@@ -2006,6 +2044,7 @@ export async function createFileInspection(input: {
       }),
       pdf,
       workbook,
+      currentIr,
       marketData: {
         companyMasterId: setup.company_master_id,
         ticker: setup.ticker,
@@ -2119,10 +2158,12 @@ export async function retryFileInspection(input: {
     const result = await client.query<{
       pdf_file_version_id: string;
       workbook_file_version_id: string;
+      current_ir_file_version_id: string | null;
       operation_status: JobStatus;
       retryable: boolean;
     }>(
       `SELECT fi.pdf_file_version_id, fi.workbook_file_version_id,
+         fi.current_ir_file_version_id,
          wj.operation_status, wj.retryable
        FROM file_inspection fi
        JOIN workflow_job wj ON wj.job_id = fi.job_id
@@ -2148,6 +2189,7 @@ export async function retryFileInspection(input: {
     idempotencyKey: input.idempotencyKey,
     pdfFileVersionId: previous.pdf_file_version_id,
     workbookFileVersionId: previous.workbook_file_version_id,
+    currentIrFileVersionId: previous.current_ir_file_version_id,
   });
 }
 
@@ -3616,6 +3658,42 @@ export type InspectionResultPayload = {
     };
     artifact: ArtifactDescriptor;
   };
+  currentIr: {
+    pageCount: number;
+    textLayer: boolean;
+    compatible: boolean;
+    issues: Array<{ code: string; severity: string; message: string }>;
+    parserName: string;
+    parserVersion: string;
+    templateIr: {
+      templateId: string;
+      templateVersion: number;
+      pages: Array<{
+        blocks: Array<{ blockId: string; role: string }>;
+        slots: Array<{
+          slotId: string;
+          valueType: string;
+          semanticKey: { metric: string };
+          required: boolean;
+        }>;
+        objects: Array<{ objectId: string; type: string }>;
+      }>;
+      resources: { fonts: unknown[]; images: unknown[] };
+      analysisWarnings: unknown[];
+    } | null;
+    summary: {
+      blockCount?: number;
+      slotCount?: number;
+      requiredSlotCount?: number;
+      objectCount?: number;
+      fontCount?: number;
+      imageCount?: number;
+      tableCount?: number;
+      chartCount?: number;
+      warningCount?: number;
+    };
+    artifact: ArtifactDescriptor;
+  } | null;
   workbook: {
     sheetCount: number;
     usedCellCount: number;
@@ -3817,11 +3895,13 @@ export async function commitInspectionResult(
       setup_resource_version_id: string;
       pdf_file_version_id: string;
       workbook_file_version_id: string;
+      current_ir_file_version_id: string | null;
       operation_status: JobStatus;
     }>(
       `SELECT wj.project_id, wj.requested_by_user_id, wj.operation_status,
          fi.inspection_id, setup.resource_version_id AS setup_resource_version_id,
-         fi.pdf_file_version_id, fi.workbook_file_version_id
+         fi.pdf_file_version_id, fi.workbook_file_version_id,
+         fi.current_ir_file_version_id
        FROM workflow_job wj
        JOIN file_inspection fi ON fi.job_id = wj.job_id
        JOIN workflow_job_input setup
@@ -3882,6 +3962,20 @@ export async function commitInspectionResult(
       inputFingerprint: decision.pinnedFingerprint,
       publication,
     });
+    const currentIr =
+      payload.currentIr && job.current_ir_file_version_id
+        ? await createAnalysisVersion(client, {
+            projectId: job.project_id,
+            userId: job.requested_by_user_id,
+            resourceKind: "current_ir_analysis",
+            resourceKey: "main",
+            payload:
+              payload.currentIr.templateIr ?? payload.currentIr.summary,
+            artifact: payload.currentIr.artifact,
+            inputFingerprint: decision.pinnedFingerprint,
+            publication,
+          })
+        : null;
     const marketPrice = await createAnalysisVersion(client, {
       projectId: job.project_id,
       userId: job.requested_by_user_id,
@@ -3928,6 +4022,20 @@ export async function commitInspectionResult(
           downstreamResourceVersionId: workbook.resourceVersionId,
           dependencyKind: "source_workbook_to_workbook_analysis",
         },
+        ...(currentIr && job.current_ir_file_version_id
+          ? [
+              {
+                upstreamResourceVersionId: job.current_ir_file_version_id,
+                downstreamResourceVersionId: currentIr.resourceVersionId,
+                dependencyKind: "source_pdf_to_current_ir",
+              },
+              {
+                upstreamResourceVersionId: currentIr.resourceVersionId,
+                downstreamResourceVersionId: mapping.resourceVersionId,
+                dependencyKind: "current_ir_to_files_snapshot",
+              },
+            ]
+          : []),
         {
           upstreamResourceVersionId: job.setup_resource_version_id,
           downstreamResourceVersionId: marketPrice.resourceVersionId,
@@ -4007,6 +4115,23 @@ export async function commitInspectionResult(
         payload.workbook.summary.namedRangeCount ?? 0,
       ],
     );
+    if (currentIr && payload.currentIr && job.current_ir_file_version_id) {
+      await client.query(
+        `INSERT INTO current_ir_version (
+           resource_version_id, source_file_version_id, page_count,
+           parser_name, parser_version, validation_status, analysis_json
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+        [
+          currentIr.resourceVersionId,
+          job.current_ir_file_version_id,
+          payload.currentIr.pageCount,
+          payload.currentIr.parserName,
+          payload.currentIr.parserVersion,
+          payload.currentIr.compatible ? "passed" : "failed",
+          JSON.stringify(payload.currentIr.templateIr ?? {}),
+        ],
+      );
+    }
     await client.query(
       `INSERT INTO market_price_snapshot_version (
         resource_version_id, company_master_id, ticker, exchange_code,
@@ -4157,6 +4282,10 @@ export async function commitInspectionResult(
       ...payload.pdf.issues,
       ...payload.workbook.issues,
       ...payload.mapping.issues,
+      ...(payload.currentIr?.issues ?? []).map((issue) => ({
+        ...issue,
+        severity: issue.severity === "blocking" ? "warning" : issue.severity,
+      })),
     ];
     const passed =
       payload.pdf.compatible &&
@@ -4172,6 +4301,7 @@ export async function commitInspectionResult(
            workbook_resource_version_id = $8, mapping_set_resource_version_id = $9,
            mapping_status = $10,
            market_price_snapshot_resource_version_id = $11,
+           current_ir_resource_version_id = $12,
            completed_at = now()
        WHERE job_id = $1`,
       [
@@ -4186,6 +4316,7 @@ export async function commitInspectionResult(
         mapping.resourceVersionId,
         payload.mapping.status,
         marketPrice.resourceVersionId,
+        currentIr?.resourceVersionId ?? null,
       ],
       );
     } else {
@@ -4222,6 +4353,14 @@ export async function commitInspectionResult(
         marketPrice.resourceVersionId,
       ],
     );
+    if (currentIr) {
+      await client.query(
+        `INSERT INTO workflow_job_output (
+           job_id, output_role, resource_version_id
+         ) VALUES ($1, 'current_ir', $2)`,
+        [jobId, currentIr.resourceVersionId],
+      );
+    }
     if (publication.publishCurrent) {
       await invalidateFilesStagesIfProgressed(client, {
         projectId: job.project_id,

@@ -6,6 +6,8 @@ import {
   createActualFinancialTargets,
   type WorkbookCandidateCell,
 } from "../../domain/research-excel-targets";
+import { resolveDartAccountRule } from "../../domain/dart-account-registry";
+import { collectOfficialExcelValues } from "../../domain/official-excel-values";
 import {
   buildResearchReportTargets,
   type ReportMappingEntry,
@@ -29,6 +31,8 @@ import {
   RESEARCH_SOURCE_TYPES,
   attachNewsSearchPolicies,
   calculateQuestionSufficiency,
+  canonicalResearchNumericValue,
+  classifyResearchClaim,
   defaultCollectionMethod,
   normalizePublicResearchUrls,
   suggestedResearchSources,
@@ -43,11 +47,20 @@ import {
   type ResearchSourceType,
   type NewsDiscoveryResult,
   type ValidatedEvidence,
+  type ValidationCheck,
+  type DeterministicExcelResult,
 } from "../../domain/research-validation";
+import {
+  decideStoredQuestionAnswer,
+  type ResearchQuestionAnswer,
+  type StoredQuestionResult,
+  validateQuestionAnswerSet,
+} from "../../domain/research-question-answers";
 import { ApiError } from "../../http/api-error";
 import type { TransactionClient } from "../database/transaction";
 import { withTransaction } from "../database/transaction";
 import {
+  createDownloadUrl,
   objectStoreBucket,
   putImmutableObject,
 } from "../object-storage/s3";
@@ -72,6 +85,13 @@ import {
 type IdempotentResult = { status: number; body: unknown };
 const MAX_RESEARCH_PDF_REFERENCES = 10;
 const MAX_RESEARCH_URL_REFERENCES = 20;
+const DEFAULT_VERDICT_POLICY = {
+  version: "stance-balance-v1" as const,
+  positive: "supporting_without_contradiction" as const,
+  negative: "contradicting_without_support" as const,
+  neutral: "mixed_or_neutral" as const,
+  indeterminate: "missing_or_conflicting_required_metric" as const,
+};
 
 type ProjectContext = {
   projectId: string;
@@ -106,6 +126,16 @@ type ProjectContext = {
   templateIr: unknown;
   mappingSetResourceVersionId: string;
   setupResourceVersionId: string;
+  currentIr: {
+    referenceId: string;
+    resourceVersionId: string;
+    artifactId: string;
+    objectKey: string;
+    originalFilename: string;
+    mediaType: string;
+    byteSize: number;
+    sha256: string;
+  } | null;
 };
 
 type PlanRow = {
@@ -145,6 +175,8 @@ export type PhaseFourWorkerPayload = {
   sources: ResearchSourceSnapshot[];
   candidates: ResearchCandidate[];
   evidence: ValidatedEvidence[];
+  questionAnswers: ResearchQuestionAnswer[];
+  excelResults: DeterministicExcelResult[];
   newsDiscovery?: NewsDiscoveryResult[];
   warnings: Array<{ code: string; message: string }>;
   metadata: {
@@ -157,8 +189,8 @@ export type PhaseFourWorkerPayload = {
 };
 
 const VALIDATION_RULE_VERSION = "validation-sufficiency-v1";
-const RESEARCH_AGENT_PROFILE = "research-openai-v1";
-const VALIDATION_AGENT_PROFILE = "validation-openai-v1";
+const RESEARCH_AGENT_PROFILE = "research-openai-v2";
+const VALIDATION_AGENT_PROFILE = "validation-openai-v2";
 
 function requireIdempotencyKey(value: string | null): string {
   const key = value?.trim() ?? "";
@@ -297,6 +329,14 @@ async function projectContext(
     setup_resource_version_id: string;
     hypothesis_status: string;
     files_status: string;
+    current_ir_resource_version_id: string | null;
+    current_ir_file_version_id: string | null;
+    current_ir_artifact_id: string | null;
+    current_ir_object_key: string | null;
+    current_ir_filename: string | null;
+    current_ir_media_type: string | null;
+    current_ir_byte_size: string | null;
+    current_ir_sha256: string | null;
   }>(
     `SELECT p.project_id, p.name, p.row_version, cm.company_master_id,
        cm.company_name, cm.corp_code, cm.ticker, cm.exchange_code,
@@ -309,7 +349,14 @@ async function projectContext(
        msv.resource_version_id AS mapping_set_resource_version_id,
        setup_completion.primary_version_id AS setup_resource_version_id,
        hypothesis_state.stage_status AS hypothesis_status,
-       files_state.stage_status AS files_status
+       files_state.stage_status AS files_status,
+       fi.current_ir_resource_version_id, fi.current_ir_file_version_id,
+       current_ir_artifact.artifact_id AS current_ir_artifact_id,
+       current_ir_artifact.object_key AS current_ir_object_key,
+       current_ir_file.detected_filename AS current_ir_filename,
+       current_ir_artifact.media_type AS current_ir_media_type,
+       current_ir_artifact.byte_size AS current_ir_byte_size,
+       current_ir_artifact.sha256 AS current_ir_sha256
      FROM project p
      JOIN project_stage_state setup_state
        ON setup_state.project_id = p.project_id AND setup_state.stage_key = 'setup'
@@ -328,6 +375,12 @@ async function projectContext(
        ON tiv.resource_version_id = msv.template_ir_version_id
      JOIN workbook_version wv
        ON wv.resource_version_id = msv.workbook_version_id
+     LEFT JOIN file_inspection fi
+       ON fi.mapping_set_resource_version_id = msv.resource_version_id
+     LEFT JOIN project_file_version current_ir_file
+       ON current_ir_file.resource_version_id = fi.current_ir_file_version_id
+     LEFT JOIN artifact current_ir_artifact
+       ON current_ir_artifact.artifact_id = current_ir_file.artifact_id
      JOIN project_stage_state hypothesis_state
        ON hypothesis_state.project_id = p.project_id
       AND hypothesis_state.stage_key = 'hypothesis'
@@ -398,6 +451,26 @@ async function projectContext(
     templateIr: row.template_ir_json,
     mappingSetResourceVersionId: row.mapping_set_resource_version_id,
     setupResourceVersionId: row.setup_resource_version_id,
+    currentIr:
+      row.current_ir_resource_version_id &&
+      row.current_ir_file_version_id &&
+      row.current_ir_artifact_id &&
+      row.current_ir_object_key &&
+      row.current_ir_filename &&
+      row.current_ir_media_type &&
+      row.current_ir_byte_size &&
+      row.current_ir_sha256
+        ? {
+            referenceId: row.current_ir_file_version_id,
+            resourceVersionId: row.current_ir_resource_version_id,
+            artifactId: row.current_ir_artifact_id,
+            objectKey: row.current_ir_object_key,
+            originalFilename: row.current_ir_filename,
+            mediaType: row.current_ir_media_type,
+            byteSize: Number(row.current_ir_byte_size),
+            sha256: row.current_ir_sha256.trim(),
+          }
+        : null,
   };
 }
 
@@ -431,6 +504,42 @@ function collectionTargets(metrics: string[]) {
         : ("statement" as const),
     ],
   }));
+}
+
+function researchQuestionRole(
+  question: Pick<ResearchPlanQuestion, "text" | "order">,
+): ResearchPlanQuestion["role"] {
+  if (/PER|PBR|밸류에이션|목표\s*주가|상승\s*여력|주가/.test(question.text)) {
+    return "VALUATION";
+  }
+  if (/다음\s*분기|향후|전망|지속|하반기|연간/.test(question.text)) {
+    return "OUTLOOK";
+  }
+  if (/사업부|제품|부문|세그먼트/.test(question.text)) return "SEGMENT";
+  if (question.order === 1 || /실적|매출|영업이익|OPM/.test(question.text)) {
+    return "PERFORMANCE";
+  }
+  return "DRIVER";
+}
+
+function currentIrSourceReference(
+  context: ProjectContext,
+): ResearchSourceReference | null {
+  if (!context.currentIr) return null;
+  return {
+    referenceId: context.currentIr.referenceId,
+    sourceType: "COMPANY_IR",
+    ingestionMethod: "user_upload",
+    title: context.currentIr.originalFilename,
+    publisher: context.companyName,
+    publishedAt: context.cutoffAt,
+    canonicalUrl: null,
+    artifactId: context.currentIr.artifactId,
+    originalFilename: context.currentIr.originalFilename,
+    mediaType: context.currentIr.mediaType,
+    byteSize: context.currentIr.byteSize,
+    sha256: context.currentIr.sha256,
+  };
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -502,6 +611,86 @@ function candidatePeriodLabels(
   return (ranges[0]?.periodColumns ?? []).flatMap((column) =>
     column.label ? [column.label] : [],
   );
+}
+
+function normalizedTargetUnit(
+  unit: string,
+): ResearchExcelTarget["targetUnit"] {
+  if (/^(?:원|krw)$/i.test(unit.trim())) return "KRW";
+  if (/백만\s*원/.test(unit)) return "KRW_MILLION";
+  if (/십억\s*원/.test(unit)) return "KRW_BILLION";
+  if (/억\s*원/.test(unit)) return "KRW_100M";
+  if (/%|퍼센트/.test(unit)) return "PERCENT";
+  return undefined;
+}
+
+function hydrateLegacyExcelTarget(
+  target: ResearchExcelTarget,
+  context: Pick<
+    ProjectContext,
+    "targetYear" | "targetQuarter" | "cutoffDate"
+  >,
+): ResearchExcelTarget {
+  const authority = target.sourcePolicy.find(
+    (policy) => policy.role === "authority",
+  )?.sourceType;
+  if (!authority || !["DART", "KRX", "ECOS"].includes(authority)) {
+    return target;
+  }
+  const rule =
+    authority === "DART"
+      ? resolveDartAccountRule(
+          target.dartRuleId ?? target.metricId ?? target.metric,
+        )
+      : null;
+  if (authority === "DART" && !rule) return target;
+  const periodYear =
+    Number(target.period.match(/20\d{2}/)?.[0]) || context.targetYear;
+  const periodQuarter = Number(
+    target.period.match(/([1-4])\s*(?:분기|q)/i)?.[1] ??
+      context.targetQuarter,
+  ) as 1 | 2 | 3 | 4;
+  const annual = authority === "DART" && /연간|사업\s*연도/.test(target.period);
+  const pointInTime =
+    authority !== "DART" || rule?.balanceType === "point_in_time";
+  return {
+    ...target,
+    metricId:
+      target.metricId ??
+      rule?.metricId ??
+      (authority === "KRX" ? "current_price" : target.metric),
+    period:
+      authority !== "DART" && !/^\d{4}-\d{2}-\d{2}$/.test(target.period)
+        ? context.cutoffDate
+        : target.period,
+    periodSpec:
+      target.periodSpec ??
+      (authority === "DART"
+        ? {
+            type: annual ? ("annual" as const) : ("quarter" as const),
+            year: periodYear,
+            quarter: annual ? null : periodQuarter,
+            basis: pointInTime
+              ? ("point_in_time" as const)
+              : /단독/.test(target.period)
+                ? ("single_quarter" as const)
+                : annual
+                  ? ("annual" as const)
+                  : ("year_to_date" as const),
+          }
+        : {
+            type: "date" as const,
+            year: context.targetYear,
+            quarter: null,
+            basis: "point_in_time" as const,
+          }),
+    targetUnit: target.targetUnit ?? normalizedTargetUnit(target.unit),
+    scopeCode:
+      target.scopeCode ??
+      (/별도|^OFS$/i.test(target.scope) ? "OFS" : "CFS"),
+    dartRuleId: target.dartRuleId ?? rule?.ruleId ?? null,
+    writeAuthority: target.writeAuthority ?? "system",
+  };
 }
 
 async function loadResearchReportTargets(
@@ -583,6 +772,11 @@ async function loadResearchReportTargets(
   });
 }
 
+// 리포트 입력 대상의 연결·실행 가능 상태는 STEP 04 승인을 막지 않는다.
+// 자동 수집할 수 없는 대상(FnGuide 미지원, 연결 없음)은 사용자가 STEP 04에서
+// 해소할 수 없고, 실제 확정은 STEP 05 Excel 검증과 후속 입력 단계에서 이뤄진다.
+// 따라서 각 대상 card의 status·reasons로만 노출한다.
+
 async function buildDefaultSnapshot(
   client: TransactionClient,
   context: ProjectContext,
@@ -590,6 +784,7 @@ async function buildDefaultSnapshot(
   const questionRows = await client.query<{
     question_id: string;
     display_order: number;
+    question_role: ResearchPlanQuestion["role"];
     question_text: string;
     purpose: string;
     metrics: string[];
@@ -597,7 +792,7 @@ async function buildDefaultSnapshot(
     comparison: string;
     suggested_source_types: string[];
   }>(
-    `SELECT question_id, display_order, question_text, purpose, metrics,
+    `SELECT question_id, display_order, question_role, question_text, purpose, metrics,
        period, comparison, suggested_source_types
      FROM hypothesis_question
      WHERE question_set_id = $1 AND set_version = $2
@@ -605,10 +800,24 @@ async function buildDefaultSnapshot(
     [context.questionSetId, context.questionSetVersion],
   );
   const questions: ResearchPlanQuestion[] = questionRows.rows.map((row) => {
-    const sources = suggestedResearchSources(row.suggested_source_types);
+    const roleSources: ResearchSourceType[] =
+      row.question_role === "PERFORMANCE"
+        ? ["DART", "COMPANY_IR"]
+        : row.question_role === "DRIVER" ||
+            row.question_role === "SEGMENT" ||
+            row.question_role === "OUTLOOK"
+          ? ["COMPANY_IR", "NEWS"]
+          : ["KRX"];
+    const sources = Array.from(
+      new Set([
+        ...roleSources,
+        ...suggestedResearchSources(row.suggested_source_types),
+      ]),
+    );
     return {
       questionId: row.question_id,
       order: row.display_order,
+      role: row.question_role,
       text: row.question_text,
       purpose: row.purpose,
       metrics: row.metrics,
@@ -621,6 +830,7 @@ async function buildDefaultSnapshot(
       collectionMethods: Object.fromEntries(
         sources.map((source) => [source, defaultCollectionMethod(source)]),
       ),
+      verdictPolicy: { ...DEFAULT_VERDICT_POLICY },
       validationErrors: [],
     };
   });
@@ -657,19 +867,45 @@ async function buildDefaultSnapshot(
         row.sheet_name &&
         row.address,
     )
-    .map((row) => {
+    .flatMap((row): ResearchExcelTarget[] => {
       const metric = row.semantic_metric;
       const marketPrice = /주가|종가/.test(metric);
-      return {
+      const dartRule = marketPrice ? null : resolveDartAccountRule(metric);
+      if (!marketPrice && !dartRule) return [];
+      const targetUnit = marketPrice
+        ? ("KRW" as const)
+        : /율|비중|마진/.test(metric)
+          ? ("PERCENT" as const)
+          : ("KRW" as const);
+      return [{
         targetId: row.mapping_entry_id,
         sheetId: row.sheet_id!,
         sheetName: row.sheet_name!,
         address: row.address!,
+        metricId: marketPrice ? "current_price" : dartRule?.metricId ?? metric,
         metric,
-        period: `${context.targetYear}년 ${context.targetQuarter}분기`,
+        period: marketPrice
+          ? context.cutoffDate
+          : `${context.targetYear}년 ${context.targetQuarter}분기`,
+        periodSpec: {
+          type: marketPrice ? ("date" as const) : ("quarter" as const),
+          year: context.targetYear,
+          quarter: marketPrice
+            ? null
+            : (context.targetQuarter as 1 | 2 | 3 | 4),
+          basis: marketPrice
+            ? ("point_in_time" as const)
+            : dartRule?.balanceType === "point_in_time"
+              ? ("point_in_time" as const)
+              : ("year_to_date" as const),
+        },
         unit: /율|비중|마진/.test(metric) ? "%" : "원",
+        targetUnit,
         scope: "연결",
+        scopeCode: "CFS" as const,
         valueKind: "actual",
+        dartRuleId: dartRule?.ruleId ?? null,
+        writeAuthority: "system",
         required: row.required,
         included: true,
         sourcePolicy: [
@@ -677,18 +913,10 @@ async function buildDefaultSnapshot(
             sourceType: marketPrice ? ("KRX" as const) : ("DART" as const),
             role: "authority" as const,
           },
-          ...(/제품|사업|부문/.test(metric)
-            ? [
-                {
-                  sourceType: "COMPANY_IR" as const,
-                  role: "verification" as const,
-                },
-              ]
-            : []),
         ],
         mappingSlotIds: [row.slot_id],
         excludedReason: null,
-      };
+      }];
     });
   const mappingSlotIdsBySheetId = new Map<string, string[]>();
   for (const row of mappingRows.rows) {
@@ -701,11 +929,16 @@ async function buildDefaultSnapshot(
     ...createActualFinancialTargets({
       candidateCells: context.workbookAnalysis.candidateCells ?? [],
       targetYear: context.targetYear,
+      targetQuarter: context.targetQuarter as 1 | 2 | 3 | 4,
       mappingSlotIdsBySheetId,
     }),
   );
+  const currentIrReference = currentIrSourceReference(context);
+  const sourceReferences: ResearchSourceReference[] = currentIrReference
+    ? [currentIrReference]
+    : [];
   return attachNewsSearchPolicies(
-    { questions, excelTargets, userUrls: [], sourceReferences: [] },
+    { questions, excelTargets, userUrls: [], sourceReferences },
     {
       targetYear: context.targetYear,
       targetQuarter: context.targetQuarter,
@@ -804,23 +1037,34 @@ async function insertPlanSnapshot(
         downstreamResourceVersionId: resourceVersionId,
         dependencyKind: "setup_to_research_plan",
       },
+      ...(input.context.currentIr
+        ? [
+            {
+              upstreamResourceVersionId:
+                input.context.currentIr.resourceVersionId,
+              downstreamResourceVersionId: resourceVersionId,
+              dependencyKind: "current_ir_to_research_plan",
+            },
+          ]
+        : []),
     ],
   });
   for (const question of input.snapshot.questions) {
     await client.query(
       `INSERT INTO research_plan_question (
          plan_resource_version_id, question_id, display_order, question_text,
-         purpose, metrics, period, comparison, included, source_binding_ids,
-         collection_targets, collection_methods
+         question_role, purpose, metrics, period, comparison, included,
+         source_binding_ids, collection_targets, collection_methods, verdict_policy
        ) VALUES (
-         $1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb,
-         $11::jsonb, $12::jsonb
+         $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb,
+         $12::jsonb, $13::jsonb, $14::jsonb
        )`,
       [
         resourceVersionId,
         question.questionId,
         question.order,
         question.text,
+        question.role,
         question.purpose,
         JSON.stringify(question.metrics),
         question.period,
@@ -829,6 +1073,9 @@ async function insertPlanSnapshot(
         JSON.stringify(question.sourceBindingIds),
         JSON.stringify(question.collectionTargets),
         JSON.stringify(question.collectionMethods),
+        question.verdictPolicy
+          ? JSON.stringify(question.verdictPolicy)
+          : null,
       ],
     );
   }
@@ -837,10 +1084,11 @@ async function insertPlanSnapshot(
       `INSERT INTO research_plan_excel_target (
          plan_resource_version_id, target_id, sheet_id, sheet_name, address,
          metric, period, unit, scope, value_kind, required, included,
-         source_policy, mapping_slot_ids
+         source_policy, mapping_slot_ids, metric_id, period_spec, target_unit,
+         scope_code, dart_rule_id, write_authority, excluded_reason
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-         $13::jsonb, $14::jsonb
+         $13::jsonb, $14::jsonb, $15, $16::jsonb, $17, $18, $19, $20, $21
        )`,
       [
         resourceVersionId,
@@ -857,6 +1105,13 @@ async function insertPlanSnapshot(
         target.included,
         JSON.stringify(target.sourcePolicy),
         JSON.stringify(target.mappingSlotIds),
+        target.metricId ?? null,
+        target.periodSpec ? JSON.stringify(target.periodSpec) : null,
+        target.targetUnit ?? null,
+        target.scopeCode ?? null,
+        target.dartRuleId ?? null,
+        target.writeAuthority ?? "user",
+        target.excludedReason,
       ],
     );
   }
@@ -907,11 +1162,30 @@ async function loadPlan(
   );
   const row = result.rows[0];
   if (!row) return null;
+  const currentIrReference = currentIrSourceReference(context);
+  const storedReferences = row.plan_snapshot_json.sourceReferences ?? [];
   const snapshot = attachNewsSearchPolicies(
     {
       ...row.plan_snapshot_json,
+      questions: row.plan_snapshot_json.questions.map((question) => ({
+        ...question,
+        role: question.role ?? researchQuestionRole(question),
+        verdictPolicy: question.verdictPolicy ?? {
+          ...DEFAULT_VERDICT_POLICY,
+        },
+      })),
+      excelTargets: row.plan_snapshot_json.excelTargets.map((target) =>
+        hydrateLegacyExcelTarget(target, context),
+      ),
       userUrls: row.plan_snapshot_json.userUrls ?? [],
-      sourceReferences: row.plan_snapshot_json.sourceReferences ?? [],
+      sourceReferences:
+        currentIrReference &&
+        !storedReferences.some(
+          (reference) =>
+            reference.referenceId === currentIrReference.referenceId,
+        )
+          ? [...storedReferences, currentIrReference]
+          : storedReferences,
     },
     {
       targetYear: context.targetYear,
@@ -952,6 +1226,7 @@ async function ensurePlan(
     createActualFinancialTargets({
       candidateCells: context.workbookAnalysis.candidateCells ?? [],
       targetYear: context.targetYear,
+      targetQuarter: context.targetQuarter as 1 | 2 | 3 | 4,
     }).map((target) => target.targetId),
   );
   const currentSystemTargetIds = new Set(
@@ -974,15 +1249,36 @@ async function ensurePlan(
   ) {
     return existing;
   }
-  const snapshot =
-    existing && refsMatch && systemTargetContractCurrent
-      ? {
-          ...existing.snapshot,
-          excelTargets: existing.snapshot.excelTargets.filter(
-            (target) => !isValuationMappingMetric(target.metric),
+  let snapshot: ResearchPlanSnapshot;
+  if (existing && refsMatch && systemTargetContractCurrent) {
+    snapshot = {
+      ...existing.snapshot,
+      excelTargets: existing.snapshot.excelTargets.filter(
+        (target) => !isValuationMappingMetric(target.metric),
+      ),
+    };
+  } else {
+    const defaultSnapshot = await buildDefaultSnapshot(client, context);
+    if (existing && refsMatch) {
+      const defaultTargetIds = new Set(
+        defaultSnapshot.excelTargets.map((target) => target.targetId),
+      );
+      snapshot = {
+        ...existing.snapshot,
+        excelTargets: [
+          ...existing.snapshot.excelTargets.filter(
+            (target) =>
+              target.writeAuthority !== "system" &&
+              !isValuationMappingMetric(target.metric) &&
+              !defaultTargetIds.has(target.targetId),
           ),
-        }
-      : await buildDefaultSnapshot(client, context);
+          ...defaultSnapshot.excelTargets,
+        ],
+      };
+    } else {
+      snapshot = defaultSnapshot;
+    }
+  }
   if (!existing) {
     const planId = uuidv7();
     const resourceId = uuidv7();
@@ -1127,9 +1423,7 @@ function sourceOptions() {
       description: "검사한 파일 또는 공개 URL",
     },
   };
-  return RESEARCH_SOURCE_TYPES.filter(
-    (sourceType) => sourceType !== "FNGUIDE_CONSENSUS",
-  ).map((sourceType) => ({
+  return RESEARCH_SOURCE_TYPES.map((sourceType) => ({
     sourceType,
     ...labels[sourceType],
     collectionMethod: defaultCollectionMethod(sourceType),
@@ -1791,16 +2085,48 @@ export async function removeResearchMaterial(input: {
   });
 }
 
+type ResearchRunScope =
+  | { kind: "full" }
+  | { kind: "question_metric"; questionId: string; metricId: string }
+  | { kind: "excel_target"; targetId: string };
+
+type TargetedResearchRunScope = Exclude<
+  ResearchRunScope,
+  { kind: "full" }
+>;
+
 function workflowPayload(input: {
   context: ProjectContext;
   plan: PlanRow;
   jobId: string;
   runId: string;
   attempt: number;
+  scope: ResearchRunScope;
+  priorEvidence: ValidatedEvidence[];
   sourceReferences: Array<
     ResearchSourceReference & { objectKey: string | null }
   >;
 }) {
+  const scope = input.scope;
+  const scopedQuestion =
+    scope.kind === "question_metric"
+      ? input.plan.snapshot.questions.find(
+          (question) => question.questionId === scope.questionId,
+        )
+      : null;
+  if (scope.kind === "question_metric" && !scopedQuestion) {
+    throw new ApiError(
+      409,
+      "PLAN_REVALIDATION_REQUIRED",
+      "재조사 질문이 승인 계획에 없습니다.",
+    );
+  }
+  const questions =
+    scope.kind === "question_metric" && scopedQuestion
+      ? [{ ...scopedQuestion, metrics: [scope.metricId] }]
+      : scope.kind === "excel_target"
+        ? []
+        : input.plan.snapshot.questions;
   return {
     workflowType: "researchValidationWorkflow",
     jobId: input.jobId,
@@ -1814,6 +2140,9 @@ function workflowPayload(input: {
       input.context.workbookResourceVersionId,
       input.context.mappingSetResourceVersionId,
       input.context.setupResourceVersionId,
+      ...(input.context.currentIr
+        ? [input.context.currentIr.resourceVersionId]
+        : []),
     ],
     companyMasterId: input.context.companyMasterId,
     companyName: input.context.companyName,
@@ -1825,18 +2154,51 @@ function workflowPayload(input: {
     targetQuarter: input.context.targetQuarter,
     cutoffDate: input.context.cutoffDate,
     cutoffAt: input.context.cutoffAt,
-    questions: input.plan.snapshot.questions,
-    excelTargets: input.plan.snapshot.excelTargets,
+    questions,
+    answerQuestions:
+      scope.kind === "question_metric" && scopedQuestion
+        ? [scopedQuestion]
+        : undefined,
+    priorEvidence:
+      scope.kind === "question_metric" ? input.priorEvidence : undefined,
+    excelTargets:
+      scope.kind === "question_metric"
+        ? []
+        : scope.kind === "excel_target"
+          ? input.plan.snapshot.excelTargets.filter(
+              (target) => target.targetId === scope.targetId,
+            )
+          : input.plan.snapshot.excelTargets,
     userUrls: input.plan.snapshot.userUrls,
     sourceReferences: input.sourceReferences,
+    workbookConsensusFallback: (
+      input.context.workbookAnalysis.candidateCells ?? []
+    )
+      .filter((cell) =>
+        /(?:consensus|keydata|valuation|target|multiple|컨센서스|가치|목표|멀티플|_REFLO_BRIDGE)/i.test(
+          `${cell.sheetName} ${cell.label ?? ""}`,
+        ),
+      )
+      .map((cell) => ({
+        sheetId: cell.sheetId,
+        sheetName: cell.sheetName,
+        address: cell.address,
+        label: cell.label ?? "",
+        displayValue:
+          cell.rawValue === null || cell.rawValue === undefined
+            ? ""
+            : String(cell.rawValue),
+        rawValue: cell.rawValue,
+        formula: cell.formula ?? null,
+      })),
     researchAgentProfile: {
       version: RESEARCH_AGENT_PROFILE,
-      model: "gpt-5.6-terra",
+      model: "gpt-5.4-mini",
       reasoning: "medium",
     },
     validationAgentProfile: {
       version: VALIDATION_AGENT_PROFILE,
-      model: "gpt-5.6-terra",
+      model: "gpt-5.4-mini",
       reasoning: "medium",
     },
     validationRuleVersion: VALIDATION_RULE_VERSION,
@@ -1851,6 +2213,8 @@ async function createResearchJob(
     userId: string;
     runKind: "initial" | "reinvestigation";
     supersedesRunId?: string | null;
+    scope: ResearchRunScope;
+    priorEvidence?: ValidatedEvidence[];
   },
 ): Promise<{ jobId: string; runId: string }> {
   const jobId = uuidv7();
@@ -1876,6 +2240,12 @@ async function createResearchJob(
   const objectKeyByReference = new Map(
     materialRows.rows.map((row) => [row.source_reference_id, row.object_key]),
   );
+  if (input.context.currentIr) {
+    objectKeyByReference.set(
+      input.context.currentIr.referenceId,
+      input.context.currentIr.objectKey,
+    );
+  }
   const sourceReferences = (input.plan.snapshot.sourceReferences ?? []).map(
     (reference) => ({
       ...reference,
@@ -1900,6 +2270,8 @@ async function createResearchJob(
     jobId,
     runId,
     attempt: 1,
+    scope: input.scope,
+    priorEvidence: input.priorEvidence ?? [],
     sourceReferences,
   });
   await client.query(
@@ -1939,12 +2311,21 @@ async function createResearchJob(
       input.context.setupResourceVersionId,
     ],
   );
+  if (input.context.currentIr) {
+    await client.query(
+      `INSERT INTO workflow_job_input (
+         job_id, input_role, resource_version_id
+       ) VALUES ($1, 'current_ir', $2)`,
+      [jobId, input.context.currentIr.resourceVersionId],
+    );
+  }
   await pinWorkflowJobSourceSnapshot(client, { jobId });
   await client.query(
     `INSERT INTO research_run (
        research_run_id, project_id, job_id,
-       approved_plan_resource_version_id, run_kind, supersedes_run_id
-     ) VALUES ($1, $2, $3, $4, $5, $6)`,
+       approved_plan_resource_version_id, run_kind, supersedes_run_id,
+       scope_json
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
     [
       runId,
       input.context.projectId,
@@ -1952,6 +2333,7 @@ async function createResearchJob(
       input.plan.resourceVersionId,
       input.runKind,
       input.supersedesRunId ?? null,
+      JSON.stringify(input.scope),
     ],
   );
   await client.query(
@@ -2058,6 +2440,7 @@ export async function approveResearchPlanAndStart(input: {
       plan: { ...plan, status: "approved" },
       userId: input.userId,
       runKind: "initial",
+      scope: { kind: "full" },
     });
     await client.query(
       `UPDATE project_stage_state
@@ -2079,6 +2462,7 @@ export async function approveResearchPlanAndStart(input: {
        WHERE project_id = $1`,
       [input.projectId],
     );
+    const requestedAt = new Date().toISOString();
     const body = {
       approvedPlanVersionId: plan.resourceVersionId,
       job: {
@@ -2088,6 +2472,9 @@ export async function approveResearchPlanAndStart(input: {
         phase: "preparing",
         progressPercent: 0,
         retryable: false,
+        error: null,
+        requestedAt,
+        updatedAt: requestedAt,
         validationRoute: processRoute(input.projectId, "validation"),
       },
     };
@@ -2257,9 +2644,11 @@ export async function retryResearchJob(input: {
       retryable: boolean;
       operation_status: string;
       approved_plan_resource_version_id: string;
+      run_kind: "initial" | "reinvestigation";
+      scope_json: ResearchRunScope;
     }>(
       `SELECT rr.research_run_id, wj.retryable, wj.operation_status,
-         rr.approved_plan_resource_version_id
+         rr.approved_plan_resource_version_id, rr.run_kind, rr.scope_json
        FROM research_run rr
        JOIN workflow_job wj ON wj.job_id = rr.job_id
        WHERE rr.project_id = $1 AND rr.job_id = $2`,
@@ -2285,12 +2674,19 @@ export async function retryResearchJob(input: {
       `UPDATE workflow_job SET validity_status = 'obsolete' WHERE job_id = $1`,
       [input.jobId],
     );
+    const priorEvidence = await loadPriorQuestionEvidence(
+      client,
+      input.projectId,
+      row.scope_json,
+    );
     const created = await createResearchJob(client, {
       context,
       plan,
       userId: input.userId,
-      runKind: "initial",
+      runKind: row.run_kind,
       supersedesRunId: row.research_run_id,
+      scope: row.scope_json,
+      priorEvidence,
     });
     const body = {
       jobId: created.jobId,
@@ -2308,6 +2704,86 @@ export async function retryResearchJob(input: {
     });
     return { status: 202, body };
   });
+}
+
+async function loadPriorQuestionEvidence(
+  client: TransactionClient,
+  projectId: string,
+  scope: ResearchRunScope,
+): Promise<ValidatedEvidence[]> {
+  if (scope.kind !== "question_metric") return [];
+  const result = await client.query<{
+    candidate_key: string;
+    question_id: string;
+    metric_id: string;
+    source_key: string;
+    title: string;
+    one_line_value: string;
+    quote_exact: string;
+    value_original: string | null;
+    value_normalized: string | null;
+    unit: string | null;
+    currency: string | null;
+    period: string;
+    scope: string;
+    value_kind: string | null;
+    stance: "supporting" | "contradicting" | "neutral";
+    required: boolean;
+    critical_numeric: boolean;
+    machine_status: "passed" | "failed" | "needs_review";
+    checks_json: ValidationCheck[];
+    locator_json: Record<string, unknown>;
+  }>(
+    `SELECT e.provenance_json->>'candidateKey' AS candidate_key,
+       result.question_id, result.metric_id, source.source_key,
+       result.title, result.one_line_value, e.quote_exact,
+       e.value_original, e.value_normalized, e.unit, e.currency,
+       e.period, e.scope, e.value_kind, e.stance, result.required,
+       result.critical_numeric, e.machine_status, e.checks_json,
+       e.locator_json
+     FROM validation_workspace workspace
+     JOIN validation_result result
+       ON result.validation_run_id = workspace.validation_run_id
+      AND result.project_id = workspace.project_id
+     JOIN evidence e ON e.evidence_id = ANY(result.evidence_ids)
+     JOIN research_source_version source
+       ON source.resource_version_id = e.source_version_id
+     WHERE workspace.project_id = $1
+       AND result.category = 'hypothesis'
+       AND result.question_id = $2
+       AND result.metric_id <> $3
+       AND result.machine_status = 'passed'
+       AND result.exception_status NOT IN (
+         'REJECTED', 'REINVESTIGATING', 'SUPERSEDED'
+       )
+       AND e.machine_status = 'passed'
+       AND e.provenance_json->>'candidateKey' IS NOT NULL`,
+    [projectId, scope.questionId, scope.metricId],
+  );
+  return result.rows.map((row) => ({
+    candidateKey: row.candidate_key,
+    category: "hypothesis",
+    questionId: row.question_id,
+    targetId: null,
+    metricId: row.metric_id,
+    sourceKey: row.source_key,
+    title: row.title,
+    quoteExact: row.quote_exact,
+    oneLineValue: row.one_line_value,
+    valueOriginal: row.value_original,
+    valueNormalized: row.value_normalized,
+    unit: row.unit,
+    currency: row.currency,
+    period: row.period,
+    scope: row.scope,
+    valueKind: row.value_kind,
+    stance: row.stance,
+    required: row.required,
+    criticalNumeric: row.critical_numeric,
+    machineStatus: row.machine_status,
+    checks: row.checks_json,
+    locator: row.locator_json,
+  }));
 }
 
 function quoteNormalized(value: string): string {
@@ -2437,6 +2913,8 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
     !Array.isArray(payload.sources) ||
     !Array.isArray(payload.candidates) ||
     !Array.isArray(payload.evidence) ||
+    !Array.isArray(payload.questionAnswers) ||
+    !Array.isArray(payload.excelResults) ||
     (payload.newsDiscovery !== undefined &&
       !Array.isArray(payload.newsDiscovery)) ||
     payload.metadata?.validationRuleVersion !== VALIDATION_RULE_VERSION
@@ -2447,14 +2925,21 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
       "자료 수집 결과 형식이 올바르지 않습니다.",
     );
   }
-  if (payload.sources.length === 0) {
+  const hasHypothesisPayload =
+    payload.candidates.length > 0 || payload.evidence.length > 0;
+  const hasExcelPayload = payload.excelResults.length > 0;
+  if (payload.sources.length === 0 && !hasExcelPayload) {
     throw new ApiError(
       422,
       "RESEARCH_NO_SOURCES",
       "수집된 원문이 없어 작업을 완료할 수 없습니다.",
     );
   }
-  if (payload.candidates.length === 0 || payload.evidence.length === 0) {
+  if (
+    (!hasHypothesisPayload && !hasExcelPayload) ||
+    (hasHypothesisPayload &&
+      (payload.candidates.length === 0 || payload.evidence.length === 0))
+  ) {
     throw new ApiError(
       422,
       "RESEARCH_EVIDENCE_EMPTY",
@@ -2466,6 +2951,23 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
     payload.candidates.map((candidate) => candidate.candidateKey),
   );
   if (
+    payload.candidates.some(
+      (item) =>
+        item.category !== "hypothesis" ||
+        !item.questionId ||
+        item.targetId !== null ||
+        !item.metricId,
+    ) ||
+    payload.evidence.some((item) => item.category !== "hypothesis") ||
+    payload.excelResults.some(
+      (item) =>
+        !item.targetId ||
+        !item.metricId ||
+        (item.machineStatus === "passed" && item.evidence.length === 0) ||
+        item.evidence.some(
+          (evidence) => !sourceKeys.has(evidence.sourceKey),
+        ),
+    ) ||
     payload.evidence.some(
       (item) =>
         !sourceKeys.has(item.sourceKey) ||
@@ -2490,8 +2992,13 @@ async function recomputeStageGate(
   blockers: Array<{ code: string; targetId: string | null; message: string }>;
   questions: Array<{
     questionId: string;
+    verdict: string;
     answer: string;
     sufficiency: string;
+    claimType: "analysis_judgment";
+    includedClaimCount: number;
+    excludedClaimCount: number;
+    missingMetrics: string[];
     supportingCount: number;
     contradictingCount: number;
     neutralCount: number;
@@ -2527,6 +3034,8 @@ async function recomputeStageGate(
     result_id: string;
     question_id: string | null;
     target_id: string | null;
+    metric_id: string;
+    status_code: string | null;
     title: string;
     one_line_value: string;
     stance: "supporting" | "contradicting" | "neutral";
@@ -2536,14 +3045,23 @@ async function recomputeStageGate(
     required: boolean;
     critical_numeric: boolean;
     source_version_ids: string[];
+    failed_check_codes: string[];
   }>(
-    `SELECT result_id, question_id, target_id, title, one_line_value, stance,
+    `SELECT result_id, question_id, target_id, metric_id, status_code,
+       title, one_line_value, stance,
        machine_status, exception_status, evidence_ids, required, critical_numeric,
        COALESCE(ARRAY(
          SELECT DISTINCT e.source_version_id::text
          FROM evidence e
          WHERE e.evidence_id = ANY(validation_result.evidence_ids)
-       ), '{}'::text[]) AS source_version_ids
+       ), '{}'::text[]) AS source_version_ids,
+       COALESCE(ARRAY(
+         SELECT DISTINCT check_item->>'code'
+         FROM evidence e
+         CROSS JOIN LATERAL jsonb_array_elements(e.checks_json) check_item
+         WHERE e.evidence_id = ANY(validation_result.evidence_ids)
+           AND check_item->>'status' = 'failed'
+       ), '{}'::text[]) AS failed_check_codes
      FROM validation_result
      WHERE project_id = $1
        AND exception_status <> 'SUPERSEDED'`,
@@ -2557,6 +3075,25 @@ async function recomputeStageGate(
      FROM validation_conflict
      WHERE project_id = $1 AND status = 'unresolved'`,
     [projectId],
+  );
+  const answerRows = await client.query<{
+    question_id: string;
+    verdict: string;
+    one_line_answer: string;
+    evidence_ids: string[];
+    caveat: string | null;
+  }>(
+    `SELECT answer.question_id, answer.verdict, answer.one_line_answer,
+       answer.evidence_ids, answer.caveat
+     FROM validation_question_answer answer
+     JOIN validation_workspace workspace
+       ON workspace.project_id = answer.project_id
+      AND workspace.validation_run_id = answer.validation_run_id
+     WHERE answer.project_id = $1`,
+    [projectId],
+  );
+  const answerByQuestion = new Map(
+    answerRows.rows.map((row) => [row.question_id, row]),
   );
   const unresolvedByResult = new Map(
     conflictRows.rows.map((row) => [row.result_id, row.conflict_id]),
@@ -2574,7 +3111,7 @@ async function recomputeStageGate(
       );
       const sufficiency = calculateQuestionSufficiency({
         requiredMetrics: question.metrics,
-        coveredMetrics: usable.map((result) => result.title),
+        coveredMetrics: usable.map((result) => result.metric_id),
         evidenceCount: usable.reduce(
           (count, result) => count + result.evidence_ids.length,
           0,
@@ -2599,25 +3136,57 @@ async function recomputeStageGate(
           (result) => result.exception_status === "REINVESTIGATING",
         ),
       });
-      const blockers: string[] = [];
-      if (sufficiency === "insufficient") blockers.push("QUESTION_EVIDENCE_INSUFFICIENT");
-      if (sufficiency === "reinvestigating") blockers.push("REINVESTIGATION_ACTIVE");
+      const usableEvidenceIds = new Set(
+        usable.flatMap((result) => result.evidence_ids),
+      );
+      const storedAnswer = answerByQuestion.get(question.questionId);
+      const validAnswer =
+        storedAnswer &&
+        storedAnswer.evidence_ids.every((evidenceId) =>
+          usableEvidenceIds.has(evidenceId),
+        )
+          ? storedAnswer
+          : null;
+      const supportingCount = usable.filter(
+        (result) => result.stance === "supporting",
+      ).length;
+      const contradictingCount = usable.filter(
+        (result) => result.stance === "contradicting",
+      ).length;
+      const coveredMetrics = new Set(usable.map((result) => result.metric_id));
+      const missingMetrics = question.metrics.filter(
+        (metric) => !coveredMetrics.has(metric),
+      );
+      const fallbackVerdict =
+        supportingCount > 0 && contradictingCount === 0
+          ? "positive"
+          : contradictingCount > 0 && supportingCount === 0
+            ? "negative"
+            : usable.length > 0
+              ? "neutral"
+              : "indeterminate";
       return {
         questionId: question.questionId,
+        verdict: validAnswer?.verdict ?? fallbackVerdict,
         answer:
-          usable[0]?.one_line_value ?? "검증된 근거가 부족합니다.",
+          validAnswer?.one_line_answer ??
+          (usable
+            .map((result) => result.one_line_value)
+            .join("; ")
+            .slice(0, 500) ||
+            "보고서에 반영할 검증 주장이 없습니다."),
         sufficiency,
-        supportingCount: usable.filter(
-          (result) => result.stance === "supporting",
-        ).length,
-        contradictingCount: usable.filter(
-          (result) => result.stance === "contradicting",
-        ).length,
+        claimType: "analysis_judgment" as const,
+        includedClaimCount: usable.length,
+        excludedClaimCount: questionResults.length - usable.length,
+        missingMetrics,
+        supportingCount,
+        contradictingCount,
         neutralCount: usable.filter((result) => result.stance === "neutral")
           .length,
         qualifiedAccepted: false,
         required: true,
-        blockers,
+        blockers: [],
       };
     });
   const blockers: Array<{
@@ -2625,36 +3194,29 @@ async function recomputeStageGate(
     targetId: string | null;
     message: string;
   }> = [];
-  for (const question of questions) {
-    if (question.sufficiency === "insufficient") {
+  const hardFailureChecks = new Set([
+    "company",
+    "period",
+    "scope",
+    "numeric_quote_binding",
+    "numeric_calculation_inputs",
+    "numeric_calculation_formula",
+    "numeric_reported_rate",
+  ]);
+  for (const result of results.rows) {
+    if (result.critical_numeric && result.machine_status !== "passed") {
       blockers.push({
-        code: "QUESTION_EVIDENCE_INSUFFICIENT",
-        targetId: question.questionId,
-        message: "필수 질문의 검증 근거가 부족합니다.",
+        code: "REQUIRED_NUMERIC_UNAVAILABLE",
+        targetId: result.result_id,
+        message: "필수 실적 숫자를 원문과 일치하게 확인할 수 없습니다.",
       });
-    } else if (question.sufficiency === "reinvestigating") {
+    }
+    if (result.failed_check_codes.some((code) => hardFailureChecks.has(code))) {
       blockers.push({
-        code: "REINVESTIGATION_ACTIVE",
-        targetId: question.questionId,
-        message: "재조사 작업이 진행 중입니다.",
+        code: "SOURCE_SCOPE_MISMATCH",
+        targetId: result.result_id,
+        message: "기업·기간·연결 범위 또는 원문 숫자가 일치하지 않습니다.",
       });
-    } else if (question.sufficiency === "qualified") {
-      const accepted = await client.query(
-        `SELECT 1 FROM validation_decision
-         WHERE project_id = $1 AND target_type = 'question'
-           AND target_id = $2 AND action = 'ACCEPT_QUALIFIED'
-           AND validation_version_after <= $3
-         ORDER BY created_at DESC LIMIT 1`,
-        [projectId, question.questionId, validationVersion],
-      );
-      question.qualifiedAccepted = accepted.rows.length > 0;
-      if (!question.qualifiedAccepted) {
-        blockers.push({
-          code: "QUALIFIED_CONFIRMATION_REQUIRED",
-          targetId: question.questionId,
-          message: "조건부 근거의 한계를 확인해주세요.",
-        });
-      }
     }
   }
   for (const row of conflictRows.rows) {
@@ -2685,6 +3247,165 @@ async function recomputeStageGate(
   return { canProceed: blockers.length === 0, blockers, questions };
 }
 
+async function copyForwardValidationState(
+  client: TransactionClient,
+  input: {
+    projectId: string;
+    fromValidationRunId: string;
+    toValidationRunId: string;
+    scope: TargetedResearchRunScope;
+  },
+): Promise<void> {
+  const priorResults = await client.query<{
+    result_id: string;
+    category: "hypothesis" | "excel";
+    question_id: string | null;
+    target_id: string | null;
+    metric_id: string;
+    status_code: string | null;
+    title: string;
+    one_line_value: string;
+    stance: "supporting" | "contradicting" | "neutral";
+    machine_status: string;
+    exception_status: string;
+    value_original: string | null;
+    value_normalized: string | null;
+    unit: string | null;
+    currency: string | null;
+    period: string | null;
+    scope: string | null;
+    value_kind: string | null;
+    evidence_ids: string[];
+    required: boolean;
+    critical_numeric: boolean;
+    validated_at: Date;
+  }>(
+    `SELECT result_id, category, question_id, target_id, metric_id,
+       status_code, title, one_line_value, stance, machine_status,
+       exception_status, value_original, value_normalized, unit, currency,
+       period, scope, value_kind, evidence_ids, required, critical_numeric,
+       validated_at
+     FROM validation_result
+     WHERE project_id = $1 AND validation_run_id = $2
+       AND exception_status <> 'SUPERSEDED'
+       AND NOT (
+         ($3::text = 'question_metric' AND category = 'hypothesis'
+           AND question_id = $4::uuid AND metric_id = $5::text)
+         OR
+         ($3::text = 'excel_target' AND category = 'excel'
+           AND target_id = $6::text)
+       )`,
+    [
+      input.projectId,
+      input.fromValidationRunId,
+      input.scope.kind,
+      input.scope.kind === "question_metric" ? input.scope.questionId : null,
+      input.scope.kind === "question_metric" ? input.scope.metricId : null,
+      input.scope.kind === "excel_target" ? input.scope.targetId : null,
+    ],
+  );
+  const resultIdMap = new Map<string, string>();
+  for (const row of priorResults.rows) {
+    const resultId = uuidv7();
+    resultIdMap.set(row.result_id, resultId);
+    await client.query(
+      `INSERT INTO validation_result (
+         result_id, project_id, validation_run_id, category, question_id,
+         target_id, metric_id, status_code, title, one_line_value, stance,
+         machine_status, exception_status, value_original, value_normalized,
+         unit, currency, period, scope, value_kind, evidence_ids, required,
+         critical_numeric, validated_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+         $14, $15, $16, $17, $18, $19, $20, $21::uuid[], $22, $23, $24
+       )`,
+      [
+        resultId,
+        input.projectId,
+        input.toValidationRunId,
+        row.category,
+        row.question_id,
+        row.target_id,
+        row.metric_id,
+        row.status_code,
+        row.title,
+        row.one_line_value,
+        row.stance,
+        row.machine_status,
+        row.exception_status,
+        row.value_original,
+        row.value_normalized,
+        row.unit,
+        row.currency,
+        row.period,
+        row.scope,
+        row.value_kind,
+        row.evidence_ids,
+        row.required,
+        row.critical_numeric,
+        row.validated_at,
+      ],
+    );
+  }
+  if (resultIdMap.size > 0) {
+    const priorConflicts = await client.query<{
+      result_id: string;
+      candidate_evidence_ids: string[];
+      status: "unresolved" | "resolved";
+      selected_evidence_id: string | null;
+      resolved_at: Date | null;
+    }>(
+      `SELECT result_id, candidate_evidence_ids, status,
+         selected_evidence_id, resolved_at
+       FROM validation_conflict
+       WHERE project_id = $1 AND validation_run_id = $2
+         AND result_id = ANY($3::uuid[]) AND status <> 'superseded'`,
+      [
+        input.projectId,
+        input.fromValidationRunId,
+        [...resultIdMap.keys()],
+      ],
+    );
+    for (const conflict of priorConflicts.rows) {
+      const resultId = resultIdMap.get(conflict.result_id);
+      if (!resultId) continue;
+      await client.query(
+        `INSERT INTO validation_conflict (
+           conflict_id, project_id, validation_run_id, result_id,
+           candidate_evidence_ids, status, selected_evidence_id, resolved_at
+         ) VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7, $8)`,
+        [
+          uuidv7(),
+          input.projectId,
+          input.toValidationRunId,
+          resultId,
+          conflict.candidate_evidence_ids,
+          conflict.status,
+          conflict.selected_evidence_id,
+          conflict.resolved_at,
+        ],
+      );
+    }
+  }
+  await client.query(
+    `INSERT INTO validation_question_answer (
+       answer_id, project_id, validation_run_id, question_id, verdict,
+       one_line_answer, evidence_ids, caveat, policy_version, created_at
+     )
+     SELECT gen_random_uuid(), project_id, $3, question_id, verdict,
+       one_line_answer, evidence_ids, caveat, policy_version, created_at
+     FROM validation_question_answer
+     WHERE project_id = $1 AND validation_run_id = $2
+       AND ($4::uuid IS NULL OR question_id <> $4::uuid)`,
+    [
+      input.projectId,
+      input.fromValidationRunId,
+      input.toValidationRunId,
+      input.scope.kind === "question_metric" ? input.scope.questionId : null,
+    ],
+  );
+}
+
 export async function commitResearchValidationResult(
   jobId: string,
   payload: PhaseFourWorkerPayload,
@@ -2699,10 +3420,12 @@ export async function commitResearchValidationResult(
       approved_plan_resource_version_id: string;
       operation_status: string;
       requested_by_user_id: string;
+      run_kind: "initial" | "reinvestigation";
+      scope_json: ResearchRunScope;
     }>(
       `SELECT rr.research_run_id, rr.project_id,
          rr.approved_plan_resource_version_id, wj.operation_status,
-         wj.requested_by_user_id
+         wj.requested_by_user_id, rr.run_kind, rr.scope_json
        FROM research_run rr
        JOIN workflow_job wj ON wj.job_id = rr.job_id
        WHERE rr.job_id = $1
@@ -2734,6 +3457,120 @@ export async function commitResearchValidationResult(
       return { applied: false, disposition: "obsolete" };
     }
     const obsolete = snapshotDecision.decision === "obsolete";
+    const previousWorkspace = await client.query<{
+      validation_run_id: string;
+    }>(
+      `SELECT validation_run_id
+       FROM validation_workspace
+       WHERE project_id = $1`,
+      [run.project_id],
+    );
+    const previousValidationRunId =
+      previousWorkspace.rows[0]?.validation_run_id ?? null;
+    const approvedPlan = await client.query<{
+      plan_snapshot_json: ResearchPlanSnapshot;
+      cutoff_at: Date;
+      cutoff_date: string;
+      target_year: number;
+      target_quarter: number;
+      corp_code: string | null;
+      ticker: string;
+    }>(
+      `SELECT plan.plan_snapshot_json, plan.cutoff_at,
+         setup.cutoff_date::text, setup.target_year, setup.target_quarter,
+         company.corp_code, company.ticker
+       FROM research_plan_version plan
+       JOIN workflow_job_input setup_input
+         ON setup_input.job_id = $2
+        AND setup_input.input_role = 'project_setup'
+       JOIN project_setup_version setup
+         ON setup.resource_version_id = setup_input.resource_version_id
+       JOIN company_master company
+         ON company.company_master_id = setup.company_master_id
+       WHERE plan.resource_version_id = $1`,
+      [run.approved_plan_resource_version_id, jobId],
+    );
+    const approvedPlanRow = approvedPlan.rows[0];
+    const approvedSnapshot = approvedPlanRow?.plan_snapshot_json;
+    if (!approvedSnapshot || !approvedPlanRow) {
+      throw new ApiError(
+        409,
+        "PLAN_REVALIDATION_REQUIRED",
+        "승인된 조사 계획을 확인할 수 없습니다.",
+      );
+    }
+    const runScope = run.scope_json;
+    let scopedExcelTargets: ResearchExcelTarget[];
+    if (runScope.kind === "question_metric") {
+      scopedExcelTargets = [];
+    } else if (runScope.kind === "excel_target") {
+      const targetId = runScope.targetId;
+      scopedExcelTargets = approvedSnapshot.excelTargets.filter(
+        (target) => target.targetId === targetId,
+      );
+    } else {
+      scopedExcelTargets = approvedSnapshot.excelTargets;
+    }
+    const expectedExcelResults = collectOfficialExcelValues({
+      targets: scopedExcelTargets.map((target) =>
+        hydrateLegacyExcelTarget(target, {
+          targetYear: approvedPlanRow.target_year,
+          targetQuarter: approvedPlanRow.target_quarter,
+          cutoffDate: approvedPlanRow.cutoff_date,
+        }),
+      ),
+      sources: payload.sources,
+      cutoffAt: approvedPlanRow.cutoff_at.toISOString(),
+      corpCode: approvedPlanRow.corp_code,
+      ticker: approvedPlanRow.ticker,
+    });
+    if (
+      contentHash(expectedExcelResults) !==
+      contentHash(payload.excelResults)
+    ) {
+      throw new ApiError(
+        422,
+        "RESEARCH_RESULT_INVALID",
+        "Excel 공식값 결과가 서버 규칙 재계산과 일치하지 않습니다.",
+      );
+    }
+    let answerQuestions: ResearchPlanQuestion[];
+    if (runScope.kind === "excel_target") {
+      answerQuestions = [];
+    } else if (runScope.kind === "question_metric") {
+      const questionId = runScope.questionId;
+      answerQuestions = approvedSnapshot.questions.filter(
+        (question) => question.questionId === questionId,
+      );
+    } else {
+      answerQuestions = approvedSnapshot.questions;
+    }
+    const priorAnswerEvidence =
+      runScope.kind === "question_metric"
+        ? await loadPriorQuestionEvidence(client, run.project_id, runScope)
+        : [];
+    try {
+      validateQuestionAnswerSet({
+        questions: answerQuestions,
+        evidence: [...priorAnswerEvidence, ...payload.evidence],
+        answers: payload.questionAnswers,
+      });
+    } catch (error) {
+      throw new ApiError(
+        422,
+        "RESEARCH_RESULT_INVALID",
+        "질문 판정·한 줄 답변이 승인 계획과 검증 근거를 벗어났습니다.",
+        {
+          details: [
+            {
+              path: "questionAnswers",
+              code: "QUESTION_ANSWER_POLICY_MISMATCH",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        },
+      );
+    }
     const sourceVersionByKey = new Map<string, string>();
     const createdSourceVersionIds: string[] = [];
     for (const source of payload.sources) {
@@ -2834,12 +3671,23 @@ export async function commitResearchValidationResult(
         payload.metadata.finishedAt,
       ],
     );
-    const evidenceIdByCandidate = new Map<string, string>();
+    const hypothesisEvidence: Array<{
+      item: ValidatedEvidence;
+      evidenceId: string;
+    }> = [];
+    const sourceTypeByKey = new Map(
+      payload.sources.map((source) => [source.sourceKey, source.sourceType]),
+    );
     for (const item of payload.evidence) {
       const sourceVersionId = sourceVersionByKey.get(item.sourceKey);
       if (!sourceVersionId) continue;
       const normalized = quoteNormalized(item.quoteExact);
       const evidenceId = uuidv7();
+      const claim = classifyResearchClaim({
+        candidate: item,
+        sourceType: sourceTypeByKey.get(item.sourceKey) ?? "USER_MATERIAL",
+        machineStatus: item.machineStatus,
+      });
       await client.query(
         `INSERT INTO evidence (
            evidence_id, project_id, validation_run_id, source_version_id,
@@ -2873,37 +3721,277 @@ export async function commitResearchValidationResult(
           JSON.stringify(item.checks),
           JSON.stringify({
             candidateKey: item.candidateKey,
+            metricId: item.metricId,
+            title: item.title,
+            oneLineValue: item.oneLineValue,
             sourceKey: item.sourceKey,
+            claimType: claim.claimType,
+            allowedUsage: claim.usage,
             relations: ["normalized_from", "validated_from"],
           }),
         ],
       );
-      evidenceIdByCandidate.set(item.candidateKey, evidenceId);
+      hypothesisEvidence.push({ item, evidenceId });
+    }
+    const evidenceByMetric = new Map<
+      string,
+      Array<{ item: ValidatedEvidence; evidenceId: string }>
+    >();
+    for (const entry of hypothesisEvidence) {
+      const key = [
+        entry.item.questionId,
+        entry.item.metricId.trim(),
+        entry.item.period.trim(),
+        entry.item.scope.trim(),
+      ].join("\u0000");
+      const grouped = evidenceByMetric.get(key) ?? [];
+      grouped.push(entry);
+      evidenceByMetric.set(key, grouped);
+    }
+    for (const grouped of evidenceByMetric.values()) {
+      const representative =
+        grouped.find(({ item }) => item.machineStatus === "passed") ?? grouped[0];
+      if (!representative) continue;
+      const passedWithValues = grouped.filter(
+        ({ item }) =>
+          item.machineStatus === "passed" &&
+          item.valueNormalized !== null &&
+          item.valueNormalized.trim().length > 0,
+      );
+      const normalizedValues = new Set(
+        passedWithValues.map(({ item }) =>
+          [
+            canonicalResearchNumericValue(item.valueNormalized) ??
+              item.valueNormalized?.trim(),
+            item.unit?.trim() ?? "",
+            item.currency?.trim() ?? "",
+          ].join("\u0000"),
+        ),
+      );
+      const hasConflict =
+        passedWithValues.length >= 2 && normalizedValues.size >= 2;
+      const machineStatus = grouped.some(
+        ({ item }) => item.machineStatus === "passed",
+      )
+        ? "passed"
+        : grouped.some(({ item }) => item.machineStatus === "needs_review")
+          ? "needs_review"
+          : "failed";
+      const stances = new Set(grouped.map(({ item }) => item.stance));
       const resultId = uuidv7();
       await client.query(
         `INSERT INTO validation_result (
            result_id, project_id, validation_run_id, category, question_id,
-           target_id, title, one_line_value, stance, machine_status,
+           target_id, metric_id, status_code, title, one_line_value, stance, machine_status,
            exception_status, value_original, value_normalized, unit, currency,
            period, scope, value_kind, evidence_ids, required, critical_numeric,
            validated_at
-         ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-           'AVAILABLE', $11, $12, $13, $14, $15, $16, $17,
-           $18::uuid[], $19, $20, now()
-         )`,
+          ) VALUES (
+           $1, $2, $3, 'hypothesis', $4, NULL, $5, $6, $7, $8, $9, $10,
+           $11, $12, $13, $14, $15, $16, $17, $18,
+           $19::uuid[], $20, $21, now()
+          )`,
         [
           resultId,
           run.project_id,
           validationRunId,
-          item.category,
-          item.questionId,
-          item.targetId,
-          item.title,
-          item.machineStatus === "passed"
-            ? item.oneLineValue
+          representative.item.questionId,
+          representative.item.metricId,
+          hasConflict
+            ? "validation_conflict"
+            : machineStatus === "passed"
+              ? "validated"
+              : "validation_failed",
+          representative.item.title,
+          machineStatus === "passed"
+            ? representative.item.oneLineValue
             : "검증 실패",
-          item.stance,
+          stances.size === 1 ? representative.item.stance : "neutral",
+          machineStatus,
+          hasConflict ? "CONFLICT_UNRESOLVED" : "AVAILABLE",
+          representative.item.valueOriginal,
+          representative.item.valueNormalized,
+          representative.item.unit,
+          representative.item.currency,
+          representative.item.period,
+          representative.item.scope,
+          representative.item.valueKind,
+          grouped.map(({ evidenceId }) => evidenceId),
+          grouped.some(({ item }) => item.required),
+          grouped.some(({ item }) => item.criticalNumeric),
+        ],
+      );
+      if (hasConflict) {
+        await client.query(
+          `INSERT INTO validation_conflict (
+             conflict_id, project_id, validation_run_id, result_id,
+             candidate_evidence_ids, status
+           ) VALUES ($1, $2, $3, $4, $5::uuid[], 'unresolved')`,
+          [
+            uuidv7(),
+            run.project_id,
+            validationRunId,
+            resultId,
+            passedWithValues.map(({ evidenceId }) => evidenceId),
+          ],
+        );
+      }
+    }
+    const evidenceIdByCandidateKey = new Map(
+      hypothesisEvidence.map(({ item, evidenceId }) => [
+        item.candidateKey,
+        evidenceId,
+      ]),
+    );
+    if (
+      run.run_kind === "reinvestigation" &&
+      run.scope_json.kind === "question_metric" &&
+      previousValidationRunId
+    ) {
+      const priorCandidateEvidence = await client.query<{
+        evidence_id: string;
+        candidate_key: string;
+      }>(
+        `SELECT e.evidence_id,
+           e.provenance_json->>'candidateKey' AS candidate_key
+         FROM validation_result result
+         JOIN evidence e ON e.evidence_id = ANY(result.evidence_ids)
+         WHERE result.project_id = $1
+           AND result.validation_run_id = $2
+           AND result.category = 'hypothesis'
+           AND result.question_id = $3
+           AND result.metric_id <> $4
+           AND result.exception_status NOT IN (
+             'REJECTED', 'REINVESTIGATING', 'SUPERSEDED'
+           )
+           AND e.machine_status = 'passed'
+           AND e.provenance_json->>'candidateKey' IS NOT NULL`,
+        [
+          run.project_id,
+          previousValidationRunId,
+          run.scope_json.questionId,
+          run.scope_json.metricId,
+        ],
+      );
+      for (const row of priorCandidateEvidence.rows) {
+        evidenceIdByCandidateKey.set(row.candidate_key, row.evidence_id);
+      }
+    }
+    const answerQuestionIds = new Set<string>();
+    for (const answer of payload.questionAnswers) {
+      if (answerQuestionIds.has(answer.questionId)) {
+        throw new ApiError(
+          422,
+          "RESEARCH_RESULT_INVALID",
+          "질문 대표 답변이 중복되었습니다.",
+        );
+      }
+      answerQuestionIds.add(answer.questionId);
+      const evidenceIds = answer.evidenceCandidateKeys.map((candidateKey) => {
+        const evidenceId = evidenceIdByCandidateKey.get(candidateKey);
+        if (!evidenceId) {
+          throw new ApiError(
+            422,
+            "RESEARCH_RESULT_INVALID",
+            "질문 대표 답변이 검증되지 않은 근거를 참조합니다.",
+          );
+        }
+        return evidenceId;
+      });
+      if (answer.verdict !== "indeterminate" && evidenceIds.length === 0) {
+        throw new ApiError(
+          422,
+          "RESEARCH_RESULT_INVALID",
+          "질문 대표 답변에 검증 근거가 없습니다.",
+        );
+      }
+      await client.query(
+        `INSERT INTO validation_question_answer (
+           answer_id, project_id, validation_run_id, question_id, verdict,
+           one_line_answer, evidence_ids, caveat, policy_version
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9)`,
+        [
+          uuidv7(),
+          run.project_id,
+          validationRunId,
+          answer.questionId,
+          answer.verdict,
+          answer.oneLineAnswer,
+          evidenceIds,
+          answer.caveat,
+          answer.policyVersion,
+        ],
+      );
+    }
+    for (const item of payload.excelResults) {
+      const excelEvidenceIds: string[] = [];
+      for (const component of item.evidence) {
+        const sourceVersionId = sourceVersionByKey.get(component.sourceKey);
+        if (!sourceVersionId) continue;
+        const normalized = quoteNormalized(component.quoteExact);
+        const evidenceId = uuidv7();
+        await client.query(
+          `INSERT INTO evidence (
+             evidence_id, project_id, validation_run_id, source_version_id,
+             quote_exact, quote_normalized, quote_hash, locator_json,
+             value_original, value_normalized, unit, currency, period, scope,
+             value_kind, stance, machine_status, checks_json, provenance_json,
+             validated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8::jsonb,
+             $9, $10, $11, $12, $13, $14, $15, 'neutral', $16,
+             $17::jsonb, $18::jsonb, now()
+           )`,
+          [
+            evidenceId,
+            run.project_id,
+            validationRunId,
+            sourceVersionId,
+            component.quoteExact,
+            normalized,
+            contentHash(normalized),
+            JSON.stringify(component.locator),
+            component.valueOriginal,
+            component.valueNormalized,
+            component.unit,
+            component.currency,
+            component.period,
+            component.scope,
+            component.valueKind,
+            item.machineStatus,
+            JSON.stringify(component.checks),
+            JSON.stringify({
+              targetId: item.targetId,
+              metricId: item.metricId,
+              sourceKey: component.sourceKey,
+              selection: "deterministic_official_rule",
+              relations: ["selected_from", "normalized_from", "validated_from"],
+            }),
+          ],
+        );
+        excelEvidenceIds.push(evidenceId);
+      }
+      await client.query(
+        `INSERT INTO validation_result (
+           result_id, project_id, validation_run_id, category, question_id,
+           target_id, metric_id, status_code, title, one_line_value, stance,
+           machine_status, exception_status, value_original, value_normalized,
+           unit, currency, period, scope, value_kind, evidence_ids, required,
+           critical_numeric, validated_at
+         ) VALUES (
+           $1, $2, $3, 'excel', NULL, $4, $5, $6, $7, $8, 'neutral',
+           $9, 'AVAILABLE', $10, $11, $12, $13, $14, $15, $16,
+           $17::uuid[], $18, true, now()
+         )`,
+        [
+          uuidv7(),
+          run.project_id,
+          validationRunId,
+          item.targetId,
+          item.metricId,
+          item.statusCode,
+          item.title,
+          item.oneLineValue,
           item.machineStatus,
           item.valueOriginal,
           item.valueNormalized,
@@ -2912,11 +4000,23 @@ export async function commitResearchValidationResult(
           item.period,
           item.scope,
           item.valueKind,
-          [evidenceId],
+          excelEvidenceIds,
           item.required,
-          item.criticalNumeric,
         ],
       );
+    }
+    if (
+      !obsolete &&
+      run.run_kind === "reinvestigation" &&
+      run.scope_json.kind !== "full" &&
+      previousValidationRunId
+    ) {
+      await copyForwardValidationState(client, {
+        projectId: run.project_id,
+        fromValidationRunId: previousValidationRunId,
+        toValidationRunId: validationRunId,
+        scope: run.scope_json,
+      });
     }
     for (const sourceVersionId of createdSourceVersionIds) {
       await recordResourceDependencies(client, {
@@ -2965,6 +4065,13 @@ export async function commitResearchValidationResult(
     );
     const validationVersion = Number(current.rows[0]?.validation_version ?? 0) + 1;
     if (current.rows[0]) {
+      await client.query(
+        `UPDATE validation_conflict
+         SET status = 'superseded'
+         WHERE project_id = $1 AND validation_run_id <> $2
+           AND status <> 'superseded'`,
+        [run.project_id, validationRunId],
+      );
       await client.query(
         `UPDATE validation_result
          SET exception_status = 'SUPERSEDED'
@@ -3245,6 +4352,8 @@ export async function getValidationWorkspace(
       category: "hypothesis" | "excel";
       question_id: string | null;
       target_id: string | null;
+      metric_id: string;
+      status_code: string | null;
       title: string;
       one_line_value: string;
       stance: "supporting" | "contradicting" | "neutral";
@@ -3261,15 +4370,35 @@ export async function getValidationWorkspace(
       required: boolean;
       critical_numeric: boolean;
       validated_at: Date;
+      claim_types: string[];
+      source_types: string[];
     }>(
       `SELECT result_id, result_version, category, question_id, target_id,
+         metric_id, status_code,
          title, one_line_value, stance, machine_status, exception_status,
          value_original, value_normalized, unit, currency, period, scope,
-         value_kind, evidence_ids, required, critical_numeric, validated_at
+         value_kind, evidence_ids, required, critical_numeric, validated_at,
+         COALESCE(ARRAY(
+           SELECT DISTINCT e.provenance_json->>'claimType'
+           FROM evidence e
+           WHERE e.evidence_id = ANY(validation_result.evidence_ids)
+             AND e.provenance_json->>'claimType' IS NOT NULL
+         ), '{}'::text[]) AS claim_types,
+         COALESCE(ARRAY(
+           SELECT DISTINCT source_version.source_type
+           FROM evidence e
+           JOIN research_source_version source_version
+             ON source_version.resource_version_id = e.source_version_id
+           WHERE e.evidence_id = ANY(validation_result.evidence_ids)
+         ), '{}'::text[]) AS source_types
        FROM validation_result
-       WHERE project_id = $1 AND exception_status <> 'SUPERSEDED'
+       WHERE project_id = $1
+         AND validation_run_id = $2
+         AND machine_status = 'passed'
+         AND cardinality(evidence_ids) > 0
+         AND exception_status IN ('AVAILABLE', 'CONFLICT_RESOLVED')
        ORDER BY category, question_id NULLS LAST, validated_at`,
-      [projectId],
+      [projectId, workspace.validation_run_id],
     );
     const conflicts = await client.query<{
       conflict_id: string;
@@ -3335,6 +4464,8 @@ export async function getValidationWorkspace(
         category: row.category,
         questionId: row.question_id,
         targetId: row.target_id,
+        metricId: row.metric_id,
+        statusCode: row.status_code,
         title: row.title,
         oneLineValue: row.one_line_value,
         stance: row.stance,
@@ -3350,6 +4481,20 @@ export async function getValidationWorkspace(
         evidenceIds: row.evidence_ids,
         required: row.required,
         criticalNumeric: row.critical_numeric,
+        claimType:
+          row.claim_types.includes("calculation") ||
+          /calculated|calculation|computed|derived|계산|산출/i.test(
+            row.value_kind ?? "",
+          )
+            ? "calculation"
+            : row.claim_types.includes("company_statement") ||
+                (row.source_types.includes("COMPANY_IR") &&
+                  /전망|예상|계획|목표|가이던스|지속될|이어질|확대할|추진|forecast|outlook|guidance|plan|expect/i.test(
+                    [row.title, row.one_line_value].join(" "),
+                  ))
+              ? "company_statement"
+              : "fact",
+        sourceTypes: row.source_types,
         validatedAt: row.validated_at.toISOString(),
       })),
       conflicts: conflicts.rows.map((row) => ({
@@ -3374,7 +4519,14 @@ export async function getValidationResult(input: {
   resultId: string;
 }): Promise<unknown> {
   return withTransaction(async (client) => {
-    await ownedValidationWorkspace(client, input.projectId, input.userId);
+    const workspace = await ownedValidationWorkspace(
+      client,
+      input.projectId,
+      input.userId,
+    );
+    if (!workspace) {
+      throw new ApiError(404, "RESULT_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
+    }
     const result = await client.query<{
       result_id: string;
       title: string;
@@ -3386,8 +4538,12 @@ export async function getValidationResult(input: {
       `SELECT result_id, title, one_line_value, machine_status,
          exception_status, evidence_ids
        FROM validation_result
-       WHERE project_id = $1 AND result_id = $2`,
-      [input.projectId, input.resultId],
+       WHERE project_id = $1 AND result_id = $2
+         AND validation_run_id = $3
+         AND machine_status = 'passed'
+         AND cardinality(evidence_ids) > 0
+         AND exception_status IN ('AVAILABLE', 'CONFLICT_RESOLVED')`,
+      [input.projectId, input.resultId, workspace.validation_run_id],
     );
     if (!result.rows[0]) {
       throw new ApiError(404, "RESULT_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
@@ -3425,7 +4581,9 @@ export async function getValidationResult(input: {
        FROM evidence e
        JOIN research_source_version rsv
          ON rsv.resource_version_id = e.source_version_id
-       WHERE e.evidence_id = ANY($1::uuid[])`,
+       WHERE e.evidence_id = ANY($1::uuid[])
+         AND e.machine_status = 'passed'
+       ORDER BY array_position($1::uuid[], e.evidence_id)`,
       [result.rows[0].evidence_ids],
     );
     return {
@@ -3470,7 +4628,14 @@ export async function getEvidenceViewer(input: {
   evidenceId: string;
 }): Promise<unknown> {
   return withTransaction(async (client) => {
-    await ownedValidationWorkspace(client, input.projectId, input.userId);
+    const workspace = await ownedValidationWorkspace(
+      client,
+      input.projectId,
+      input.userId,
+    );
+    if (!workspace) {
+      throw new ApiError(404, "EVIDENCE_NOT_FOUND", "원문 근거를 찾을 수 없습니다.");
+    }
     const result = await client.query<{
       evidence_id: string;
       source_version_id: string;
@@ -3484,18 +4649,40 @@ export async function getEvidenceViewer(input: {
       collected_at: Date;
       response_hash: string;
       collector_version: string;
+      snapshot_json: Record<string, unknown>;
+      artifact_object_key: string | null;
     }>(
       `SELECT e.evidence_id, e.source_version_id, e.quote_exact,
          e.locator_json, rsv.source_type, rsv.title, rsv.publisher,
          rsv.canonical_url, rsv.published_at, rsv.collected_at,
-         rsv.response_hash, rsv.collector_version
+         rsv.response_hash, rsv.collector_version, rsv.snapshot_json,
+         rsv.artifact_object_key
        FROM evidence e
        JOIN research_source_version rsv
          ON rsv.resource_version_id = e.source_version_id
-       WHERE e.project_id = $1 AND e.evidence_id = $2`,
-      [input.projectId, input.evidenceId],
+       WHERE e.project_id = $1 AND e.evidence_id = $2
+         AND e.machine_status = 'passed'
+         AND EXISTS (
+           SELECT 1
+           FROM validation_result vr
+           WHERE vr.project_id = e.project_id
+             AND vr.validation_run_id = $3
+             AND e.evidence_id = ANY(vr.evidence_ids)
+             AND vr.machine_status = 'passed'
+             AND vr.exception_status IN ('AVAILABLE', 'CONFLICT_RESOLVED')
+         )`,
+      [input.projectId, input.evidenceId, workspace.validation_run_id],
     );
     const row = result.rows[0];
+    const locatorKind =
+      typeof row?.locator_json.kind === "string"
+        ? row.locator_json.kind
+        : null;
+    const objectKey =
+      row?.artifact_object_key ??
+      (typeof row?.locator_json.objectKey === "string"
+        ? row.locator_json.objectKey
+        : null);
     if (!row) {
       throw new ApiError(404, "EVIDENCE_NOT_FOUND", "원문 근거를 찾을 수 없습니다.");
     }
@@ -3503,9 +4690,15 @@ export async function getEvidenceViewer(input: {
       evidenceId: row.evidence_id,
       sourceVersionId: row.source_version_id,
       kind:
-        row.source_type === "NEWS" || row.source_type === "USER_MATERIAL"
-          ? "web"
-          : "structured_api",
+        locatorKind === "pdf"
+          ? "pdf"
+          : row.source_type === "DART"
+          ? "dart_financial_statement"
+          : locatorKind === "html" ||
+              row.source_type === "NEWS" ||
+              row.source_type === "USER_MATERIAL"
+            ? "web"
+            : "structured_api",
       title: row.title,
       publisher: row.publisher,
       canonicalUrl: row.canonical_url,
@@ -3513,6 +4706,11 @@ export async function getEvidenceViewer(input: {
       collectedAt: row.collected_at.toISOString(),
       quoteExact: row.quote_exact,
       locator: row.locator_json,
+      content: row.snapshot_json,
+      documentUrl:
+        locatorKind === "pdf" && objectKey
+          ? await createDownloadUrl(objectKey, 5 * 60)
+          : null,
       audit: {
         responseHash: row.response_hash,
         collectorVersion: row.collector_version,
@@ -3573,8 +4771,10 @@ export async function getValidationWorkbook(input: {
       `SELECT target_id, evidence_ids, value_normalized, one_line_value
        FROM validation_result
        WHERE project_id = $1 AND validation_run_id = $2
-         AND category = 'excel'
-         AND exception_status <> 'SUPERSEDED'`,
+          AND category = 'excel'
+          AND machine_status = 'passed'
+          AND cardinality(evidence_ids) > 0
+          AND exception_status IN ('AVAILABLE', 'CONFLICT_RESOLVED')`,
       [input.projectId, workspace.validation_run_id],
     );
     const preparation =
@@ -3616,6 +4816,9 @@ export async function getValidationWorkbook(input: {
     const application = latestApplication.rows[0] ?? null;
     const activePlan =
       application?.application_plan_json ?? preparation?.plan ?? null;
+    const verifiedTargetIds = new Set(
+      evidenceBindings.rows.map((binding) => binding.target_id),
+    );
     return {
       originalWorkbookHash: row.original_sha256,
       workbookVersion: 1,
@@ -3627,7 +4830,9 @@ export async function getValidationWorkbook(input: {
           sheet.visibility !== "hidden" && sheet.name !== "_REFLO_BRIDGE",
       ),
       cells: row.analysis_json.candidateCells ?? [],
-      validationTargets: row.plan_snapshot_json.excelTargets,
+      validationTargets: row.plan_snapshot_json.excelTargets.filter((target) =>
+        verifiedTargetIds.has(target.targetId),
+      ),
       evidenceBindings: evidenceBindings.rows.map((binding) => ({
         targetId: binding.target_id,
         evidenceIds: binding.evidence_ids,
@@ -3771,8 +4976,13 @@ export async function decideValidationResult(input: {
     }
     const result = await client.query<{
       exception_status: string;
+      category: "hypothesis" | "excel";
+      question_id: string | null;
+      target_id: string | null;
+      metric_id: string;
     }>(
-      `SELECT exception_status FROM validation_result
+      `SELECT exception_status, category, question_id, target_id, metric_id
+       FROM validation_result
        WHERE project_id = $1 AND result_id = $2
        FOR UPDATE`,
       [input.projectId, input.resultId],
@@ -3823,6 +5033,16 @@ export async function decideValidationResult(input: {
     );
     let job: { jobId: string; runId: string } | null = null;
     if (action === "REINVESTIGATE") {
+      if (
+        (row.category === "hypothesis" && !row.question_id) ||
+        (row.category === "excel" && !row.target_id)
+      ) {
+        throw new ApiError(
+          422,
+          "INVALID_RESULT_TRANSITION",
+          "재조사할 질문·지표 또는 Excel 셀 연결을 확인할 수 없습니다.",
+        );
+      }
       await client.query(
         `UPDATE validation_result SET exception_status = 'REINVESTIGATING'
          WHERE result_id = $1`,
@@ -3841,12 +5061,30 @@ export async function decideValidationResult(input: {
           "조사 계획을 다시 확인해주세요.",
         );
       }
+      const scope: TargetedResearchRunScope =
+        row.category === "hypothesis"
+          ? {
+              kind: "question_metric",
+              questionId: row.question_id!,
+              metricId: row.metric_id,
+            }
+          : {
+              kind: "excel_target",
+              targetId: row.target_id!,
+            };
+      const priorEvidence = await loadPriorQuestionEvidence(
+        client,
+        input.projectId,
+        scope,
+      );
       job = await createResearchJob(client, {
         context,
         plan,
         userId: input.userId,
         runKind: "reinvestigation",
         supersedesRunId: workspace.research_run_id,
+        scope,
+        priorEvidence,
       });
     } else {
       await client.query(
@@ -4002,11 +5240,120 @@ export async function decideValidationConflict(input: {
       [input.conflictId, input.selectedEvidenceId],
     );
     await client.query(
-      `UPDATE validation_result
-       SET exception_status = 'CONFLICT_RESOLVED', evidence_ids = ARRAY[$2::uuid]
-       WHERE result_id = $1`,
+      `UPDATE validation_result result
+       SET exception_status = 'CONFLICT_RESOLVED',
+           evidence_ids = ARRAY[evidence.evidence_id],
+           one_line_value = COALESCE(
+             NULLIF(evidence.provenance_json->>'oneLineValue', ''),
+             left(evidence.quote_exact, 500)
+           ),
+           stance = evidence.stance,
+           machine_status = evidence.machine_status,
+           status_code = 'validated',
+           value_original = evidence.value_original,
+           value_normalized = evidence.value_normalized,
+           unit = evidence.unit,
+           currency = evidence.currency,
+           period = evidence.period,
+           scope = evidence.scope,
+           value_kind = evidence.value_kind
+       FROM evidence
+       WHERE result.result_id = $1
+         AND evidence.evidence_id = $2`,
       [row.result_id, input.selectedEvidenceId],
     );
+    const resolvedResult = await client.query<{
+      question_id: string | null;
+      validation_run_id: string;
+    }>(
+      `SELECT question_id, validation_run_id
+       FROM validation_result
+       WHERE result_id = $1`,
+      [row.result_id],
+    );
+    const resolvedQuestionId = resolvedResult.rows[0]?.question_id ?? null;
+    if (resolvedQuestionId) {
+      const activeResults = await client.query<{
+        metric_id: string;
+        one_line_value: string;
+        stance: "supporting" | "contradicting" | "neutral";
+        evidence_ids: string[];
+      }>(
+        `SELECT metric_id, one_line_value, stance, evidence_ids
+         FROM validation_result
+         WHERE project_id = $1 AND validation_run_id = $2
+           AND question_id = $3 AND machine_status = 'passed'
+           AND exception_status NOT IN (
+             'REJECTED', 'REINVESTIGATING', 'SUPERSEDED',
+             'CONFLICT_UNRESOLVED'
+           )
+         ORDER BY validated_at, metric_id`,
+        [
+          input.projectId,
+          resolvedResult.rows[0]!.validation_run_id,
+          resolvedQuestionId,
+        ],
+      );
+      const question = await client.query<{ metrics: string[] }>(
+        `SELECT question.metrics
+         FROM validation_run validation
+         JOIN research_run research
+           ON research.research_run_id = validation.research_run_id
+         JOIN research_plan_question question
+           ON question.plan_resource_version_id =
+             research.approved_plan_resource_version_id
+          AND question.question_id = $3
+         WHERE validation.project_id = $1
+           AND validation.validation_run_id = $2`,
+        [
+          input.projectId,
+          resolvedResult.rows[0]!.validation_run_id,
+          resolvedQuestionId,
+        ],
+      );
+      const requiredMetricIds = question.rows[0]?.metrics;
+      if (
+        !Array.isArray(requiredMetricIds) ||
+        requiredMetricIds.length === 0 ||
+        requiredMetricIds.some(
+          (metricId) =>
+            typeof metricId !== "string" || metricId.trim().length === 0,
+        )
+      ) {
+        throw new ApiError(
+          409,
+          "QUESTION_VERDICT_POLICY_INVALID",
+          "질문의 필수 지표 판정 규칙을 다시 확인해주세요.",
+        );
+      }
+      const recomputed = decideStoredQuestionAnswer({
+        requiredMetricIds,
+        results: activeResults.rows.map(
+          (result): StoredQuestionResult => ({
+            metricId: result.metric_id,
+            oneLineValue: result.one_line_value,
+            stance: result.stance,
+            evidenceIds: result.evidence_ids,
+          }),
+        ),
+      });
+      await client.query(
+        `UPDATE validation_question_answer
+         SET verdict = $4, one_line_answer = $5,
+             evidence_ids = $6::uuid[], caveat = $7
+         WHERE project_id = $1 AND validation_run_id = $2
+           AND question_id = $3`,
+        [
+          input.projectId,
+          resolvedResult.rows[0]!.validation_run_id,
+          resolvedQuestionId,
+          recomputed.verdict,
+          recomputed.oneLineAnswer,
+          recomputed.evidenceIds,
+          recomputed.caveat,
+        ],
+      );
+    }
     await client.query(
       `UPDATE validation_workspace
        SET validation_version = $2, updated_at = now()

@@ -117,16 +117,10 @@ function sourcePolicy(metric: string): ResearchReportTarget["sourcePolicy"] {
     return [];
   }
   if (metric === "figure_5_chart") {
-    return [
-      { sourceType: "COMPANY_IR", role: "authority" },
-      { sourceType: "USER_MATERIAL", role: "verification" },
-    ];
+    return [];
   }
   if (/^(?:figure_4_chart|figure_6_chart|figure_7_chart)$/.test(metric)) {
-    return [
-      { sourceType: "DART", role: "authority" },
-      { sourceType: "COMPANY_IR", role: "verification" },
-    ];
+    return [{ sourceType: "DART", role: "authority" }];
   }
   if (metric === "current_price" || metric === "stock_price") {
     return [{ sourceType: "KRX", role: "authority" }];
@@ -391,6 +385,22 @@ function periodsFor(
   return singlePeriod(entry, plan, status, policy);
 }
 
+function deferCollectionPeriods(
+  periods: ReportCollectionPeriod[],
+  reason: string,
+): ReportCollectionPeriod[] {
+  return periods.map((period) =>
+    period.action === "collect" || period.action === "connect"
+      ? {
+          ...period,
+          action: "later_stage",
+          note: reason,
+          sourcePolicy: [],
+        }
+      : period,
+  );
+}
+
 export function buildResearchReportTargets(input: {
   entries: ReportMappingEntry[];
   periodPlan: ReportPeriodPlan;
@@ -408,20 +418,61 @@ export function buildResearchReportTargets(input: {
         deferredResolution: deferred?.resolution ?? null,
       });
       const policy = sourcePolicy(entry.metric);
+      const executableTargetIds = input.executableTargets
+        .filter(
+          (target) =>
+            target.mappingSlotIds.includes(entry.slotId) ||
+            (entry.candidate &&
+              target.sheetId === entry.candidate.sheetId),
+        )
+        .map((target) => target.targetId);
       const needsUnsupportedSource = policy.some(
         (item) => item.sourceType === "FNGUIDE_CONSENSUS",
       );
-      const status = needsUnsupportedSource
+      const baseStatus = statusFromReadiness(entry, readiness.state);
+      const unsupportedSourceReason = needsUnsupportedSource
+        ? "FnGuide 자동 수집은 현재 지원하지 않습니다. STEP 02에서 연결을 확인하거나 지원 가능한 출처로 변경해주세요."
+        : null;
+      const missingExecutableReason =
+        entry.metric !== "figure_5_chart" &&
+        baseStatus === "collection_required" &&
+        executableTargetIds.length === 0 &&
+        entry.required
+          ? "실행 가능한 Excel 입력 target이 없습니다. STEP 02에서 PDF·Excel 연결을 확인해주세요."
+          : null;
+      const deferralReason =
+        entry.metric === "figure_5_chart" &&
+          baseStatus === "collection_required"
+          ? "수주잔고는 공식 구조화 원천으로 자동 입력하지 않습니다. 연결한 IR 원문을 확인해 후속 입력 단계에서 갱신합니다."
+          : baseStatus === "collection_required" &&
+              executableTargetIds.length === 0 &&
+              !entry.required
+            ? "현재 자동 입력 target이 없습니다. 후속 Excel 입력 단계에서 갱신합니다."
+            : null;
+      const status = unsupportedSourceReason
         ? "connection_required"
-        : statusFromReadiness(entry, readiness.state);
-      const reasons =
-        needsUnsupportedSource
-          ? ["현재 FnGuide 자동 수집이 지원되지 않아 원본 연결이 필요합니다."]
-          : deferred?.resolution === "external_pending" && !entry.candidate
-          ? [
-              `${deferred.sourceLabel} 수집 후 ${deferred.destinationLabel}에 반영합니다.`,
-            ]
-          : readiness.reasons;
+        : missingExecutableReason
+          ? "connection_required"
+          : deferralReason
+            ? "later_stage"
+            : baseStatus;
+      const reasons = unsupportedSourceReason
+        ? [unsupportedSourceReason]
+        : missingExecutableReason
+          ? [missingExecutableReason]
+          : deferralReason
+            ? [deferralReason]
+            : deferred?.resolution === "external_pending" && !entry.candidate
+              ? [
+                  `${deferred.sourceLabel} 수집 후 ${deferred.destinationLabel}에 반영합니다.`,
+                ]
+              : readiness.reasons;
+      const basePeriods = periodsFor(
+        entry,
+        input.periodPlan,
+        status,
+        policy,
+      );
       return {
         targetId: entry.mappingEntryId,
         slotId: entry.slotId,
@@ -445,16 +496,11 @@ export function buildResearchReportTargets(input: {
           : null,
         destinationLabel: deferred?.destinationLabel ?? null,
         detectedPeriods: entry.candidate?.periodLabels ?? [],
-        periods: periodsFor(entry, input.periodPlan, status, policy),
+        periods: deferralReason
+          ? deferCollectionPeriods(basePeriods, deferralReason)
+          : basePeriods,
         sourcePolicy: policy,
-        executableTargetIds: input.executableTargets
-          .filter(
-            (target) =>
-              target.mappingSlotIds.includes(entry.slotId) ||
-              (entry.candidate &&
-                target.sheetId === entry.candidate.sheetId),
-          )
-          .map((target) => target.targetId),
+        executableTargetIds,
       } satisfies ResearchReportTarget;
     })
     .sort(

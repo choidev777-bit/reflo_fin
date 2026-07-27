@@ -21,6 +21,7 @@ function plan(): ResearchPlanSnapshot {
     questions: [1, 2, 3].map((order) => ({
       questionId: `question-${order}`,
       order,
+      role: "PERFORMANCE",
       text: `${order}번 조사 질문`,
       purpose: "투자 가설 확인",
       metrics: [`지표-${order}`],
@@ -31,6 +32,13 @@ function plan(): ResearchPlanSnapshot {
       collectionTargets: [{ label: `지표-${order}`, resultTypes: ["number"] }],
       sourceBindingIds: ["DART"],
       collectionMethods: { DART: "code_then_agent" },
+      verdictPolicy: {
+        version: "stance-balance-v1",
+        positive: "supporting_without_contradiction",
+        negative: "contradicting_without_support",
+        neutral: "mixed_or_neutral",
+        indeterminate: "missing_or_conflicting_required_metric",
+      },
       validationErrors: [],
     })),
     excelTargets: [
@@ -39,11 +47,21 @@ function plan(): ResearchPlanSnapshot {
         sheetId: "sheet-1",
         sheetName: "Valuation",
         address: "B12",
+        metricId: "revenue",
         metric: "매출액",
         period: "2026년 2분기",
+        periodSpec: {
+          type: "quarter",
+          year: 2026,
+          quarter: 2,
+          basis: "year_to_date",
+        },
         unit: "백만원",
+        targetUnit: "KRW_MILLION",
         scope: "연결",
+        scopeCode: "CFS",
         valueKind: "actual",
+        dartRuleId: "revenue-rule-v1",
         required: true,
         included: true,
         sourcePolicy: [{ sourceType: "DART", role: "authority" }],
@@ -73,7 +91,7 @@ test("공개 URL만 정규화하고 사설망·자격 증명 URL은 거부한다
   }
 });
 
-test("계획은 3~5개 질문과 필수 Excel 실제값 출처를 요구한다", () => {
+test("계획은 3~7개 질문과 필수 Excel 실제값 출처를 요구한다", () => {
   assert.deepEqual(validateResearchPlan(plan()), []);
 
   const invalid = plan();
@@ -84,6 +102,103 @@ test("계획은 3~5개 질문과 필수 Excel 실제값 출처를 요구한다",
   const codes = validateResearchPlan(invalid).map((issue) => issue.code);
   assert.ok(codes.includes("QUESTION_SOURCE_REQUIRED"));
   assert.ok(codes.includes("FNGUIDE_AUTHORITY_FORBIDDEN"));
+});
+
+test("FnGuide 컨센서스는 질문의 자동 수집 출처로 승인된다", () => {
+  const snapshot = plan();
+  snapshot.questions[0].sourceBindingIds = ["FNGUIDE_CONSENSUS"];
+  snapshot.questions[0].collectionMethods = {
+    FNGUIDE_CONSENSUS: "code",
+  };
+  assert.equal(
+    validateResearchPlan(snapshot).some(
+      (issue) => issue.code === "FNGUIDE_SOURCE_UNAVAILABLE",
+    ),
+    false,
+  );
+});
+
+test("FnGuide 직접 수집 실패 시 업로드 Excel 컨센서스를 fallback으로 사용한다", async () => {
+  const previous = {
+    researchFixture: process.env.REFLO_RESEARCH_TEST_FIXTURE,
+    llmFixture: process.env.REFLO_LLM_TEST_FIXTURE,
+  };
+  process.env.REFLO_RESEARCH_TEST_FIXTURE = "0";
+  process.env.REFLO_LLM_TEST_FIXTURE = "0";
+  mock.method(globalThis, "fetch", async () => {
+    throw new Error("network unavailable");
+  });
+  try {
+    const result = await collectResearchSources({
+      projectId: "project-1",
+      companyMasterId: "company-1",
+      companyName: "대덕전자",
+      corpCode: "00126380",
+      ticker: "353200",
+      exchange: "KOSPI",
+      targetYear: 2026,
+      targetQuarter: 1,
+      cutoffDate: "2026-04-30",
+      cutoffAt: "2026-04-30T23:59:59.999+09:00",
+      questions: [
+        {
+          questionId: "question-1",
+          order: 1,
+          role: "VALUATION",
+          text: "컨센서스 EPS와 PER은 얼마인가?",
+          purpose: "밸류에이션 확인",
+          metrics: ["EPS", "PER"],
+          period: "2026년",
+          comparison: "업종 평균",
+          suggestedSourceTypes: ["FNGUIDE_CONSENSUS"],
+          included: true,
+          collectionTargets: [
+            { label: "EPS", resultTypes: ["number"] },
+            { label: "PER", resultTypes: ["number"] },
+          ],
+          sourceBindingIds: ["FNGUIDE_CONSENSUS"],
+          collectionMethods: { FNGUIDE_CONSENSUS: "code" },
+          validationErrors: [],
+        },
+      ],
+      excelTargets: [],
+      userUrls: [],
+      sourceReferences: [],
+      workbookConsensusFallback: [
+        {
+          sheetId: "02_p1_Consensus",
+          sheetName: "02_p1_Consensus",
+          address: "C8",
+          label: "2026F EPS",
+          displayValue: "2579",
+          rawValue: 2579,
+          formula: "=_REFLO_BRIDGE!O8",
+        },
+      ],
+    });
+    assert.equal(result.sources[0]?.sourceType, "FNGUIDE_CONSENSUS");
+    assert.equal(
+      result.sources[0]?.locator.kind,
+      "workbook_consensus_fallback",
+    );
+    assert.ok(
+      result.warnings.some(
+        (warning) => warning.code === "FNGUIDE_EXCEL_FALLBACK_USED",
+      ),
+    );
+  } finally {
+    mock.restoreAll();
+    if (previous.researchFixture === undefined) {
+      delete process.env.REFLO_RESEARCH_TEST_FIXTURE;
+    } else {
+      process.env.REFLO_RESEARCH_TEST_FIXTURE = previous.researchFixture;
+    }
+    if (previous.llmFixture === undefined) {
+      delete process.env.REFLO_LLM_TEST_FIXTURE;
+    } else {
+      process.env.REFLO_LLM_TEST_FIXTURE = previous.llmFixture;
+    }
+  }
 });
 
 test("기업 IR을 선택하면 사용자 제공 PDF 또는 공식 URL을 요구한다", () => {
@@ -171,7 +286,7 @@ test("뉴스는 Excel 실제값의 권위 출처가 될 수 없다", () => {
   );
 });
 
-test("TD-020 충분성 판정은 부족·조건부·충분·재조사를 구분한다", () => {
+test("질문 상태는 검증 주장 유무와 실제 차단 사유만 반영한다", () => {
   const base = {
     requiredMetrics: ["매출액"],
     coveredMetrics: ["매출액", "영업이익"],
@@ -185,11 +300,27 @@ test("TD-020 충분성 판정은 부족·조건부·충분·재조사를 구분�
   };
   assert.equal(calculateQuestionSufficiency(base), "sufficient");
   assert.equal(
-    calculateQuestionSufficiency({ ...base, sourceCount: 1 }),
-    "qualified",
+    calculateQuestionSufficiency({
+      ...base,
+      coveredMetrics: ["매출액"],
+      evidenceCount: 2,
+    }),
+    "sufficient",
   );
   assert.equal(
-    calculateQuestionSufficiency({ ...base, coveredMetrics: [] }),
+    calculateQuestionSufficiency({ ...base, sourceCount: 1 }),
+    "sufficient",
+  );
+  assert.equal(
+    calculateQuestionSufficiency({
+      ...base,
+      coveredMetrics: [],
+      evidenceCount: 1,
+    }),
+    "sufficient",
+  );
+  assert.equal(
+    calculateQuestionSufficiency({ ...base, evidenceCount: 0 }),
     "insufficient",
   );
   assert.equal(
@@ -201,22 +332,23 @@ test("TD-020 충분성 판정은 부족·조건부·충분·재조사를 구분�
 test("Evidence는 원문 exact quote·기준일·기간·범위·숫자 정규화를 검사한다", () => {
   const source: ResearchSourceSnapshot = {
     sourceKey: "source-1",
-    sourceType: "DART",
+    sourceType: "COMPANY_IR",
     title: "공시 원문",
     publisher: "금융감독원",
     canonicalUrl: "https://dart.fss.or.kr/",
     publishedAt: "2026-07-20T00:00:00Z",
     collectedAt: "2026-07-25T00:00:00Z",
     responseHash: "a".repeat(64),
-    locator: { kind: "structured_api", jsonPointer: "/rows/0" },
-    content: { quote: "매출액은 1,200억원입니다." },
+    locator: { kind: "html", selector: "article" },
+    content: { body: "매출액은 1,200억원입니다." },
     collectorVersion: "test-v1",
   };
   const candidate: ResearchCandidate = {
     candidateKey: "candidate-1",
-    category: "excel",
-    questionId: null,
-    targetId: "target-1",
+    category: "hypothesis",
+    questionId: "question-1",
+    targetId: null,
+    metricId: "revenue",
     sourceKey: source.sourceKey,
     title: "매출액",
     quoteExact: "매출액은 1,200억원입니다.",
@@ -252,7 +384,7 @@ test("Evidence는 원문 exact quote·기준일·기간·범위·숫자 정규�
       { ...source, sourceType: "NEWS" },
       "2026-07-25T00:00:00Z",
     ).machineStatus,
-    "failed",
+    "passed",
   );
 });
 
@@ -318,8 +450,9 @@ test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사�
         JSON.stringify({
           StatisticSearch: {
             row: [
-              { TIME: "20260519", DATA_VALUE: "1380.5" },
               { TIME: "20260520", DATA_VALUE: "1375.2" },
+              { TIME: "20260521", DATA_VALUE: "1369.8" },
+              { TIME: "20260519", DATA_VALUE: "1380.5" },
             ],
           },
         }),
@@ -343,6 +476,7 @@ test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사�
         {
           questionId: "question-1",
           order: 1,
+          role: "DRIVER",
           text: "환율 환경은 실적에 어떤 영향을 주는가?",
           purpose: "투자 가설 확인",
           metrics: ["원/미국달러"],
@@ -406,7 +540,50 @@ test("DART 수집은 최근 연간 실적을 포함하고 기준일 이후 분�
     async (input: string | URL | Request) => {
       const url = String(input);
       requestedUrls.push(url);
-      const query = new URL(url).searchParams;
+      const parsedUrl = new URL(url);
+      const query = parsedUrl.searchParams;
+      if (parsedUrl.pathname.endsWith("/dsaf001/main.do")) {
+        return new Response(
+          `<script>
+            var node3 = {};
+            node3['text'] = "2-2. 연결 포괄손익계산서";
+            node3['rcpNo'] = "20260318000001";
+            node3['dcmNo'] = "11380598";
+            node3['eleId'] = "21";
+            node3['offset'] = "147587";
+            node3['length'] = "35625";
+            node3['dtd'] = "dart4.xsd";
+            node3['tocNo'] = "21";
+          </script>`,
+          { status: 200, headers: { "Content-Type": "text/html" } },
+        );
+      }
+      if (parsedUrl.pathname.endsWith("/report/viewer.do")) {
+        return new Response(
+          "<table><tr><td>매출액</td><td>1,065,290,000,000</td></tr></table>",
+          { status: 200, headers: { "Content-Type": "text/html" } },
+        );
+      }
+      if (parsedUrl.pathname.endsWith("/list.json")) {
+        const annual = query.get("bgn_de") === "20251201";
+        return new Response(
+          JSON.stringify(
+            annual
+              ? {
+                  status: "000",
+                  list: [
+                    {
+                      rcept_no: "20260318000001",
+                      rcept_dt: "20260318",
+                      report_nm: "사업보고서 (2025.12)",
+                    },
+                  ],
+                }
+              : { status: "013", list: [] },
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
       const annual = query.get("bsns_year") === "2025";
       return new Response(
         JSON.stringify({
@@ -442,6 +619,7 @@ test("DART 수집은 최근 연간 실적을 포함하고 기준일 이후 분�
         {
           questionId: "question-1",
           order: 1,
+          role: "PERFORMANCE",
           text: "최근 확정 실적은 무엇인가?",
           purpose: "실적 확인",
           metrics: ["매출액"],
@@ -462,11 +640,31 @@ test("DART 수집은 최근 연간 실적을 포함하고 기준일 이후 분�
       sourceReferences: [],
     });
 
-    assert.equal(requestedUrls.length, 2);
-    assert.match(requestedUrls[0] ?? "", /bsns_year=2025/);
-    assert.match(requestedUrls[0] ?? "", /reprt_code=11011/);
-    assert.match(requestedUrls[1] ?? "", /bsns_year=2026/);
-    assert.match(requestedUrls[1] ?? "", /reprt_code=11013/);
+    assert.equal(requestedUrls.length, 5);
+    assert.ok(
+      requestedUrls.some(
+        (url) => /list\.json/.test(url) && /bgn_de=20251201/.test(url),
+      ),
+    );
+    assert.ok(
+      requestedUrls.some(
+        (url) => /list\.json/.test(url) && /bgn_de=20260301/.test(url),
+      ),
+    );
+    assert.ok(
+      requestedUrls.some(
+        (url) => /fnlttSinglAcntAll\.json/.test(url) &&
+          /bsns_year=2025/.test(url) &&
+          /reprt_code=11011/.test(url),
+      ),
+    );
+    assert.ok(
+      requestedUrls.every(
+        (url) =>
+          !/fnlttSinglAcntAll\.json/.test(url) ||
+          !/bsns_year=2026/.test(url),
+      ),
+    );
     const source = result.sources[0];
     assert.equal(source?.publishedAt, "2026-03-18T00:00:00+09:00");
     const rows = source?.content.rows as Array<{
@@ -474,6 +672,13 @@ test("DART 수집은 최근 연간 실적을 포함하고 기준일 이후 분�
     }>;
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?._reflo_period, "2025년 연간");
+    const originals = source?.content.originalStatements as Array<{
+      statementCode?: string;
+      html?: string;
+    }>;
+    assert.equal(originals.length, 1);
+    assert.equal(originals[0]?.statementCode, "CIS");
+    assert.match(originals[0]?.html ?? "", /1,065,290,000,000/);
   } finally {
     mock.restoreAll();
     if (previous.apiKey === undefined) delete process.env.OPENDART_API_KEY;

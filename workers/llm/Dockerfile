@@ -4,8 +4,8 @@ WORKDIR /app
 COPY workers/llm/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY workers/llm/app.py .
-COPY docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md /app/docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md
+COPY docs/agents/HYPOTHESIS_AGENT_PROMPT_v4.md /app/docs/agents/HYPOTHESIS_AGENT_PROMPT_v4.md
 
-ENV HYPOTHESIS_PROMPT_PATH=/app/docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md
+ENV HYPOTHESIS_PROMPT_PATH=/app/docs/agents/HYPOTHESIS_AGENT_PROMPT_v4.md
 EXPOSE 8093
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8093"]

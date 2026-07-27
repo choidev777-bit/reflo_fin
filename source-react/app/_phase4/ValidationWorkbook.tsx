@@ -9,6 +9,7 @@ import type {
 function writeStatusLabel(
   status: ValidationWorkbookManifest["evidenceBindings"][number]["writeStatus"],
 ): string {
+  if (status === "awaiting_validation") return "근거 확인 완료";
   if (status === "applied") return "반영 완료";
   if (status === "applying") return "재계산 중";
   if (status === "blocked") return "반영 차단";
@@ -28,18 +29,20 @@ export function ValidationWorkbook({
   const sheetNames = useMemo(
     () =>
       Array.from(
-        new Set([
-          ...manifest.visibleSheets
-            .map((sheet) => sheet.name)
-            .filter((name): name is string => Boolean(name)),
-          ...manifest.validationTargets.map((target) => target.sheetName),
-        ]),
+        new Set(
+          manifest.validationTargets
+            .filter((target) => target.included)
+            .map((target) => target.sheetName),
+        ),
       ),
     [manifest],
   );
-  const [activeSheet, setActiveSheet] = useState(
+  const [selectedSheet, setSelectedSheet] = useState(
     sheetNames[0] ?? manifest.validationTargets[0]?.sheetName ?? "",
   );
+  const activeSheet = sheetNames.includes(selectedSheet)
+    ? selectedSheet
+    : sheetNames[0] ?? "";
   const visibleTargets = manifest.validationTargets.filter(
     (target) => target.sheetName === activeSheet,
   );
@@ -138,7 +141,7 @@ export function ValidationWorkbook({
             tabIndex={activeSheet === sheet ? 0 : -1}
             className={activeSheet === sheet ? "active" : ""}
             key={sheet}
-            onClick={() => setActiveSheet(sheet)}
+            onClick={() => setSelectedSheet(sheet)}
             onKeyDown={(event) => {
               const direction =
                 event.key === "ArrowRight"
@@ -150,7 +153,7 @@ export function ValidationWorkbook({
               event.preventDefault();
               const next =
                 sheetNames[(index + direction + sheetNames.length) % sheetNames.length];
-              setActiveSheet(next);
+              setSelectedSheet(next);
               event.currentTarget.parentElement
                 ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
                 [sheetNames.indexOf(next)]?.focus();

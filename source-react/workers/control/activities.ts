@@ -15,8 +15,16 @@ import {
   validateEvidenceCandidate,
   type NewsDiscoveryResult,
   type ResearchCandidate,
+  type ResearchSourceSnapshot,
   type ValidatedEvidence,
 } from "../../server/domain/research-validation";
+import { collectOfficialExcelValues } from "../../server/domain/official-excel-values";
+import {
+  decideQuestionAnswers,
+  indeterminateQuestionAnswer,
+  validateQuestionAnswer,
+  type ResearchQuestionAnswer,
+} from "../../server/domain/research-question-answers";
 import { createWorkerResultEnvelope } from "../../server/domain/worker-result-contract";
 import {
   collectResearchSources,
@@ -45,6 +53,7 @@ import {
   failReportDelivery,
   failReportMaterialization,
 } from "../../server/infrastructure/repositories/report-repository";
+import { runWithPeriodicHeartbeat } from "./activity-heartbeat";
 
 const internalApiUrl =
   process.env.REFLO_INTERNAL_API_URL?.replace(/\/$/, "") ||
@@ -54,6 +63,23 @@ if (!workerToken) {
   throw new Error("REFLO_WORKER_TOKEN is required.");
 }
 const controlWorkerTool = { name: "reflo-control", version: "1.0.0" };
+
+export async function runWithPeriodicActivityHeartbeat<T>(
+  phase: string,
+  operation: () => Promise<T>,
+  intervalMs = 10_000,
+  heartbeat?: (details: { phase: string }) => void,
+): Promise<T> {
+  const activityContext = heartbeat ? null : Context.current();
+  const emit =
+    heartbeat ??
+    ((details: { phase: string }) => activityContext!.heartbeat(details));
+  return runWithPeriodicHeartbeat(
+    operation,
+    () => emit({ phase }),
+    intervalMs,
+  );
+}
 
 async function internalPost(path: string, body: unknown): Promise<void> {
   const serializedBody = JSON.stringify(body);
@@ -210,9 +236,9 @@ export async function scanUpload(input: FileIngestWorkflowInput): Promise<void> 
   const bytes = await readObjectBytes(input.objectKey);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const base =
-    input.fileRole === "previous_report_pdf"
-      ? inspectPdf(bytes)
-      : await inspectWorkbook(bytes);
+    input.fileRole === "analysis_workbook"
+      ? await inspectWorkbook(bytes)
+      : inspectPdf(bytes);
   if (sha256 !== input.sha256) base.rejectionCodes.push("CHECKSUM_MISMATCH");
   const malwareStatus = await clamScan(bytes);
   if (malwareStatus === "infected") base.rejectionCodes.push("MALWARE_DETECTED");
@@ -593,6 +619,12 @@ export async function inspectAndFinalize(
     process.env.REFLO_EXCEL_WORKER_URL || "http://127.0.0.1:8092",
     input.workbook.objectKey,
   );
+  const currentIrPromise = input.currentIr
+    ? callIsolatedWorker<PdfInspectionResult>(
+        process.env.REFLO_PDF_WORKER_URL || "http://127.0.0.1:8091",
+        input.currentIr.objectKey,
+      )
+    : Promise.resolve(null);
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -602,9 +634,10 @@ export async function inspectAndFinalize(
     "PDF 레이아웃과 Excel 계산 모델을 분석하고 있습니다.",
   );
   const marketPricePromise = fetchKrxClosingPrice(input.marketData);
-  const [pdf, workbook, marketPrice] = await Promise.all([
+  const [pdf, workbook, currentIr, marketPrice] = await Promise.all([
     pdfPromise,
     workbookPromise,
+    currentIrPromise,
     marketPricePromise,
   ]);
   await recordJobProgress(
@@ -615,7 +648,7 @@ export async function inspectAndFinalize(
     80,
     "PDF 슬롯과 Excel 원본 후보를 의미 단위로 매핑하고 있습니다.",
   );
-  await finalizeInspection(input, pdf, workbook, marketPrice);
+  await finalizeInspection(input, pdf, workbook, currentIr, marketPrice);
 }
 
 export async function generateHypothesisQuestions(
@@ -634,9 +667,11 @@ export async function generateHypothesisQuestions(
     timeout,
     Context.current().cancellationSignal,
   ]);
-  const response = await fetch(
-    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/hypothesis/questions`,
-    {
+  const response = await runWithPeriodicActivityHeartbeat(
+    "generating_hypothesis_questions",
+    () => fetch(
+      `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/hypothesis/questions`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -660,7 +695,8 @@ export async function generateHypothesisQuestions(
         profile: input.agentProfile,
       }),
       signal,
-    },
+      },
+    ),
   );
   if (!response.ok) {
     throw new Error(
@@ -711,13 +747,166 @@ export async function generateHypothesisQuestions(
   );
 }
 
-async function callResearchAgent(
+const agentSourceChunkLimit = 28_000;
+const agentRequestSourceLimit = 44_000;
+
+function splitTextWindows(value: string, limit = agentSourceChunkLimit): string[] {
+  if (value.length <= limit) return [value];
+  const overlap = 500;
+  const windows: string[] = [];
+  for (let start = 0; start < value.length; start += limit - overlap) {
+    windows.push(value.slice(start, start + limit));
+  }
+  return windows;
+}
+
+function sourceProjectionChunks(
+  source: ResearchSourceSnapshot,
+): ResearchSourceSnapshot[] {
+  const pages = Array.isArray(source.content.pages)
+    ? source.content.pages.filter(
+        (page): page is { pageNumber: number; text: string } =>
+          Boolean(
+            page &&
+              typeof page === "object" &&
+              typeof (page as { pageNumber?: unknown }).pageNumber === "number" &&
+              typeof (page as { text?: unknown }).text === "string",
+          ),
+      )
+    : [];
+  if (pages.length > 0) {
+    const projectedPages = pages.flatMap((page) =>
+      splitTextWindows(page.text).map((text, segmentIndex) => ({
+        ...page,
+        text,
+        segmentIndex,
+      })),
+    );
+    const groups: typeof projectedPages[] = [];
+    let group: typeof projectedPages = [];
+    let size = 0;
+    for (const page of projectedPages) {
+      const pageSize = JSON.stringify(page).length;
+      if (group.length > 0 && size + pageSize > agentSourceChunkLimit) {
+        groups.push(group);
+        group = [];
+        size = 0;
+      }
+      group.push(page);
+      size += pageSize;
+    }
+    if (group.length > 0) groups.push(group);
+    return groups.map((projected, index) => ({
+      ...source,
+      locator: {
+        ...source.locator,
+        agentProjection: { kind: "pdf_pages", index, count: groups.length },
+      },
+      content: { ...source.content, pages: projected },
+    }));
+  }
+
+  const rows = Array.isArray(source.content.rows)
+    ? source.content.rows.filter(
+        (row): row is Record<string, unknown> =>
+          Boolean(row && typeof row === "object" && !Array.isArray(row)),
+      )
+    : [];
+  if (rows.length > 0) {
+    const groups: Array<Array<Record<string, unknown>>> = [];
+    let group: Array<Record<string, unknown>> = [];
+    let size = 0;
+    for (const row of rows) {
+      const rowSize = JSON.stringify(row).length;
+      if (group.length > 0 && size + rowSize > agentSourceChunkLimit) {
+        groups.push(group);
+        group = [];
+        size = 0;
+      }
+      group.push(row);
+      size += rowSize;
+    }
+    if (group.length > 0) groups.push(group);
+    return groups.map((projected, index) => ({
+      ...source,
+      locator: {
+        ...source.locator,
+        agentProjection: { kind: "structured_rows", index, count: groups.length },
+      },
+      content: { ...source.content, rows: projected },
+    }));
+  }
+
+  const body =
+    typeof source.content.body === "string" ? source.content.body : null;
+  if (body && body.length > agentSourceChunkLimit) {
+    const windows = splitTextWindows(body);
+    return windows.map((projected, index) => ({
+      ...source,
+      locator: {
+        ...source.locator,
+        agentProjection: { kind: "web_text", index, count: windows.length },
+      },
+      content: { ...source.content, body: projected },
+    }));
+  }
+  return [source];
+}
+
+function groupSourceProjections(
+  sources: ResearchSourceSnapshot[],
+): ResearchSourceSnapshot[][] {
+  const groups: ResearchSourceSnapshot[][] = [];
+  let group: ResearchSourceSnapshot[] = [];
+  let size = 0;
+  for (const source of sources.flatMap(sourceProjectionChunks)) {
+    const sourceSize = JSON.stringify(source).length;
+    if (group.length > 0 && size + sourceSize > agentRequestSourceLimit) {
+      groups.push(group);
+      group = [];
+      size = 0;
+    }
+    group.push(source);
+    size += sourceSize;
+  }
+  if (group.length > 0) groups.push(group);
+  return groups;
+}
+
+function questionsForSources(
   input: ResearchValidationWorkflowInput,
-  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+  sources: ResearchSourceSnapshot[],
+): ResearchValidationWorkflowInput["questions"] {
+  const linkedIds = new Set(
+    sources.flatMap((source) =>
+      Array.isArray(source.locator.questionIds)
+        ? source.locator.questionIds.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [],
+    ),
+  );
+  const sourceTypes = new Set(sources.map((source) => source.sourceType));
+  return input.questions.filter(
+    (question) =>
+      question.included &&
+      (linkedIds.has(question.questionId) ||
+        question.sourceBindingIds.some((sourceType) =>
+          sourceTypes.has(sourceType),
+        )),
+  );
+}
+
+async function callResearchAgentBatch(
+  input: ResearchValidationWorkflowInput,
+  questions: ResearchValidationWorkflowInput["questions"],
+  sources: ResearchSourceSnapshot[],
 ): Promise<ResearchCandidate[]> {
-  const response = await fetch(
-    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/candidates`,
-    {
+  const response = await runWithPeriodicActivityHeartbeat(
+    "extracting_research_candidates",
+    () => fetch(
+      `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/candidates`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -726,8 +915,7 @@ async function callResearchAgent(
           ticker: input.ticker,
           targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
           cutoffAt: input.cutoffAt,
-          questions: input.questions,
-          excelTargets: input.excelTargets,
+          questions,
           sources,
           approvedPlanResourceVersionId:
             input.approvedPlanResourceVersionId,
@@ -738,7 +926,8 @@ async function callResearchAgent(
         AbortSignal.timeout(120_000),
         Context.current().cancellationSignal,
       ]),
-    },
+      },
+    ),
   );
   if (!response.ok) {
     throw new Error(
@@ -748,19 +937,79 @@ async function callResearchAgent(
   const payload = (await response.json()) as {
     candidates?: ResearchCandidate[];
   };
-  if (!Array.isArray(payload.candidates)) {
+  const approvedMetrics = new Map(
+    questions
+      .filter((question) => question.included)
+      .map((question) => [question.questionId, new Set(question.metrics)]),
+  );
+  const sourceKeys = new Set(sources.map((source) => source.sourceKey));
+  const candidateKeys = new Set<string>();
+  if (
+    !Array.isArray(payload.candidates) ||
+    payload.candidates.some(
+      (candidate) => {
+        const duplicate = candidateKeys.has(candidate.candidateKey);
+        candidateKeys.add(candidate.candidateKey);
+        return (
+          duplicate ||
+          candidate.category !== "hypothesis" ||
+          candidate.targetId !== null ||
+          !sourceKeys.has(candidate.sourceKey) ||
+          (candidate.calculation !== null &&
+            candidate.calculation !== undefined &&
+            [
+              ...candidate.calculation.currentTerms,
+              ...candidate.calculation.comparisonTerms,
+            ].some(
+              (term) =>
+                !sourceKeys.has(term.sourceKey) ||
+                !term.quoteExact
+                  .replaceAll(/[,\s]/g, "")
+                  .includes(term.valueOriginal.replaceAll(/[,\s]/g, "")),
+            )) ||
+          !approvedMetrics
+            .get(candidate.questionId)
+            ?.has(candidate.metricId)
+        );
+      },
+    )
+  ) {
     throw new Error("RESEARCH_AGENT_OUTPUT_INVALID");
   }
   return payload.candidates;
 }
 
+async function callResearchAgent(
+  input: ResearchValidationWorkflowInput,
+  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+): Promise<ResearchCandidate[]> {
+  const candidates: ResearchCandidate[] = [];
+  const candidateKeys = new Set<string>();
+  for (const sourceGroup of groupSourceProjections(sources)) {
+    const questions = questionsForSources(input, sourceGroup);
+    if (questions.length === 0) continue;
+    const batch = await callResearchAgentBatch(input, questions, sourceGroup);
+    for (const candidate of batch) {
+      if (candidateKeys.has(candidate.candidateKey)) {
+        throw new Error("RESEARCH_AGENT_OUTPUT_INVALID");
+      }
+      candidateKeys.add(candidate.candidateKey);
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
 async function callNewsSearchAgent(
   input: ResearchValidationWorkflowInput,
+  onlyQuestionId?: string,
 ): Promise<NewsDiscoveryResult[]> {
   const questions = input.questions
     .filter(
       (question) =>
-        question.included && question.sourceBindingIds.includes("NEWS"),
+        question.included &&
+        question.sourceBindingIds.includes("NEWS") &&
+        (!onlyQuestionId || question.questionId === onlyQuestionId),
     )
     .map((question) => {
       if (!question.newsSearchPolicy) {
@@ -786,48 +1035,62 @@ async function callNewsSearchAgent(
       };
     });
   if (questions.length === 0) return [];
-  const response = await fetch(
-    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/news-search`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: {
-          company: input.companyName,
-          ticker: input.ticker,
-          industry: input.industry,
-          cutoffAt: input.cutoffAt,
-          questions,
-          approvedPlanResourceVersionId:
-            input.approvedPlanResourceVersionId,
-        },
-        profile: input.researchAgentProfile,
+  if (onlyQuestionId && questions.length !== 1) {
+    throw new Error(`NEWS_SEARCH_POLICY_INVALID:${onlyQuestionId}`);
+  }
+  const discovered = (
+    await Promise.all(
+      questions.map(async (question) => {
+        const response = await runWithPeriodicActivityHeartbeat(
+          "planning_news_search",
+          () =>
+            fetch(
+              `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/research/news-search`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  input: {
+                    company: input.companyName,
+                    ticker: input.ticker,
+                    industry: input.industry,
+                    cutoffAt: input.cutoffAt,
+                    questions: [question],
+                    approvedPlanResourceVersionId:
+                      input.approvedPlanResourceVersionId,
+                  },
+                  profile: input.researchAgentProfile,
+                }),
+                signal: AbortSignal.any([
+                  AbortSignal.timeout(300_000),
+                  Context.current().cancellationSignal,
+                ]),
+              },
+            ),
+        );
+        if (!response.ok) {
+          const code =
+            response.status === 429
+              ? "NEWS_SEARCH_RATE_LIMITED"
+              : "NEWS_SEARCH_PROVIDER_UNAVAILABLE";
+          throw new Error(`${code}:${(await response.text()).slice(0, 300)}`);
+        }
+        const payload = (await response.json()) as {
+          results?: NewsDiscoveryResult[];
+        };
+        if (!Array.isArray(payload.results)) {
+          throw new Error("NEWS_QUERY_PLAN_INVALID");
+        }
+        return payload.results;
       }),
-      signal: AbortSignal.any([
-        AbortSignal.timeout(120_000),
-        Context.current().cancellationSignal,
-      ]),
-    },
-  );
-  if (!response.ok) {
-    const code =
-      response.status === 429
-        ? "NEWS_SEARCH_RATE_LIMITED"
-        : "NEWS_SEARCH_PROVIDER_UNAVAILABLE";
-    throw new Error(`${code}:${(await response.text()).slice(0, 300)}`);
-  }
-  const payload = (await response.json()) as {
-    results?: NewsDiscoveryResult[];
-  };
-  if (!Array.isArray(payload.results)) {
-    throw new Error("NEWS_QUERY_PLAN_INVALID");
-  }
+    )
+  ).flat();
   const questionById = new Map(
     questions.map((question) => [question.questionId, question]),
   );
   const queryIdsByQuestion = new Map<string, Set<string>>();
   const resultCountByQuestion = new Map<string, number>();
-  for (const result of payload.results) {
+  for (const result of discovered) {
     const question = questionById.get(result.questionId);
     if (
       !question ||
@@ -869,17 +1132,101 @@ async function callNewsSearchAgent(
       throw new Error("NEWS_QUERY_PLAN_INVALID");
     }
   }
-  return payload.results;
+  return discovered.map((result) => {
+    const hint = result.publishedAtHint?.trim() || null;
+    if (!hint) return { ...result, publishedAtHint: null };
+    if (/^\d{4}-\d{2}-\d{2}$/.test(hint)) {
+      return {
+        ...result,
+        publishedAtHint: `${hint}T00:00:00+09:00`,
+      };
+    }
+    const localDateTime = hint.match(
+      /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?$/,
+    );
+    if (localDateTime) {
+      const normalized = `${localDateTime[1]}T${localDateTime[2]}:${localDateTime[3] ?? "00"}+09:00`;
+      return {
+        ...result,
+        publishedAtHint: Number.isFinite(Date.parse(normalized))
+          ? normalized
+          : null,
+      };
+    }
+    if (
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+        hint,
+      ) ||
+      !Number.isFinite(Date.parse(hint))
+    ) {
+      return { ...result, publishedAtHint: null };
+    }
+    return result;
+  });
 }
 
-async function callValidationAgent(
+function sourceExcerptForQuotes(
+  source: ResearchSourceSnapshot,
+  quotes: string[],
+): ResearchSourceSnapshot {
+  const pages = Array.isArray(source.content.pages)
+    ? source.content.pages.filter(
+        (page): page is { pageNumber: number; text: string } =>
+          Boolean(
+            page &&
+              typeof page === "object" &&
+              typeof (page as { pageNumber?: unknown }).pageNumber === "number" &&
+              typeof (page as { text?: unknown }).text === "string" &&
+              quotes.some((quote) =>
+                (page as { text: string }).text.includes(quote),
+              ),
+          ),
+      )
+    : [];
+  if (pages.length > 0) return { ...source, content: { ...source.content, pages } };
+
+  const rows = Array.isArray(source.content.rows)
+    ? source.content.rows.filter(
+        (row): row is Record<string, unknown> =>
+          Boolean(
+            row &&
+              typeof row === "object" &&
+              !Array.isArray(row) &&
+              quotes.some((quote) => JSON.stringify(row).includes(quote)),
+          ),
+      )
+    : [];
+  if (rows.length > 0) return { ...source, content: { ...source.content, rows } };
+
+  const body =
+    typeof source.content.body === "string" ? source.content.body : null;
+  if (body) {
+    const excerpts = quotes.flatMap((quote) => {
+      const index = body.indexOf(quote);
+      return index < 0
+        ? []
+        : [body.slice(Math.max(0, index - 1_500), index + quote.length + 1_500)];
+    });
+    if (excerpts.length > 0) {
+      return {
+        ...source,
+        content: { ...source.content, body: excerpts.join("\n\n") },
+      };
+    }
+  }
+  return source;
+}
+
+async function callValidationAgentBatch(
   input: ResearchValidationWorkflowInput,
-  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+  sources: ResearchSourceSnapshot[],
   candidates: ResearchCandidate[],
 ): Promise<ResearchCandidate[]> {
-  const response = await fetch(
-    `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/validation/evidence`,
-    {
+  const response = await runWithPeriodicActivityHeartbeat(
+    "validating_hypothesis_evidence",
+    () => fetch(
+      `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/validation/evidence`,
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -897,7 +1244,8 @@ async function callValidationAgent(
         AbortSignal.timeout(120_000),
         Context.current().cancellationSignal,
       ]),
-    },
+      },
+    ),
   );
   if (!response.ok) {
     throw new Error(
@@ -907,15 +1255,204 @@ async function callValidationAgent(
   const payload = (await response.json()) as {
     candidates?: ResearchCandidate[];
   };
-  if (!Array.isArray(payload.candidates)) {
+  const inputByKey = new Map(
+    candidates.map((candidate) => [candidate.candidateKey, candidate]),
+  );
+  const fields: Array<keyof ResearchCandidate> = [
+    "candidateKey",
+    "category",
+    "questionId",
+    "targetId",
+    "metricId",
+    "sourceKey",
+    "title",
+    "quoteExact",
+    "oneLineValue",
+    "valueOriginal",
+    "valueNormalized",
+    "unit",
+    "currency",
+    "period",
+    "scope",
+    "valueKind",
+    "stance",
+    "required",
+    "criticalNumeric",
+    "calculation",
+  ];
+  const returnedKeys = new Set<string>();
+  if (
+    !Array.isArray(payload.candidates) ||
+    payload.candidates.some(
+      (candidate) => {
+        const original = inputByKey.get(candidate.candidateKey);
+        const duplicate = returnedKeys.has(candidate.candidateKey);
+        returnedKeys.add(candidate.candidateKey);
+        return (
+          duplicate ||
+          !original ||
+          fields.some(
+            (field) =>
+              JSON.stringify(candidate[field]) !==
+              JSON.stringify(original[field]),
+          )
+        );
+      },
+    )
+  ) {
     throw new Error("VALIDATION_AGENT_OUTPUT_INVALID");
   }
   return payload.candidates;
 }
 
-export async function planNewsSearch(
+async function callValidationAgent(
   input: ResearchValidationWorkflowInput,
-): Promise<NewsDiscoveryResult[]> {
+  sources: Awaited<ReturnType<typeof collectResearchSources>>["sources"],
+  candidates: ResearchCandidate[],
+): Promise<ResearchCandidate[]> {
+  const sourceByKey = new Map(
+    sources.map((source) => [source.sourceKey, source]),
+  );
+  const accepted: ResearchCandidate[] = [];
+  for (let start = 0; start < candidates.length; start += 12) {
+    const batch = candidates.slice(start, start + 12);
+    const quotesBySource = new Map<string, string[]>();
+    for (const candidate of batch) {
+      const references = [
+        { sourceKey: candidate.sourceKey, quoteExact: candidate.quoteExact },
+        ...(candidate.calculation
+          ? [
+              ...candidate.calculation.currentTerms,
+              ...candidate.calculation.comparisonTerms,
+            ]
+          : []),
+      ];
+      for (const reference of references) {
+        const quotes = quotesBySource.get(reference.sourceKey) ?? [];
+        quotes.push(reference.quoteExact);
+        quotesBySource.set(reference.sourceKey, quotes);
+      }
+    }
+    const projectedSources = [...quotesBySource.entries()].map(
+      ([sourceKey, quotes]) => {
+        const source = sourceByKey.get(sourceKey);
+        if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
+        return sourceExcerptForQuotes(source, quotes);
+      },
+    );
+    accepted.push(
+      ...(await callValidationAgentBatch(input, projectedSources, batch)),
+    );
+  }
+  return accepted;
+}
+
+async function synthesizeQuestionAnswers(
+  input: ResearchValidationWorkflowInput,
+  evidence: ValidatedEvidence[],
+): Promise<ResearchQuestionAnswer[]> {
+  const combinedEvidence = [...(input.priorEvidence ?? []), ...evidence];
+  const candidateKeys = new Set<string>();
+  for (const item of combinedEvidence) {
+    if (candidateKeys.has(item.candidateKey)) {
+      throw new Error("EVIDENCE_CANDIDATE_KEY_CONFLICT");
+    }
+    candidateKeys.add(item.candidateKey);
+  }
+  const decisions = decideQuestionAnswers({
+    questions: input.answerQuestions ?? input.questions,
+    evidence: combinedEvidence,
+  });
+  const ready = decisions.filter((decision) => decision.readyForSynthesis);
+  let generated: ResearchQuestionAnswer[] = [];
+  if (ready.length > 0) {
+    if (
+      process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
+      process.env.REFLO_LLM_TEST_FIXTURE === "1"
+    ) {
+      generated = ready.map((decision) => ({
+        questionId: decision.question.questionId,
+        verdict: decision.verdict,
+        oneLineAnswer: decision.evidence
+          .slice(0, 3)
+          .map((item) => item.oneLineValue)
+          .join("; ")
+          .slice(0, 500),
+        evidenceCandidateKeys: decision.evidence.map(
+          (item) => item.candidateKey,
+        ),
+        caveat: null,
+        policyVersion: decision.policyVersion,
+      }));
+    } else {
+      const response = await runWithPeriodicActivityHeartbeat(
+        "synthesizing_question_answers",
+        () => fetch(
+          `${(process.env.REFLO_LLM_WORKER_URL || "http://127.0.0.1:8093").replace(/\/$/, "")}/validation/question-answers`,
+          {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input: {
+              company: input.companyName,
+              targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
+              questions: ready.map((decision) => ({
+                questionId: decision.question.questionId,
+                question: decision.question.text,
+                verdict: decision.verdict,
+                policyVersion: decision.policyVersion,
+                evidence: decision.evidence.map((item) => ({
+                  candidateKey: item.candidateKey,
+                  metricId: item.metricId,
+                  quoteExact: item.quoteExact,
+                  oneLineValue: item.oneLineValue,
+                  valueOriginal: item.valueOriginal,
+                  valueNormalized: item.valueNormalized,
+                  unit: item.unit,
+                  period: item.period,
+                  stance: item.stance,
+                })),
+              })),
+            },
+            profile: input.validationAgentProfile,
+          }),
+          signal: AbortSignal.any([
+            AbortSignal.timeout(120_000),
+            Context.current().cancellationSignal,
+          ]),
+          },
+        ),
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Question Answer Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+        );
+      }
+      const payload = (await response.json()) as {
+        answers?: ResearchQuestionAnswer[];
+      };
+      if (!Array.isArray(payload.answers)) {
+        throw new Error("QUESTION_ANSWER_AGENT_OUTPUT_INVALID");
+      }
+      generated = payload.answers;
+    }
+  }
+  const generatedByQuestion = new Map(
+    generated.map((answer) => [answer.questionId, answer]),
+  );
+  return decisions.map((decision) => {
+    if (!decision.readyForSynthesis) {
+      return indeterminateQuestionAnswer(decision);
+    }
+    const answer = generatedByQuestion.get(decision.question.questionId);
+    if (!answer) throw new Error("QUESTION_ANSWER_MISSING");
+    return validateQuestionAnswer(answer, decision);
+  });
+}
+
+export async function prepareNewsSearch(
+  input: ResearchValidationWorkflowInput,
+): Promise<boolean> {
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -928,12 +1465,12 @@ export async function planNewsSearch(
     (question) =>
       question.included && question.sourceBindingIds.includes("NEWS"),
   );
-  if (!hasNews) return [];
+  if (!hasNews) return false;
   if (
     process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
     process.env.REFLO_LLM_TEST_FIXTURE === "1"
   ) {
-    return [];
+    return false;
   }
   await recordJobProgress(
     input.jobId,
@@ -951,7 +1488,21 @@ export async function planNewsSearch(
     30,
     "설정된 기간 안에서 실제 뉴스 원문을 검색하고 있습니다.",
   );
-  return callNewsSearchAgent(input);
+  return true;
+}
+
+export async function planNewsSearchQuestion(
+  input: ResearchValidationWorkflowInput,
+  questionId: string,
+): Promise<NewsDiscoveryResult[]> {
+  return callNewsSearchAgent(input, questionId);
+}
+
+export async function planNewsSearch(
+  input: ResearchValidationWorkflowInput,
+): Promise<NewsDiscoveryResult[]> {
+  const shouldSearch = await prepareNewsSearch(input);
+  return shouldSearch ? callNewsSearchAgent(input) : [];
 }
 
 export async function collectResearchBundle(
@@ -972,24 +1523,109 @@ export async function collectResearchBundle(
       ? "기사 원문과 발행일을 확인하고 공식 자료를 함께 수집하고 있습니다."
       : "공식 API와 공개 원문을 수집하고 있습니다.",
   );
-  return collectResearchSources({
-    projectId: input.projectId,
-    companyMasterId: input.companyMasterId,
-    companyName: input.companyName,
-    corpCode: input.corpCode,
-    ticker: input.ticker,
-    exchange: input.exchange,
-    targetYear: input.targetYear,
-    targetQuarter: input.targetQuarter,
-    cutoffDate: input.cutoffDate,
-    cutoffAt: input.cutoffAt,
-    questions: input.questions,
-    excelTargets: input.excelTargets,
-    userUrls: input.userUrls,
-    sourceReferences: input.sourceReferences ?? [],
-    newsDiscoveryResults,
-    cancellationSignal: Context.current().cancellationSignal,
-  });
+  return runWithPeriodicActivityHeartbeat(
+    "collecting_research_sources",
+    () => collectResearchSources({
+      projectId: input.projectId,
+      companyMasterId: input.companyMasterId,
+      companyName: input.companyName,
+      corpCode: input.corpCode,
+      ticker: input.ticker,
+      exchange: input.exchange,
+      targetYear: input.targetYear,
+      targetQuarter: input.targetQuarter,
+      cutoffDate: input.cutoffDate,
+      cutoffAt: input.cutoffAt,
+      questions: input.questions,
+      excelTargets: input.excelTargets,
+      userUrls: input.userUrls,
+      sourceReferences: input.sourceReferences ?? [],
+      workbookConsensusFallback: input.workbookConsensusFallback ?? [],
+      newsDiscoveryResults,
+      allowEmpty: true,
+      cancellationSignal: Context.current().cancellationSignal,
+    }),
+    15_000,
+  );
+}
+
+export async function collectHypothesisBundle(
+  input: ResearchValidationWorkflowInput,
+  newsDiscoveryResults: NewsDiscoveryResult[],
+): Promise<CollectionBundle> {
+  if (!input.questions.some((question) => question.included)) {
+    return { sources: [], candidates: [], warnings: [] };
+  }
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    4,
+    "collecting_hypothesis_sources",
+    40,
+    "가설 질문에 연결된 원문 자료를 수집하고 있습니다.",
+  );
+  return runWithPeriodicActivityHeartbeat(
+    "collecting_hypothesis_sources",
+    () => collectResearchSources({
+      projectId: input.projectId,
+      companyMasterId: input.companyMasterId,
+      companyName: input.companyName,
+      corpCode: input.corpCode,
+      ticker: input.ticker,
+      exchange: input.exchange,
+      targetYear: input.targetYear,
+      targetQuarter: input.targetQuarter,
+      cutoffDate: input.cutoffDate,
+      cutoffAt: input.cutoffAt,
+      questions: input.questions,
+      excelTargets: [],
+      userUrls: input.userUrls,
+      sourceReferences: input.sourceReferences ?? [],
+      workbookConsensusFallback: input.workbookConsensusFallback ?? [],
+      newsDiscoveryResults,
+      cancellationSignal: Context.current().cancellationSignal,
+    }),
+    15_000,
+  );
+}
+
+export async function collectOfficialExcelBundle(
+  input: ResearchValidationWorkflowInput,
+): Promise<CollectionBundle> {
+  if (!input.excelTargets.some((target) => target.included)) {
+    return { sources: [], candidates: [], warnings: [] };
+  }
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    5,
+    "collecting_official_excel_sources",
+    50,
+    "Excel 셀에 쓸 공식 구조화 원천값을 수집하고 있습니다.",
+  );
+  return runWithPeriodicActivityHeartbeat(
+    "collecting_official_excel_sources",
+    () => collectResearchSources({
+      projectId: input.projectId,
+      companyMasterId: input.companyMasterId,
+      companyName: input.companyName,
+      corpCode: input.corpCode,
+      ticker: input.ticker,
+      exchange: input.exchange,
+      targetYear: input.targetYear,
+      targetQuarter: input.targetQuarter,
+      cutoffDate: input.cutoffDate,
+      cutoffAt: input.cutoffAt,
+      questions: [],
+      excelTargets: input.excelTargets,
+      userUrls: [],
+      sourceReferences: [],
+      workbookConsensusFallback: input.workbookConsensusFallback ?? [],
+      allowEmpty: true,
+      cancellationSignal: Context.current().cancellationSignal,
+    }),
+    15_000,
+  );
 }
 
 export async function extractResearchCandidates(
@@ -1008,10 +1644,219 @@ export async function extractResearchCandidates(
     bundle.candidates.length > 0
       ? bundle.candidates
       : await callResearchAgent(input, bundle.sources);
-  if (researchCandidates.length === 0) {
-    throw new Error("RESEARCH_CANDIDATES_EMPTY");
-  }
   return researchCandidates;
+}
+
+export type HypothesisPipelineResult = {
+  sources: ResearchSourceSnapshot[];
+  candidates: ResearchCandidate[];
+  evidence: ValidatedEvidence[];
+  questionAnswers: ResearchQuestionAnswer[];
+  warnings: CollectionBundle["warnings"];
+  startedAt: string;
+  finishedAt: string;
+};
+
+export type OfficialExcelPipelineResult = {
+  sources: ResearchSourceSnapshot[];
+  excelResults: ReturnType<typeof collectOfficialExcelValues>;
+  warnings: CollectionBundle["warnings"];
+  startedAt: string;
+  finishedAt: string;
+};
+
+export async function validateHypothesisPipeline(
+  input: ResearchValidationWorkflowInput,
+  bundle: CollectionBundle,
+  researchCandidates: ResearchCandidate[],
+): Promise<HypothesisPipelineResult> {
+  const startedAt = new Date().toISOString();
+  if (!input.questions.some((question) => question.included)) {
+    return {
+      sources: bundle.sources,
+      candidates: [],
+      evidence: [],
+      questionAnswers: [],
+      warnings: bundle.warnings,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+  }
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    6,
+    "validating_hypothesis_evidence",
+    75,
+    "가설 후보를 원문·시점·수치 규칙으로 검증하고 있습니다.",
+  );
+  const sourceByKey = new Map(
+    bundle.sources.map((source) => [source.sourceKey, source]),
+  );
+  const questionById = new Map(
+    input.questions.map((question) => [question.questionId, question]),
+  );
+  const codeValidatedCandidates = researchCandidates.filter((candidate) => {
+    const source = sourceByKey.get(candidate.sourceKey);
+    if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
+    const question = questionById.get(candidate.questionId);
+    if (!question?.included) return false;
+    return (
+      validateEvidenceCandidate(candidate, source, input.cutoffAt, {
+        question,
+        companyName: input.companyName,
+        ticker: input.ticker,
+        corpCode: input.corpCode,
+        sources: bundle.sources,
+      }).machineStatus === "passed"
+    );
+  });
+  if (codeValidatedCandidates.length === 0) {
+    return {
+      sources: bundle.sources,
+      candidates: [],
+      evidence: [],
+      questionAnswers: await synthesizeQuestionAnswers(input, []),
+      warnings: bundle.warnings,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+  }
+  const agentValidated =
+    process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
+    process.env.REFLO_LLM_TEST_FIXTURE === "1"
+      ? codeValidatedCandidates
+      : await callValidationAgent(
+          input,
+          bundle.sources,
+          codeValidatedCandidates,
+        );
+  const evidence = agentValidated
+    .map((candidate) => {
+      const source = sourceByKey.get(candidate.sourceKey);
+      if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
+      const question = questionById.get(candidate.questionId);
+      if (!question?.included) throw new Error("VALIDATION_QUESTION_MISSING");
+      return validateEvidenceCandidate(candidate, source, input.cutoffAt, {
+        question,
+        companyName: input.companyName,
+        ticker: input.ticker,
+        corpCode: input.corpCode,
+        sources: bundle.sources,
+      });
+    })
+    .filter((item) => item.machineStatus === "passed");
+  if (evidence.length === 0) {
+    return {
+      sources: bundle.sources,
+      candidates: agentValidated,
+      evidence: [],
+      questionAnswers: await synthesizeQuestionAnswers(input, []),
+      warnings: bundle.warnings,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+  }
+  const questionAnswers = await synthesizeQuestionAnswers(input, evidence);
+  return {
+    sources: bundle.sources,
+    candidates: agentValidated,
+    evidence,
+    questionAnswers,
+    warnings: bundle.warnings,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+export async function validateOfficialExcelPipeline(
+  input: ResearchValidationWorkflowInput,
+  bundle: CollectionBundle,
+): Promise<OfficialExcelPipelineResult> {
+  const startedAt = new Date().toISOString();
+  const excelResults = collectOfficialExcelValues({
+    targets: input.excelTargets,
+    sources: bundle.sources,
+    cutoffAt: input.cutoffAt,
+    corpCode: input.corpCode,
+    ticker: input.ticker,
+  });
+  return {
+    sources: bundle.sources,
+    excelResults,
+    warnings: bundle.warnings,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+function mergeSources(
+  ...groups: ResearchSourceSnapshot[][]
+): ResearchSourceSnapshot[] {
+  const byKey = new Map<string, ResearchSourceSnapshot>();
+  for (const source of groups.flat()) {
+    const previous = byKey.get(source.sourceKey);
+    if (previous && previous.responseHash !== source.responseHash) {
+      throw new Error(`SOURCE_SNAPSHOT_CONFLICT:${source.sourceKey}`);
+    }
+    byKey.set(source.sourceKey, source);
+  }
+  return [...byKey.values()];
+}
+
+export async function publishSeparatedResearchValidation(
+  input: ResearchValidationWorkflowInput,
+  hypothesis: HypothesisPipelineResult,
+  excel: OfficialExcelPipelineResult,
+  newsDiscoveryResults: NewsDiscoveryResult[],
+): Promise<void> {
+  await recordJobProgress(
+    input.jobId,
+    input.jobAttempt,
+    7,
+    "publishing_projection",
+    95,
+    "분리 검증 결과를 하나의 검토 작업공간에 게시하고 있습니다.",
+  );
+  const payload = {
+    sources: mergeSources(hypothesis.sources, excel.sources),
+    candidates: hypothesis.candidates,
+    evidence: hypothesis.evidence,
+    questionAnswers: hypothesis.questionAnswers,
+    excelResults: excel.excelResults,
+    newsDiscovery: newsDiscoveryResults,
+    warnings: [...hypothesis.warnings, ...excel.warnings],
+    metadata: {
+      researchAgentProfile: input.researchAgentProfile.version,
+      validationAgentProfile: input.validationAgentProfile.version,
+      validationRuleVersion: input.validationRuleVersion,
+      startedAt:
+        hypothesis.startedAt < excel.startedAt
+          ? hypothesis.startedAt
+          : excel.startedAt,
+      finishedAt:
+        hypothesis.finishedAt > excel.finishedAt
+          ? hypothesis.finishedAt
+          : excel.finishedAt,
+    },
+  };
+  await internalPost(
+    `/internal/v1/jobs/${input.jobId}/results`,
+    createWorkerResultEnvelope({
+      attempt: input.jobAttempt,
+      sequence: 8,
+      inputVersionIds: input.sourceInputVersionIds,
+      resultType: "research_validation",
+      payload,
+      result: {
+        entityType: "research_validation",
+        entityId: input.researchRunId,
+        version: input.jobAttempt,
+      },
+      artifacts: [],
+      tool: controlWorkerTool,
+    }),
+  );
 }
 
 export async function validateAndPublishResearch(
@@ -1045,6 +1890,14 @@ export async function validateAndPublishResearch(
   if (evidence.length === 0) {
     throw new Error("RESEARCH_EVIDENCE_EMPTY");
   }
+  const questionAnswers = await synthesizeQuestionAnswers(input, evidence);
+  const excelResults = collectOfficialExcelValues({
+    targets: input.excelTargets,
+    sources: bundle.sources,
+    cutoffAt: input.cutoffAt,
+    corpCode: input.corpCode,
+    ticker: input.ticker,
+  });
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,
@@ -1057,6 +1910,8 @@ export async function validateAndPublishResearch(
       sources: bundle.sources,
       candidates: researchCandidates,
       evidence,
+      questionAnswers,
+      excelResults,
       newsDiscovery: newsDiscoveryResults,
       warnings: bundle.warnings,
       metadata: {
@@ -1157,6 +2012,7 @@ export async function finalizeInspection(
   input: FileInspectionWorkflowInput,
   pdf: PdfInspectionResult,
   workbook: WorkbookInspectionResult,
+  currentIr: PdfInspectionResult | null,
   marketPrice: MarketPriceSnapshot,
 ): Promise<void> {
   const prefix = `immutable/${input.projectId}/file-inspections/${input.inspectionId}`;
@@ -1233,11 +2089,17 @@ export async function finalizeInspection(
         ],
       };
   const pdfBytes = Buffer.from(JSON.stringify(pdf.templateIr));
+  const currentIrBytes = currentIr
+    ? Buffer.from(JSON.stringify(currentIr.templateIr))
+    : null;
   const workbookBytes = Buffer.from(JSON.stringify(workbook.workbookAnalysis));
   const mappingBytes = Buffer.from(JSON.stringify(mapping.mappingSet));
   const marketPriceBytes = marketPriceObject.bytes;
-  const [pdfObject, workbookObject, mappingObject] = await Promise.all([
+  const [pdfObject, currentIrObject, workbookObject, mappingObject] = await Promise.all([
     putInspectionArtifact(`${prefix}/template-ir.json`, pdfBytes),
+    currentIrBytes
+      ? putInspectionArtifact(`${prefix}/current-ir.json`, currentIrBytes)
+      : Promise.resolve(null),
     putInspectionArtifact(`${prefix}/workbook-analysis.json`, workbookBytes),
     putInspectionArtifact(`${prefix}/mapping-set.json`, mappingBytes),
   ]);
@@ -1253,6 +2115,15 @@ export async function finalizeInspection(
     workbookBytes,
     workbookObject.objectVersion,
   );
+  const currentIrArtifact =
+    currentIrBytes && currentIrObject
+      ? descriptor(
+          "current_ir_analysis",
+          `${prefix}/current-ir.json`,
+          currentIrBytes,
+          currentIrObject.objectVersion,
+        )
+      : null;
   const marketPriceArtifact = descriptor(
     "market_price_snapshot",
     marketPriceKey,
@@ -1267,6 +2138,10 @@ export async function finalizeInspection(
   );
   const payload = {
     pdf: { ...pdf, artifact: pdfArtifact },
+    currentIr:
+      currentIr && currentIrArtifact
+        ? { ...currentIr, artifact: currentIrArtifact }
+        : null,
     workbook: { ...workbook, artifact: workbookArtifact },
     marketPrice: { ...stableMarketPrice, artifact: marketPriceArtifact },
     mapping: { ...mapping, artifact: mappingArtifact },
@@ -1280,6 +2155,7 @@ export async function finalizeInspection(
         input.setupResourceVersionId,
         input.pdf.fileVersionId,
         input.workbook.fileVersionId,
+        ...(input.currentIr ? [input.currentIr.fileVersionId] : []),
       ],
       resultType: "file_inspection",
       payload,
@@ -1290,6 +2166,7 @@ export async function finalizeInspection(
       },
       artifacts: [
         pdfArtifact,
+        ...(currentIrArtifact ? [currentIrArtifact] : []),
         workbookArtifact,
         marketPriceArtifact,
         mappingArtifact,

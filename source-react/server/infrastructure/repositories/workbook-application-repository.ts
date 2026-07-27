@@ -3,6 +3,7 @@ import { uuidv7 } from "../../domain/ids";
 import {
   createValidatedValueSet,
   createWorkbookApplicationPlan,
+  finalizeWorkbookApplicationPlan,
   mergeWorkbookApplicationCells,
   resolveWorkbookWriteDecision,
   validateWorkbookApplicationResult,
@@ -547,12 +548,10 @@ async function validationValueResults(
     `SELECT DISTINCT source_version_id
      FROM evidence
      WHERE project_id = $1
-       AND validation_run_id = $2
-       AND evidence_id = ANY($3::uuid[])
+       AND evidence_id = ANY($2::uuid[])
      ORDER BY source_version_id`,
     [
       context.projectId,
-      context.validationRunId,
       selectedEvidenceIds,
     ],
   );
@@ -854,10 +853,12 @@ function buildPlan(
         "",
       formula: cell.formula,
       editable:
-        editableKeys.has(`${cell.sheetId}:${cell.address.toUpperCase()}`) ||
-        systemWritableKeys.has(
-          `${cell.sheetId}:${cell.address.toUpperCase()}`,
-        ),
+        !cell.formula &&
+        cell.valueType !== "formula" &&
+        (editableKeys.has(`${cell.sheetId}:${cell.address.toUpperCase()}`) ||
+          systemWritableKeys.has(
+            `${cell.sheetId}:${cell.address.toUpperCase()}`,
+          )),
       structureFingerprint: cell.structureFingerprint ?? null,
     })),
   );
@@ -872,6 +873,7 @@ function buildPlan(
           candidate.sheetId === target.sheetId &&
           candidate.address === targetAddress,
       );
+      if (cell?.formula || cell?.valueType === "formula") return [];
       return [
         {
           targetId: target.targetId,
@@ -1034,8 +1036,12 @@ export async function getWorkbookWriteProposals(input: {
         context.mappingSetResourceVersionId,
       sourceFingerprint: context.sourceFingerprint,
     });
+    const targetById = new Map(
+      context.targets.map((target) => [target.targetId, target]),
+    );
     const proposals = plan.commands.map((command) => {
       const decision = decisions.get(command.targetId);
+      const target = targetById.get(command.targetId);
       return {
         proposalId: command.targetId,
         targetId: command.targetId,
@@ -1047,12 +1053,15 @@ export async function getWorkbookWriteProposals(input: {
         valueType: command.valueType,
         evidenceIds: command.evidenceIds,
         generatedBridge: command.generatedBridge,
+        required: target?.required ?? true,
         decision: decision
           ? {
               decisionId: decision.decision_id,
               decisionNo: Number(decision.decision_no),
               action: decision.action,
               reason: decision.reason,
+              proposedAfterValue:
+                decision.after_command_json?.afterValue ?? null,
               decidedAt: decision.decided_at.toISOString(),
             }
           : null,
@@ -1068,7 +1077,7 @@ export async function getWorkbookWriteProposals(input: {
       structureHash: context.structureHash,
       planHash: plan.planHash,
       reviewStatus: proposals.some(
-        (proposal) => proposal.status === "reject",
+        (proposal) => proposal.required && proposal.status === "reject",
       )
         ? "rejected"
         : proposals.length > 0 &&
@@ -1104,6 +1113,23 @@ export async function prepareWorkbookWriteProposals(input: {
       mappingSetResourceVersionId: context.mappingSetResourceVersionId,
       sourceFingerprint: context.sourceFingerprint,
     });
+    const targetById = new Map(
+      context.targets.map((target) => [target.targetId, target]),
+    );
+    const proposals = plan.commands.map((command) => ({
+      proposalId: command.targetId,
+      targetId: command.targetId,
+      sheetId: command.sheetId,
+      sheetName: command.sheetName,
+      address: command.address,
+      beforeValue: command.beforeValue,
+      afterValue: command.afterValue,
+      valueType: command.valueType,
+      evidenceIds: command.evidenceIds,
+      generatedBridge: command.generatedBridge,
+      required: targetById.get(command.targetId)?.required ?? true,
+      status: decisions.get(command.targetId)?.action ?? "proposed",
+    }));
     return {
       validatedValueSetVersionId: preparation.resourceVersionId,
       expectedWorkbookVersion: plan.inputWorkbookVersion,
@@ -1112,24 +1138,15 @@ export async function prepareWorkbookWriteProposals(input: {
       sourceFingerprint: context.sourceFingerprint,
       structureHash: context.structureHash,
       planHash: plan.planHash,
-      reviewStatus: plan.commands.every(
-        (command) => decisions.get(command.targetId)?.action !== "reject",
+      reviewStatus: proposals.some(
+        (proposal) => proposal.required && proposal.status === "reject",
       )
-        ? "proposed"
-        : "rejected",
-      proposals: plan.commands.map((command) => ({
-        proposalId: command.targetId,
-        targetId: command.targetId,
-        sheetId: command.sheetId,
-        sheetName: command.sheetName,
-        address: command.address,
-        beforeValue: command.beforeValue,
-        afterValue: command.afterValue,
-        valueType: command.valueType,
-        evidenceIds: command.evidenceIds,
-        generatedBridge: command.generatedBridge,
-        status: decisions.get(command.targetId)?.action ?? "proposed",
-      })),
+        ? "rejected"
+        : proposals.length > 0 &&
+            proposals.every((proposal) => proposal.status !== "proposed")
+          ? "approved"
+          : "proposed",
+      proposals,
       blockers: plan.blocked,
     };
   });
@@ -1556,88 +1573,61 @@ export async function createValidationWorkbookApplication(input: {
         context.mappingSetResourceVersionId,
       sourceFingerprint: context.sourceFingerprint,
     });
+    const targetById = new Map(
+      context.targets.map((target) => [target.targetId, target]),
+    );
+    const finalizedPlan = finalizeWorkbookApplicationPlan({
+      plan: preparation.plan,
+      decisions: preparation.plan.commands.map((command) => {
+        const target = targetById.get(command.targetId);
+        if (!target) {
+          throw new ApiError(
+            409,
+            "WORKBOOK_TARGET_POLICY_MISSING",
+            "Workbook 반영 대상의 필수 여부를 확인할 수 없습니다.",
+          );
+        }
+        const decision = proposalDecisionMap.get(command.targetId);
+        return {
+          targetId: command.targetId,
+          required: target.required && target.included,
+          action: decision?.action ?? null,
+          proposedAfterValue:
+            decision?.after_command_json?.afterValue ?? undefined,
+        };
+      }),
+    });
     const applicationDecisions: Array<{
+      originalCommand: WorkbookPatchCommand;
       command: WorkbookPatchCommand;
       action: "approve" | "modify";
       reason: string;
-    }> = [];
-    for (const command of preparation.plan.commands) {
-      let decision = proposalDecisionMap.get(command.targetId);
+    }> = finalizedPlan.resolutions.flatMap((resolution) => {
+      if (
+        !resolution.effectiveCommand ||
+        resolution.action === "reject"
+      ) {
+        return [];
+      }
+      const decision = proposalDecisionMap.get(
+        resolution.originalCommand.targetId,
+      );
       if (!decision) {
-        const decisionId = uuidv7();
-        const reason = "검증 완료 진행 시 승인한 Workbook 반영 제안";
-        await client.query(
-          `INSERT INTO workbook_write_proposal_decision (
-             decision_id, project_id,
-             validated_value_set_resource_version_id,
-             source_workbook_resource_version_id,
-             mapping_set_resource_version_id, source_snapshot_id,
-             source_fingerprint, target_id, decision_no, action,
-             before_command_json, after_command_json, evidence_ids,
-             reason, decided_by_user_id
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 'approve',
-             $9::jsonb, $9::jsonb, $10::uuid[], $11, $12)`,
-          [
-            decisionId,
-            input.projectId,
-            preparation.resourceVersionId,
-            context.sourceWorkbookResourceVersionId,
-            context.mappingSetResourceVersionId,
-            context.sourceSnapshotId,
-            context.sourceFingerprint,
-            command.targetId,
-            JSON.stringify(command),
-            command.evidenceIds,
-            reason,
-            input.userId,
-          ],
-        );
-        decision = {
-          decision_id: decisionId,
-          target_id: command.targetId,
-          decision_no: "1",
-          action: "approve",
-          before_command_json: command,
-          after_command_json: command,
-          evidence_ids: command.evidenceIds,
-          reason,
-          decided_at: new Date(),
-        };
-      }
-      if (decision.action === "reject") {
         throw new ApiError(
           409,
-          "WORKBOOK_WRITE_PROPOSAL_REJECTED",
-          "거절한 Workbook 반영 제안을 검증 단계에서 다시 확인해주세요.",
-          {
-            details: [
-              {
-                path: command.targetId,
-                code: "WORKBOOK_WRITE_PROPOSAL_REJECTED",
-                message: decision.reason,
-              },
-            ],
-          },
+          "WORKBOOK_WRITE_PROPOSAL_DECISION_REQUIRED",
+          "Workbook 반영 제안 결정을 찾을 수 없습니다.",
         );
       }
-      const resolved = resolveWorkbookWriteDecision(command, {
-        action: decision.action,
-        proposedAfterValue:
-          decision.after_command_json?.afterValue ?? undefined,
-      });
-      if (!resolved.effectiveCommand) {
-        throw new ApiError(
-          409,
-          "WORKBOOK_APPLICATION_BLOCKED",
-          "Workbook 반영 결정이 완료되지 않았습니다.",
-        );
-      }
-      applicationDecisions.push({
-        command: resolved.effectiveCommand,
-        action: decision.action,
-        reason: decision.reason,
-      });
-    }
+      return [
+        {
+          originalCommand: resolution.originalCommand,
+          command: resolution.effectiveCommand,
+          action: resolution.action,
+          reason: decision.reason,
+        },
+      ];
+    });
 
     const jobId = uuidv7();
     const workflowPayload = {
@@ -1658,7 +1648,7 @@ export async function createValidationWorkbookApplication(input: {
       sourceObjectKey: context.sourceWorkbookObjectKey,
       sourceWorkbookHash: context.sourceWorkbookSha256,
       sourceFilename: context.sourceWorkbookFilename,
-      plan: preparation.plan,
+      plan: finalizedPlan.plan,
       outputBindings: preparation.outputBindings,
       inputVersionIds: [
         context.approvedPlanResourceVersionId,
@@ -1721,8 +1711,8 @@ export async function createValidationWorkbookApplication(input: {
         context.sourceWorkbookArtifactId,
         context.sourceSnapshotId,
         context.sourceFingerprint,
-        JSON.stringify(preparation.plan),
-        preparation.plan.planHash,
+        JSON.stringify(finalizedPlan.plan),
+        finalizedPlan.plan.planHash,
         input.userId,
       ],
     );
@@ -1741,7 +1731,7 @@ export async function createValidationWorkbookApplication(input: {
           applicationId,
           command.targetId,
           decision.action,
-          JSON.stringify(command),
+          JSON.stringify(decision.originalCommand),
           JSON.stringify(command),
           command.evidenceIds,
           decision.reason,

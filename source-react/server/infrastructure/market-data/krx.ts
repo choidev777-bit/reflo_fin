@@ -25,6 +25,7 @@ export type MarketPriceSnapshot = {
   sourcePayloadHash: string | null;
   errorCode: string | null;
   errorMessage: string | null;
+  sourceRow?: Record<string, string | null>;
 };
 
 type KrxDailyRow = {
@@ -65,6 +66,30 @@ function parseClosePrice(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizedSourceRow(row: KrxDailyRow): Record<string, string | null> {
+  return {
+    BAS_DD: row.BAS_DD == null ? null : String(row.BAS_DD),
+    ISU_CD: row.ISU_CD == null ? null : String(row.ISU_CD),
+    ISU_NM: row.ISU_NM == null ? null : String(row.ISU_NM),
+    MKT_NM: row.MKT_NM == null ? null : String(row.MKT_NM),
+    TDD_CLSPRC:
+      row.TDD_CLSPRC == null ? null : String(row.TDD_CLSPRC),
+  };
+}
+
+function withSourceRow(
+  snapshot: MarketPriceSnapshot,
+  row: KrxDailyRow,
+): MarketPriceSnapshot {
+  Object.defineProperty(snapshot, "sourceRow", {
+    value: Object.freeze(normalizedSourceRow(row)),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return snapshot;
+}
+
 function unavailable(
   request: MarketPriceRequest,
   errorCode: string,
@@ -99,7 +124,7 @@ function fixtureSnapshot(request: MarketPriceRequest): MarketPriceSnapshot {
   }
   const closePrice = 100_000 + Number(request.ticker.slice(-3));
   const evidence = JSON.stringify({ tradingDate, closePrice, fixture: true });
-  return {
+  return withSourceRow({
     schemaVersion: "1.0",
     provider: "KRX_OPEN_API",
     status: "available",
@@ -118,7 +143,13 @@ function fixtureSnapshot(request: MarketPriceRequest): MarketPriceSnapshot {
     sourcePayloadHash: createHash("sha256").update(evidence).digest("hex"),
     errorCode: null,
     errorMessage: null,
-  };
+  }, {
+    BAS_DD: compactDate(tradingDate),
+    ISU_CD: request.ticker,
+    ISU_NM: "REFLO fixture",
+    MKT_NM: request.exchange,
+    TDD_CLSPRC: String(closePrice),
+  });
 }
 
 export async function fetchKrxClosingPrice(
@@ -214,7 +245,7 @@ export async function fetchKrxClosingPrice(
       const closePrice = parseClosePrice(row?.TDD_CLSPRC);
       if (!row || closePrice == null) continue;
 
-      return {
+      return withSourceRow({
         schemaVersion: "1.0",
         provider: "KRX_OPEN_API",
         status: "available",
@@ -233,7 +264,7 @@ export async function fetchKrxClosingPrice(
         sourcePayloadHash: createHash("sha256").update(raw).digest("hex"),
         errorCode: null,
         errorMessage: null,
-      };
+      }, row);
     }
   }
 

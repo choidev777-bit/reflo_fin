@@ -23,7 +23,7 @@ REFLO worker가 교환하는 activity input, typed result, artifact descriptor, 
 | 현재 composite worker payload | `v1/runtime-worker-result.schema.json` |
 | type·queue·payload registry | `schema-registry.json` |
 
-`hypothesis_questions`의 prompt·입력·domain validation 단일 원본은 [`../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v2.md)다. 이 디렉터리는 structured output 형식만 소유한다.
+`hypothesis_questions`의 prompt·입력·domain validation 단일 원본은 [`../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v3.md`](../../docs/agents/HYPOTHESIS_AGENT_PROMPT_v3.md)다. 이 디렉터리는 structured output 형식만 소유한다.
 
 HTTP method, path, workload identity와 command envelope의 권위는 [`../openapi/reflo-v1.yaml`](../openapi/reflo-v1.yaml)이다. `POST /internal/v1/jobs/{jobId}/results` request body는 `worker-result-envelope.schema.json`을 직접 참조한다.
 

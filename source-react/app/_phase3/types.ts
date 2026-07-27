@@ -3,6 +3,7 @@ export type InvestmentRating = "BUY" | "HOLD" | "SELL";
 export type HypothesisQuestion = {
   questionId: string;
   order: number;
+  role: "PERFORMANCE" | "DRIVER" | "SEGMENT" | "OUTLOOK" | "VALUATION";
   text: string;
   purpose: string;
   metrics: string[];

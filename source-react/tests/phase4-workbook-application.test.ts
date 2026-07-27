@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createValidatedValueSet,
   createWorkbookApplicationPlan,
+  finalizeWorkbookApplicationPlan,
   mergeWorkbookApplicationCells,
   resolveWorkbookWriteDecision,
   validateWorkbookApplicationResult,
@@ -530,6 +531,82 @@ test("Workbook write 승인·거절·수정은 Evidence command를 벗어나지 
     (error) =>
       error instanceof ApiError &&
       error.code === "WORKBOOK_VALUE_CHANGE_REQUIRES_REVALIDATION",
+  );
+});
+
+test("사용자 결정으로 만든 최종 plan만 worker에 전달한다", () => {
+  const plan = createWorkbookApplicationPlan({
+    applicationId: "application-finalized",
+    sourceSnapshotId: "snapshot-1",
+    sourceFingerprint: HASH_A,
+    sourceWorkbookResourceVersionId: "workbook-resource-version-1",
+    sourceWorkbookArtifactId: "artifact-1",
+    inputWorkbookVersion: 1,
+    structureHash: HASH_B,
+    validatedValueSet: validatedValueSet(),
+    bindings: [],
+    cells: [],
+    bridgeFallback: true,
+  });
+  const approved = finalizeWorkbookApplicationPlan({
+    plan,
+    decisions: [
+      {
+        targetId: "target-revenue",
+        required: true,
+        action: "modify",
+        proposedAfterValue: "1250.0",
+      },
+    ],
+  });
+
+  assert.equal(approved.plan.commands.length, 1);
+  assert.equal(approved.plan.commands[0]?.afterValue, "1250");
+  assert.notEqual(approved.plan.planHash, "");
+  assert.equal(approved.resolutions[0]?.originalCommand, plan.commands[0]);
+});
+
+test("선택 제안 거절은 명령에서 제외하고 필수 제안 거절은 차단한다", () => {
+  const plan = createWorkbookApplicationPlan({
+    applicationId: "application-rejected",
+    sourceSnapshotId: "snapshot-1",
+    sourceFingerprint: HASH_A,
+    sourceWorkbookResourceVersionId: "workbook-resource-version-1",
+    sourceWorkbookArtifactId: "artifact-1",
+    inputWorkbookVersion: 1,
+    structureHash: HASH_B,
+    validatedValueSet: validatedValueSet(),
+    bindings: [],
+    cells: [],
+    bridgeFallback: true,
+  });
+  const optional = finalizeWorkbookApplicationPlan({
+    plan,
+    decisions: [
+      {
+        targetId: "target-revenue",
+        required: false,
+        action: "reject",
+      },
+    ],
+  });
+
+  assert.deepEqual(optional.plan.commands, []);
+  assert.throws(
+    () =>
+      finalizeWorkbookApplicationPlan({
+        plan,
+        decisions: [
+          {
+            targetId: "target-revenue",
+            required: true,
+            action: "reject",
+          },
+        ],
+      }),
+    (error) =>
+      error instanceof ApiError &&
+      error.code === "WORKBOOK_WRITE_PROPOSAL_REJECTED",
   );
 });
 

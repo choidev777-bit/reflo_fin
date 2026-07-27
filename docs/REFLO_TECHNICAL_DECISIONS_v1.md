@@ -2099,7 +2099,7 @@ REFLO의 Style Profile, Hypothesis, Research/Validation, Report Outline·Draft A
 3. model ID는 Agent별 server configuration으로 주입한다. 화면 코드와 prompt에 특정 model 문자열을 직접 고정하지 않는다.
 4. Agent 결과는 가능한 경우 Pydantic `output_type`으로 구조화하고 저장 전에 schema·도메인 검증을 통과시킨다.
 5. prompt, output schema, tool과 model configuration은 version을 저장해 같은 산출물의 생성 조건을 추적할 수 있게 한다.
-   Hypothesis Agent의 canonical prompt와 입출력 계약은 [`agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](./agents/HYPOTHESIS_AGENT_PROMPT_v2.md)를 단일 원본으로 사용하고 `prompt_version = hypothesis-v2`를 기록한다.
+   Hypothesis Agent의 canonical prompt와 입출력 계약은 [`agents/HYPOTHESIS_AGENT_PROMPT_v3.md`](./agents/HYPOTHESIS_AGENT_PROMPT_v3.md)를 단일 원본으로 사용하고 `prompt_version = hypothesis-v3`를 기록한다.
 6. output validation retry, HTTP retry와 `UsageLimits`는 서로 분리해 제한한다. 무제한 재시도와 무제한 tool call을 허용하지 않는다.
 7. 모델의 원시 reasoning은 사용자에게 표시하거나 권위 Evidence로 저장하지 않는다. 검증된 결과, 사용 모델·설정 version, token usage, latency와 사용자용 오류를 실행 기록에 남긴다.
 8. Agent 출력은 제안 또는 구조화 초안이며 Evidence, 권위 계산, 사용자 승인과 server validation을 우회할 수 없다.
@@ -2416,9 +2416,9 @@ legal hold와 보안 사고 hold가 있으면 자동 삭제보다 우선한다.
 | Agent framework | `pydantic-ai` | `2.17.0` |
 | OpenAI Python SDK | `openai` | `2.48.0` |
 | OpenAI API | Responses API | `v1` |
-| 기본 model | OpenAI GPT | `gpt-5.6-terra` |
+| 기본 model | OpenAI GPT | `gpt-5.4-mini` |
 
-공식 model guidance가 intelligence와 비용 균형 용도로 권고하는 `gpt-5.6-terra`를 기본값으로 사용한다. model alias를 임의의 `latest` 문자열로 바꾸지 않는다. 각 실행은 `agent_profile_version`, prompt version, output schema version, provider가 반환한 model ID와 token usage를 저장한다.
+고속·고용량 workload용으로 설계된 `gpt-5.4-mini`를 기본값으로 사용한다. model alias를 임의의 `latest` 문자열로 바꾸지 않는다. 각 실행은 `agent_profile_version`, prompt version, output schema version, provider가 반환한 model ID와 token usage를 저장한다.
 
 ### 초기 profile
 
@@ -2447,7 +2447,7 @@ model, reasoning, prompt 또는 schema 변경은 새 `agent_profile_version`과 
 ### 참고
 
 - OpenAI model guidance: <https://developers.openai.com/api/docs/guides/latest-model>
-- GPT-5.6 Terra: <https://developers.openai.com/api/docs/models/gpt-5.6-terra>
+- GPT-5.4 mini: <https://developers.openai.com/api/docs/models/gpt-5.4-mini>
 - ClosedXML: <https://github.com/ClosedXML/ClosedXML>
 - GNU AGPL v3.0: <https://www.gnu.org/licenses/agpl-3.0.html>
 - Tiptap React: <https://tiptap.dev/docs/editor/getting-started/install/react>

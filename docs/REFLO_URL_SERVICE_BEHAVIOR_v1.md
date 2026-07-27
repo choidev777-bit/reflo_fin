@@ -1,832 +1,623 @@
-# REFLO URL별 서비스 동작 명세 v1
+# REFLO URL별 현재 구현 동작 명세 v1
 
-**문서 상태:** 요구사항 기준선  
-**작성 기준일:** 2026-07-22  
-**대상:** 현업 배포용 MVP  
-**적용 범위:** IT 제조업 · 실적 Review · PER 밸류에이션  
+> 기준일: 2026-07-27
+> 기준: `source-react`의 현재 페이지·API·도메인·Worker·테스트 구현
+> 용도: 다른 개발 세션이 REFLO의 목적, 단계별 의도, 실제 데이터 계보를 빠르게 복원하기 위한 인수인계 문서
 
-> 이 문서는 현재 프로토타입의 구현 상태를 설명하지 않는다. 이번 요구사항과 대화에서 확정한 목표 서비스 동작을 정의한다. 기존 Git 기획 문서는 기준으로 사용하지 않는다.
+이 문서는 미래 목표가 아니라 **현재 구현된 동작**을 설명한다. `docs/screens/`는 화면 의도와 비교할 때 참고했지만, 충돌하면 실행 코드와 테스트를 기준으로 썼다.
 
-## 1. 서비스 정의
+## 1. 서비스 목적
 
-REFLO는 애널리스트의 판단을 대신하지 않는다. 자료 수집, 근거 확인, Excel 실제값 입력, 반복 계산, 이전 분기 보고서 갱신과 오류 검사를 자동화한다.
+REFLO는 이전 분기 증권사 실적 Review PDF와 분석 Excel을 다음 분기 리서치 초안으로 갱신하는 작업 공간이다.
 
-사용자가 직접 확정하는 항목:
+핵심 입력:
 
-- 잠정·최종 투자의견
-- 투자 가설
-- 미래 실적 추정치
-- 출처 충돌 시 채택할 값
-- Target PER과 목표주가
-- 보고서 최종 문장과 최종 승인
+1. 이전 분기 실적 Review PDF
+2. 이전 분기 분석 Excel
+3. 선택 입력인 현재 분기 IR·잠정실적 PDF
+4. 프로젝트 기업, 목표 분기, 기준일, 사용자의 투자의견·가설
 
-시스템이 자동화하는 항목:
+핵심 처리:
 
-- 기업·종목 메타데이터 조회
-- 이전 분기 PDF 구조·문체·디자인 분석
-- 실제 애널리스트 Excel 구조·수식·입력 셀 분석
-- PDF 구성요소와 Excel 셀·표·차트 연결
-- DART·기업 IR·KRX·ECOS·FnGuide 컨센서스·뉴스·사용자 자료 수집
-- Research Agent 결과의 독립 검증
-- 검증된 실제값의 Excel 반영과 수식 재계산
-- 이전 PDF와 동일한 디자인의 새 보고서 초안 생성
-- 이전 분기 잔존값, 숫자, 출처, 계산, 레이아웃 검사
-- 최종 PDF와 값이 채워진 Excel 내보내기
+1. 이전 PDF의 페이지·텍스트·표·차트·스타일을 `Template IR`로 분석한다.
+2. Excel의 시트·수식·셀·범위·차트·편집 후보를 분석한다.
+3. PDF 의미 슬롯과 Excel/KRX 원천을 `MappingSet`으로 연결한다.
+4. 조사 질문을 만들고 공식 자료와 사용자 자료를 수집·검증한다.
+5. 승인된 실제값을 원본이 아닌 Excel 복사본에 반영한다.
+6. 목표 보고 기간에 맞게 Excel을 롤포워드하고 추정치·PER·목표주가를 계산한다.
+7. 승인된 Excel과 근거만 사용해 이전 PDF 구조 위에 새 보고서 초안을 만든다.
+8. 검증·승인된 같은 버전에서 PDF와 XLSX를 함께 내보낸다.
 
-## 2. MVP 불변조건
+서비스의 계산 정본은 LLM 문장이 아니다. **승인된 근거, 승인된 Excel artifact, 승인된 밸류에이션 버전**이다. LLM은 질문·근거 후보·문장·페이지 개요 생성을 보조한다. 공식 수치 선택, Excel 쓰기, 수식 계산, 버전 일치, 완료 차단은 코드가 담당한다.
 
-1. 텍스트를 드래그해 선택할 수 있는 모든 증권사 리서치 PDF를 사전 템플릿 등록 없이 입력받는다.
-2. 새 보고서는 업로드한 이전 분기 PDF의 디자인과 레이아웃을 완전히 복제한다.
-3. 사용자가 실제 업무에서 쓰는 Excel을 그대로 입력받는다.
-4. Excel 외부 링크는 지원하지 않는다.
-5. 노란색 배경과 파란색 글씨가 함께 적용된 셀을 사용자 직접 입력 셀로 판정한다.
-6. 검증된 실제값만 시스템이 Excel에 기록한다.
-7. 미래 추정치는 시스템이 임의로 확정하지 않는다.
-8. AI가 찾은 자료는 Validation Agent 또는 결정적 코드 검증을 통과해야 사용자에게 노출된다.
-9. 모든 핵심 숫자와 보고서 주장은 원문 위치 또는 Excel 계산 경로를 가진다.
-10. 최종 산출물은 PDF와 값이 채워진 Excel이다. DOCX는 MVP 범위에서 제외한다.
-11. MVP에서는 IT 제조업, 실적 Review, PER만 활성화한다.
-12. Agent 실행은 PydanticAI를 사용하며 결과를 정형 Pydantic 모델로 저장한다.
-13. 로그인은 Google 계정으로만 제공한다.
-14. 프로젝트는 생성한 사용자만 접근·수정할 수 있으며 공동 프로젝트는 지원하지 않는다.
+## 2. URL 흐름과 단계
 
-## 3. 전체 사용자 흐름
+| 순서 | URL | 내부 stage key | 완료 시 핵심 산출물 |
+|---|---|---|---|
+| 진입 | `/` | 없음 | 로그인 또는 새 프로젝트 시작 |
+| 목록 | `/projects` | 없음 | 프로젝트 생성·검색·재개 |
+| STEP 01 | `/projects/:projectId/process/setup` | `setup` | 승인된 프로젝트 설정 버전 |
+| STEP 02 | `/projects/:projectId/process/files` | `files` | 확정된 `MappingSet` |
+| STEP 03 | `/projects/:projectId/process/hypothesis` | `hypothesis` | 승인된 조사 질문 세트 |
+| STEP 04 | `/projects/:projectId/process/research-plan` | `research_plan` | 승인된 수집 계획 및 비동기 조사 작업 |
+| STEP 05 | `/projects/:projectId/process/validation` | `validation` | `ValidationApproval`, 검증 값 세트, 검증 Excel |
+| STEP 06 | `/projects/:projectId/process/valuation` | `valuation` | 롤포워드된 Excel과 `ValuationApproval` |
+| STEP 07 | `/projects/:projectId/process/report-outline` | `report_outline` | 승인된 페이지 개요와 생성된 보고서 초안 |
+| 최종 | `/projects/:projectId/report` | 별도 report workflow | 승인 보고서, PDF, XLSX |
+
+페이지 접근은 프로젝트 소유자에게만 허용된다. 선행 단계가 막혔거나 재검증이 필요하면 서버가 해당 프로젝트의 재개 URL로 이동시킨다. `/report`는 실제 보고서가 생성된 뒤에만 열린다.
+
+## 3. 실제 버전 계보
 
 ```text
-로그인
-  → 프로젝트 생성·재개
-  → 기업·분기 설정
-  → 이전 PDF·Excel 업로드 및 호환성 검사
-  → 잠정 투자의견·투자 가설 입력
-  → AI 조사 질문 생성·사용자 승인
-  → 질문별 출처와 Excel 실제값 수집 계획 확정
-  → 코드 수집 + Research Agent 조사
-  → Validation Agent + 코드 검증
-  → 출처 충돌 해결
-  → 사용자 추정치 입력·Excel 실시간 재계산
-  → PER·목표주가 확정
-  → 페이지별 내용 구성 승인
-  → 이전 PDF 디자인을 완전 복제한 초안 생성
-  → 편집·오류 검사·최종 승인
-  → PDF·Excel 내보내기
+Setup
+  └─ Source PDF + Source Excel + optional Current IR + KRX close
+       └─ Template IR + Workbook Analysis + MappingSet                 (STEP 02)
+            ├─ Approved Question Set                                  (STEP 03)
+            └─ Approved Research Plan                                 (STEP 04)
+                 └─ Evidence + Validated Value Set
+                      └─ Validated Workbook                           (STEP 05)
+                           └─ Rolled-forward Valuation Workbook
+                                └─ Valuation Approval                 (STEP 06)
+                                     └─ Outline Approval
+                                          └─ Materialized Report      (STEP 07)
+                                               └─ Report Validation
+                                                    └─ PDF + XLSX
 ```
 
-상위 단계의 데이터가 변경되면 이를 사용하는 하위 결과는 `재검증 필요` 상태가 된다. 예를 들어 추정치가 변경되면 EPS, 목표주가, 보고서 숫자, 보고서 검증 결과가 함께 무효화된다.
+원본 파일은 덮어쓰지 않는다. 각 주요 산출물은 resource version, artifact hash, 입력 fingerprint, 상·하위 dependency를 가진다. 상위 파일·설정·매핑·검증 값·Excel·밸류에이션이 바뀌면 관련 하위 승인과 검증은 `revalidation_required` 또는 stale 상태가 된다.
 
-## 4. 코드와 Agent의 역할 구분
+### STEP 02 산출물이 후반 단계에서 쓰이는 방식
 
-| 대상 | 기본 처리 방식 | 보조 처리 |
+| STEP 02 산출물 | 후반 소비자 | 용도 |
 |---|---|---|
-| DART 재무제표·공시 목록·기업정보 | OpenDART API와 XBRL 코드 수집 | 공시 본문·주석 의미 해석은 Research Agent |
-| 기업 IR PDF·발표자료 | 파일 수집·페이지 파싱 | Research Agent가 문장·표 의미 추출 |
-| KRX | API 코드 수집 | Agent 해석 없음 |
-| ECOS | API 코드 수집 | Agent 해석 없음 |
-| 뉴스 | Research Agent 검색·원문 탐색 | Validation Agent가 실제 기사 원문 확인 |
-| 사용자 업로드 자료 | 파일 파싱 | Research Agent가 문맥 해석 |
-| Excel | 코드로 시트·수식·스타일·참조 분석 | 의미가 불명확한 영역만 Agent 분류 보조 |
-| PDF 레이아웃 | PDF 객체·폰트·좌표·이미지·벡터 분석 | 의미 분류와 문체 분석을 Agent가 보조 |
-| 계산·합계·증감률 | 코드 재계산 | Agent 계산 결과를 정답으로 사용하지 않음 |
+| `Template IR` | STEP 07, 최종 보고서 | 원본 PDF 페이지 순서, 좌표, 텍스트·시각 블록, 스타일 참조 |
+| Workbook Analysis | STEP 03~06 | 시트·범위 맥락, 실제값 입력 위치, 편집 가능 셀, 수식·출력 위치 |
+| `MappingSet` | STEP 04~최종 | PDF 의미 슬롯과 Excel/KRX 물리 주소 연결 |
+| Source Excel version | STEP 05 | 승인 값을 반영할 불변 원본 |
+| KRX 기준일 종가 snapshot | STEP 06 | 현재주가, 상승여력, 밸류에이션 승인 |
+| optional Current IR analysis | STEP 03~05 | 현재 분기 공식 사실, 사업부·회사 전망 근거 |
 
-## 5. 공통 프로젝트 상태
+`MappingSet`은 단순 “PDF 문구 ↔ 셀 하나” 목록이 아니다. 안정적인 slot ID, 의미 metric, 물리 시트·주소, 표·차트 topology, 후보 점수·사유를 저장한다. 후반 단계는 이 ID를 통해 같은 데이터의 출처와 목적지를 추적한다.
 
-각 프로젝트는 다음 상태를 저장한다.
+### 실행 경계
 
-- 프로젝트 소유자의 Google 사용자 ID
-- 현재 단계와 단계별 완료 여부
-- 기업, 종목코드, 거래소, 대상 연도·분기, 보고서 기준일
-- 원본 PDF·Excel과 각 파일의 버전·해시
-- PDF 템플릿 분석 결과와 Excel 매핑 결과
-- 잠정 투자의견, 가설, 조사 질문과 승인 버전
-- 질문별 조사 계획과 출처
-- 수집 원문, 원문 위치, 검증 결과와 충돌 결정
-- Excel 입력값, 계산 결과, 사용자 수정 이력
-- PER, EPS, 목표주가와 사용자 승인 버전
-- 페이지 구성, 보고서 초안, 편집 이력, 최종 승인 버전
-- 내보낸 PDF·Excel 파일
+- Next.js App Router가 화면과 `/api`를 함께 제공한다.
+- PostgreSQL이 프로젝트, stage, version, 승인, Evidence, 작업 projection의 정본이다.
+- MinIO가 원본과 파생 PDF/XLSX 등 대형 artifact를 보관한다.
+- Temporal control worker가 파일 검사, Agent 생성, 자료 수집, workbook 반영, 보고서 생성·출력 같은 장시간 작업을 조정한다.
+- Python worker가 PDF·LLM 작업, .NET worker가 Excel 분석·수정·재계산을 맡는다.
+- 브라우저는 DB, object storage, Temporal, provider credential에 직접 접근하지 않는다.
+- `npm run dev`만 실행하면 비동기 작업이 진행되지 않는다. 전체 로컬 흐름은 인프라를 올린 뒤 `npm run dev:full`로 실행해야 한다.
 
-모든 변경사항은 자동 저장한다. 장시간 수집·분석 작업은 화면을 벗어나도 계속 실행하며 프로젝트 목록에 진행 상태를 표시한다.
+## 4. `/` — 홈
 
-모든 프로젝트 레코드와 업로드·생성 파일은 서버에서 Google 사용자 ID를 기준으로 격리한다. 클라이언트가 전달한 사용자 ID를 신뢰하지 않고, 검증된 로그인 세션의 사용자 ID와 프로젝트 소유자가 일치할 때만 조회·수정·다운로드를 허용한다.
+목적: 서비스 설명, 인증, 새 리서치 시작.
 
----
+현재 동작:
 
-## 6. `/` — 홈
+- Google OAuth 로그인을 사용한다.
+- 비로그인 사용자가 새 리서치를 누르면 로그인으로 이동한다.
+- 로그인 사용자는 프로젝트 생성 dialog를 연다.
+- 프로젝트 이름은 공백 정규화 후 1~60자다.
+- 생성 성공 시 해당 프로젝트의 setup URL로 이동한다.
+- 화면의 6개 흐름 카드는 제품 흐름 요약이다. DB의 실제 process stage는 위 표의 7개다.
 
-### 목적
+산출물: 새 프로젝트와 7개 stage state. 최초에는 `setup`만 진행 가능하고 나머지는 차단된다.
 
-REFLO 소개, 로그인, 새 리서치 시작 진입점.
+## 5. `/projects` — 프로젝트 목록
 
-### 접근
+목적: 사용자가 소유한 프로젝트 검색·정렬·재개.
 
-- 비로그인 사용자도 홈은 볼 수 있다.
-- 프로젝트 URL 접근 시 로그인되지 않았다면 로그인 후 원래 URL로 복귀한다.
+현재 동작:
 
-### 화면 동작
+- 프로젝트명, 기업명, 종목코드로 검색한다.
+- 최근 수정순, 오래된 수정순, 기업명순 정렬을 지원한다.
+- 기업·대상 분기·현재 단계·완료 단계 수(`완료/7`)·재검증 여부를 표시한다.
+- 카드와 “이어하기”는 서버가 계산한 canonical resume route로 이동한다.
+- 새 리서치 dialog를 열 수 있다.
+- 현재 목록 API의 cursor pagination은 실질적으로 구현되지 않아 `nextCursor`가 `null`이다.
+- 목록의 주 상태 표시는 `setup_required`, `file_upload_required`, `in_progress` 중심이다. 이전 문서의 세분화된 상태 집합은 현재 목록 API 계약이 아니다.
 
-- `Google로 로그인` 버튼을 제공한다.
-- Google 인증이 완료되면 검증된 로그인 세션을 발급한다.
-- 로그인 사용자는 프로젝트 목록 이동과 새 프로젝트 생성을 할 수 있다.
-- `새 리서치` 선택 시 프로젝트 초안을 생성하고 고유 `projectId`를 발급한 뒤 설정 화면으로 이동한다.
+## 6. `/projects/:projectId/process/setup` — 프로젝트 설정
 
-### 결과
+목적: 이후 모든 수집·기간·가격 계산의 기준을 고정.
 
-```text
-/projects/{projectId}/process/setup
-```
+사용자 입력:
 
----
+- 기업명 또는 종목코드 검색 후 지원 기업 선택
+- 목표 연도·분기
+- 보고서 기준일
+- 밸류에이션 방식: `PER`, `PBR`, `EV/EBITDA`, `DCF`
 
-## 7. `/projects` — 프로젝트 목록
+현재 규칙:
 
-### 목적
+- 프로젝트 생성 시 기본 방식은 `PER`다.
+- 선택 가능한 목표 연도는 현재 UTC 연도 기준 전년·당년·익년이다.
+- 리포트 유형은 실적 Review로 고정된다.
+- 기업 업종은 선택 기업의 directory/KRX 정보에서 온다.
+- 저장은 낙관적 버전 충돌을 검사한다.
+- 이미 완료한 setup의 기업·기간·기준일 등을 바꾸면 후속 리소스와 단계를 재검증 상태로 만들 수 있어 사용자 확인을 요구한다.
+- 기존 결과는 즉시 삭제하지 않는다. 새 설정과 맞지 않는 하위 승인을 무효화한다.
 
-로그인 사용자가 본인이 작업한 프로젝트를 조회하고 이어서 작업한다.
+완료 조건: 기업, 목표 기간, 기준일, 유효한 밸류에이션 방식이 저장되어야 한다.
 
-### 표시 항목
+현재 구현 한계: setup은 네 가지 방식을 저장하지만 STEP 06 화면·계산·민감도·승인은 **PER 방식만 구현**되어 있다. PBR, EV/EBITDA, DCF를 선택해도 해당 전용 후반 계산 화면으로 분기하지 않는다.
 
-- 기업명, 종목코드, 거래소
-- 대상 연도·분기
-- 리포트 유형과 기업 분야
-- 현재 단계와 진행률
-- 마지막 저장 시각
-- 실행 중인 분석·수집 작업 상태
-- 재검증 필요, 충돌 해결 필요, 편집 중, 내보내기 완료 같은 상태
+## 7. `/projects/:projectId/process/files` — 파일 업로드·검사·매핑
 
-### 사용자 동작
-
-- 기업명·종목코드·프로젝트명으로 검색한다.
-- 최근 수정순 등으로 정렬한다.
-- 프로젝트를 열면 마지막 유효 단계로 이동한다.
-- `새 리서치`를 누르면 프로젝트 초안을 만들고 설정 화면으로 이동한다.
-
-### 예외
-
-- 다른 사용자의 프로젝트에는 접근할 수 없다.
-- 삭제·보관 정책은 별도 확정 전까지 MVP 범위에서 제외한다.
-
----
-
-## 8. `/projects/:projectId/process/setup` — 프로젝트 설정
-
-### 목적
-
-분석 기업과 실적 Review 기준을 확정한다.
+목적: 이전 보고서의 표현 구조와 Excel 계산 구조를 후속 단계가 사용할 수 있는 버전 계약으로 변환.
 
 ### 입력
 
-- 기업명
-- 분석 대상 연도
-- 분기
-- 보고서 기준일
-- 리포트 유형
-- 기업 분야
+| slot | 필수 | 형식 | 최대 크기 | 역할 |
+|---|---:|---|---:|---|
+| 이전 분기 실적 Review | 필수 | PDF | 50 MiB | 보고서 구조·문체·시각 템플릿 |
+| 이전 분기 분석 Excel | 필수 | XLSX | 100 MiB | 실제값·추정치·수식·표·차트 계산 모델 |
+| 현재 분기 IR·잠정실적 | 선택 | PDF | 50 MiB | 현재 분기 공식 사실과 회사 전망 |
 
-### 기업 검색
+화면도 이 계약에 맞춰 **3개 업로드 카드**를 `① 이전 PDF → ② 이전 Excel → ③ 현재 IR` 순서로 표시한다. 세 번째 카드는 선택이므로 비어 있어도 검사를 시작할 수 있다. 다만 업로드를 시작했다면 `ready` 또는 다시 `empty`가 될 때까지 검사 시작 상태가 열리지 않는다.
 
-- 기업명 또는 종목코드 일부를 입력하면 자동완성 후보를 표시한다.
-- `삼` 입력 시 삼성전자, 삼성전기 같은 후보를 표시한다.
-- 후보 선택 시 종목코드와 거래소를 자동 입력한다.
-- 기업 마스터는 DART 기업정보와 허용된 거래소 종목정보를 동기화해 검색 인덱스로 사용한다.
+업로드는 session 생성 → object 저장 → 완료 확인 순서다. 원본은 immutable artifact로 보존된다.
 
-### MVP 고정값
+### 보안·형식 검사
 
-- 리포트 유형: `실적 Review`
-- 기업 분야: `IT 제조업`
-- 밸류에이션: `PER`
+- 확장자와 실제 magic/type 불일치를 거절한다.
+- 암호화 PDF를 거절한다.
+- PDF embedded file, XFA, Launch, RichMedia, JavaScript 등 위험 구조를 차단한다.
+- XLSX macro, external link, embedding, ActiveX 등 위험 구조를 차단한다.
+- 운영 환경에서는 ClamAV 검사가 필수다.
+- 스캔 이미지처럼 필요한 텍스트·구조를 추출하지 못하는 PDF는 후속 Template IR 적합성 검사를 통과하지 못할 수 있다.
 
-화면에는 고정값으로 표시한다. 아직 지원하지 않는 선택지는 선택할 수 없게 한다.
+### 비동기 파일 검사
 
-### 진행 조건
+Temporal 작업이 다음을 병렬 처리한다.
 
-- 상장 기업이 정상 선택되어야 한다.
-- 연도, 분기, 기준일이 모두 입력되어야 한다.
-- 기준일은 향후 자료 수집의 컷오프 날짜가 된다.
+1. 이전 PDF → `Template IR`
+2. optional 현재 IR → Current IR analysis
+3. Excel → workbook structure/formula/style/candidate analysis
+4. 기준일 KRX 종가 → market snapshot
+5. 위 결과 → `MappingSet`
 
-### 결과
+검사 시작 요청에는 선택된 현재 IR의 file version ID도 함께 고정한다. 현재 IR이 있으면 별도 `current_ir_analysis` resource version과 dependency를 만들며, 이전 PDF의 Template IR과 섞지 않는다.
 
-설정을 저장하고 파일 업로드 화면으로 이동한다.
+작업은 취소·재시도를 지원한다.
 
----
+### PDF·Excel 연결
 
-## 9. `/projects/:projectId/process/files` — 파일 업로드·검사
+PDF의 수치, 표, 차트, 제목·서술 영역을 의미 slot으로 만든다. Excel 분석 결과에서 metric alias, 기간, 페이지, 범위 topology, 위치·형식 점수를 사용해 후보를 찾는다.
 
-### 목적
+- 명확한 scalar만 자동 선택한다.
+- 표·차트는 단일 셀이 아니라 범위와 행·열 구조를 저장한다.
+- 현재주가는 Excel 값이 아니라 KRX 기준일 종가를 권위 원천으로 연결한다.
+- 사용자는 후보를 비교하고 다른 후보를 선택할 수 있다.
+- 후보 수정은 새 `MappingSet` version을 만든다.
+- 필수 slot이 미매핑이면 완료할 수 없다.
+- 현재주가, 컨센서스, 밴드 차트, 투자의견처럼 후속 단계가 책임지는 일부 slot은 명시된 deferred policy로 처리할 수 있다.
 
-이전 분기 실적 Review PDF와 실제 분석 Excel을 분석해 새 보고서 제작 계약을 만든다.
+검사 결과 dialog의 세 탭:
 
-### 필수 입력
+1. PDF 템플릿
+2. Excel 모델
+3. PDF·데이터 연결
 
-1. 애널리스트가 작성한 이전 분기 증권 리포트 PDF
-2. 해당 리포트 작성에 사용한 실제 Excel 모델
+완료 조건:
 
-두 파일 중 하나라도 없으면 진행할 수 없다.
+- 필수 두 파일 존재
+- 파일 검사 성공
+- mapping 상태 `confirmed`
+- 필수 미매핑 수 0
+- 화면이 보고 있는 Template IR, Workbook Analysis, MappingSet version이 최신
 
-### PDF 분석
+STEP 02의 primary completion version은 원본 파일이 아니라 **확정된 `MappingSet`**이다.
 
-시스템은 업로드된 PDF마다 전용 템플릿을 자동 생성한다. 특정 증권사 템플릿 사전 등록을 전제로 하지 않는다. 지원 입력은 텍스트 레이어가 있어 문자를 드래그해 선택할 수 있는 비암호화 PDF다.
+중요: 이 단계는 Excel 구조와 연결을 분석한다. 보고 연도 헤더를 실제로 이동하는 단계가 아니다. 연도 롤포워드는 STEP 05 검증 Excel이 만들어진 뒤 STEP 06 진입 때 실행된다.
 
-페이지별로 다음을 추출한다.
+## 8. `/projects/:projectId/process/hypothesis` — 투자의견·조사 질문
 
-- 페이지 크기, 방향, 여백, 배경
-- 폰트 파일, 글꼴, 크기, 두께, 색상, 자간, 행간
-- 텍스트 위치와 문단 경계
-- 선, 도형, 색상, 로고, 아이콘, 이미지, 벡터 객체
-- 표의 행·열·병합·테두리·정렬·숫자 형식
-- 차트 종류, 축, 범례, 데이터 라벨, 색상
-- 제목, 소제목, 본문, 표, 차트, 고지 문구, 페이지 번호
-- 고정 디자인 영역과 새 분기에 변경될 영역
+목적: 사용자의 현재 판단을 조사 가능한 질문으로 구조화.
 
-텍스트를 선택할 수 없는 스캔 이미지 PDF와 암호화 PDF는 지원하지 않으며 업로드 단계에서 즉시 거절한다.
+사용자 입력:
 
-### 완전 복제 요구사항
+- 잠정 투자의견 `BUY`, `HOLD`, `SELL`
+- 투자 가설/논지
 
-- 모든 증권사 PDF를 지원한다.
-- 새 보고서의 페이지 크기, 배치, 스타일, 고정 자산은 이전 PDF와 같아야 한다.
-- 원본에서 바뀌지 않는 영역은 원본 자산을 그대로 재사용한다.
-- 변경 영역도 원본의 폰트·정렬·간격·경계 안에서 렌더링한다.
-- 분석 결과를 페이지별 원본/감지 결과 비교 화면으로 보여준다.
-- 렌더링 비교 검사를 통과하지 못하면 템플릿 분석 완료로 처리하지 않는다.
-- 품질을 낮춘 일반 템플릿으로 임의 대체하지 않는다.
+현재 동작:
 
-자동 합격 기준:
+- 입력은 draft version과 input revision으로 자동 저장된다.
+- 질문 생성은 비동기 작업이다.
+- canonical prompt는 [`agents/HYPOTHESIS_AGENT_PROMPT_v4.md`](./agents/HYPOTHESIS_AGENT_PROMPT_v4.md)다.
+- repository/worker prompt version은 `hypothesis-v4`, 설정 model은 `gpt-5.4-mini`다.
+- 질문 수는 **3~7개**다.
+- 역할은 `PERFORMANCE`, `DRIVER`, `SEGMENT`, `OUTLOOK`, `VALUATION`이다.
+- Agent 생성 결과에는 `PERFORMANCE`, `OUTLOOK`, `VALUATION`, 그리고 `DRIVER` 또는 `SEGMENT`가 있어야 한다.
+- 질문마다 목적, 지표, 기간, 비교 기준, 제안 출처, 연속된 우선순위가 있다.
+- 사용자는 질문 추가·수정·삭제·순서 변경 후 승인한다.
 
-- 페이지 크기와 페이지 수가 원본과 동일해야 한다.
-- 폰트의 글꼴·스타일·크기와 색상이 원본과 동일해야 한다.
-- 고정 요소와 텍스트 영역의 좌표 오차는 최대 `±0.5pt`다.
-- 내용이 바뀌지 않는 영역은 원본 렌더링과 `99.5%` 이상 일치해야 한다.
-- 변경되는 문장·숫자·표·차트는 원본이 정의한 경계 밖으로 넘치면 안 된다.
+화면에 보이는 변화:
 
-### 문체 분석
+- 질문 추가 상한과 승인 가능 범위가 기존 5개에서 7개로 늘었다.
+- 질문 행은 현재 질문 문장과 순서만 보여준다. 저장된 role은 화면 badge로 노출하지 않는다.
+- 사용자가 질문을 추가·수정하면 서버가 문장에서 기업, 기간, 비교 기준, metric을 추출하고 role을 추론한다. 이 metadata를 만들 수 없는 문장은 거절한다.
 
-보고서에서 다음 문체 프로필을 만든다.
+자료 역할:
 
-- 문장 종결 방식
-- 평균 문장·문단 길이
-- 제목·소제목 패턴
-- 숫자·증감률 표기법
-- 기업·사업부·제품명 표기법
-- 자주 쓰는 연결어와 표현
-- 금지하거나 사용하지 않는 표현
+- optional 현재 IR은 현재 사실을 제공한다.
+- 이전 PDF는 과거 논점·문체 맥락이다.
+- 이전 Excel은 시트·metric 맥락이다.
+- 이전 자료를 현재 사실로 자동 승격하지 않는다.
 
-새 초안은 이 문체 프로필을 사용한다. 문체 프로필은 숫자와 사실을 변경할 권한을 갖지 않는다.
+질문 생성 workflow는 현재 IR resource version이 있으면 입력 snapshot에 함께 pin한다. 현재 IR의 텍스트는 “현재 분기 공식 사실·회사 전망”으로, 이전 PDF와 Excel은 “현재 사실이 아닌 주제·구조 배경”으로 prompt에 전달한다.
 
-### Excel 분석
+현재 구현에는 별도 “반증 질문” 유형이 없다. 질문 흐름은 실적 → 원인/사업부 → 전망 → 밸류에이션을 지향한다.
 
-시스템은 실제 업무 Excel에서 다음을 추출한다.
+완료 조건: 최신 입력 revision과 일치하고 질문별 purpose·period·comparison·metric·출처 metadata가 있는 3~7개 질문 세트를 사용자가 승인해야 한다.
 
-- 모든 시트와 숨김 시트
-- 셀 값, 수식, 스타일, 병합, 이름 정의, 표, 차트
-- 셀 참조와 수식 의존 관계
-- 실제값 영역, 추정값 영역, 계산 결과 영역
-- 노란색 배경·파란색 글씨가 함께 적용된 사용자 직접 입력 셀
-- 외부 링크 존재 여부
+현재 구현 주의점: role coverage는 **Agent 출력 검증 시점**에는 강제되지만, 사용자가 생성 후 질문을 삭제·수정한 뒤 누르는 최종 승인 API는 role coverage를 다시 검사하지 않는다. 최종 승인은 개수, 중복, metadata, input revision만 검사한다. 따라서 “최종 승인 세트도 항상 PERFORMANCE/OUTLOOK/VALUATION/DRIVER-or-SEGMENT를 포함한다”라고 문서화하면 현재 코드보다 강한 설명이 된다.
 
-외부 링크는 지원하지 않는다. 외부 링크가 계산에 필요하면 진행을 차단하고 사용자에게 내부 값으로 변환한 파일을 다시 업로드하도록 안내한다.
+## 9. `/projects/:projectId/process/research-plan` — 자료 수집 및 계획
 
-### PDF와 Excel 매핑
+목적: 승인 질문과 보고서/Excel 입력 대상을 실제 실행 가능한 수집 계획으로 고정.
 
-PDF 구성요소를 다음 유형으로 분류한다.
+화면과 실행은 두 축으로 분리된다.
 
-| 유형 | 채우는 방법 |
-|---|---|
-| Excel 연동 숫자·표·차트 | Excel 셀·범위·계산식과 연결 |
-| 공식 실제값 | DART·IR 등 검증된 출처에서 Excel을 거쳐 반영 |
-| 조사 근거 문장 | 검증된 Evidence와 연결 |
-| 사용자 판단 | 가설·추정치·PER·투자의견과 연결 |
-| 고정 디자인·고지 문구 | 이전 PDF 자산 또는 등록된 고정 규칙 유지 |
+### 가설 조사 축
 
-PDF의 데이터 의존 구성요소에 Excel 연결이나 별도 채움 규칙이 없으면 `미매핑` 오류다. 단순 로고·배경·고정 고지처럼 Excel과 연동되지 않는 요소는 명시적인 고정 규칙을 저장한다.
+- 승인 질문별 포함 여부와 출처를 설정한다.
+- 기본 출처:
+  - 실적: DART + 기업 IR
+  - 원인·사업부·전망: 기업 IR + NEWS
+  - 밸류에이션: KRX
+- NEWS는 사용자가 기사 URL을 수동 등록하는 방식이 아니라 승인된 기간 안에서 Agent가 검색하는 흐름이다.
+- 사용자는 기업 IR 또는 사용자 자료를 PDF 업로드나 공개 URL로 연결할 수 있다.
+- optional 현재 IR은 자동 source reference로 이어진다.
+- 현재 저장소의 manual material upload 구현은 PDF 중심이다. 화면 정책 문구에 보이는 XLSX/CSV/TXT를 일반 자료 업로드 계약으로 간주하면 안 된다.
 
-### 적합성 검사
+### Excel/리포트 입력 축
 
-다음을 검사한다.
+STEP 02 `MappingSet`과 workbook 분석을 이용해 다음을 만든다.
 
-- 프로젝트 기업과 PDF·Excel 기업 일치
-- 대상 문서가 실적 Review인지 확인
-- PDF 표·밸류에이션 구조와 Excel 모델의 대응 관계
-- 필수 데이터 영역의 PDF↔Excel 매핑 완성도
-- Excel 수식·셀 참조·파일 무결성
-- 외부 링크 존재 여부
-- PDF 템플릿 완전 복제용 자산 추출 상태
+- 연결된 scalar에 등록된 DART/KRX 규칙이 있으면 정확한 Excel target 생성
+- `12_p4_`, `13_p4_`, `14_p4_`, `15_p4_` 계열 재무제표 시트의 실제값 target 생성
+- `08_도표4_`, `10_도표6_`, `11_도표7_` 계열 분기 표 target 생성
+- 각 target에 metric, 기간, 연결·별도 기준, 연결/별도 재무제표 범위, 단위, write authority, 정확한 sheet/address 저장
+- 밸류에이션 입력은 STEP 04 수집 대상에서 제외하고 STEP 06으로 미룬다.
 
-### 진행 차단
+예를 들어 목표 보고 연도가 2026이면 원본 Excel의 `2025F` 물리 셀이 “검증된 2025 actual을 먼저 쓸 자리”로 잡힐 수 있다. STEP 05가 그 셀에 actual을 넣고, STEP 06 롤포워드가 헤더와 열의 역할을 바꾼다.
 
-다음 중 하나라도 발생하면 다음 단계로 갈 수 없다.
+리포트 target은 `carry_forward`, `collection_required`, `later_stage`, `connection_required`와 기간별 action을 보여준다. 연결이 없거나 지원하지 않는 대상도 상태를 명시해 계획에 남길 수 있다.
 
-- 기업 불일치
-- 필수 PDF↔Excel 매핑 미해결
-- PDF의 밸류에이션 방식과 Excel 모델 불일치
-- Excel 수식 오류 또는 지원하지 않는 외부 링크
-- 완전 복제용 템플릿 분석 실패
-- 텍스트를 선택할 수 없는 스캔 이미지 PDF
-- 암호화·손상 등으로 파일을 읽을 수 없음
-
-### 결과
-
-- PDF 템플릿 버전
-- 문체 프로필 버전
-- Excel 구조·입력 셀 목록
-- PDF↔Excel 매핑 목록
-- Excel 미연동 구성요소의 채움 규칙
-- 파일 적합성 검사 결과
-
----
-
-## 10. `/projects/:projectId/process/hypothesis` — 투자 의견·조사 질문
-
-### 목적
-
-애널리스트의 현재 투자 관점을 검증 가능한 조사 질문으로 변환한다.
-
-### 사용자 입력
-
-- 잠정 투자의견: `BUY`, `HOLD`, `SELL`
-- 현재 투자 의견 가설: 자유 입력
-
-잠정 투자의견은 조사 방향이다. 최종 투자의견이 아니다.
-
-### AI 동작
-
-PydanticAI 기반 Hypothesis Agent가 가설을 분석하고 3~5개의 확인 질문을 만든다.
-
-질문 조건:
-
-- 실제 자료로 답할 수 있어야 한다.
-- 기업·기간·지표가 명확해야 한다.
-- 핵심 실적 Driver를 포함해야 한다.
-- 가설이 틀릴 가능성을 확인할 질문을 최소 1개 포함한다.
-- `좋아질 것인가` 같은 추상 질문 대신 판매량, ASP, 가동률, 원가율, 환율, 고객 수요처럼 관찰 가능한 항목을 사용한다.
-
-### 사용자 동작
-
-- 질문을 수정·삭제·추가한다.
-- 질문 전체를 승인한다.
-- AI는 투자의견이나 가설의 정답을 확정하지 않는다.
-
-### 진행 조건
-
-- 잠정 투자의견이 선택되어야 한다.
-- 가설이 입력되어야 한다.
-- 조사 질문 3~5개가 사용자 승인 상태여야 한다.
-
----
-
-## 11. `/projects/:projectId/process/research-plan` — 자료 수집 및 계획
-
-### 목적
-
-가설 질문과 Excel 실제값 입력에 필요한 출처·항목·수집 방법을 확정한다.
-
-### 가설 영역
-
-각 질문마다 다음을 보여준다.
-
-- 질문에 답하기 위해 확인할 지표·사건·문장
-- 추천 출처
-- 수집 방법: 코드 또는 Research Agent
-- 예상 결과 유형: 숫자, 표, 문장, 사건, 비교
-- 사용자가 추가한 파일·URL
-
-선택 가능한 출처:
+### 실제 지원 출처
 
 - DART
-- 기업 IR
-- 뉴스
 - KRX
 - ECOS
-- FnGuide 컨센서스
-- 사용자 직접 업로드 자료
+- 기업 IR
+- 사용자 PDF/공개 URL 자료
+- NEWS Agent 검색
 
-사용자는 질문별 출처를 추가하거나 제외한다.
+`FNGUIDE_CONSENSUS` enum과 일부 정책 코드는 남아 있지만 현재 `sourceOptions()`에서 제외된다. 자동 수집도 `FNGUIDE_SOURCE_UNAVAILABLE`로 막힌다. 따라서 **FnGuide 컨센서스 자동 수집은 현재 미구현**이다.
 
-### Excel 영역
+### 계획 승인 후
 
-업로드한 Excel의 시트와 실제값 입력 대상 셀을 분석한다.
+승인 시 질문, Excel target, report target, source policy, 입력 version을 immutable snapshot으로 저장하고 Temporal 수집·검증 workflow를 시작한다.
 
-- DART·IR 등 공식 자료로 채울 수 있는 빈칸을 모두 표시한다.
-- 각 셀에 필요한 지표, 기간, 단위, 연결/별도 기준과 수집 출처를 표시한다.
-- 미래 추정치 셀은 자동 입력 대상에서 제외한다.
-- 노란 배경·파란 글씨의 추정치 셀은 밸류에이션 단계에서 사용자가 입력한다.
-- 외부 링크 의존 셀은 지원하지 않는다.
+현재 새 workflow는 가설과 Excel을 분리한다.
 
-### 수집 방식
+- 가설: DART/IR/NEWS/사용자/KRX/ECOS 수집 → LLM 후보 추출 → 독립 검증
+- Excel: 공식 구조화 원천 수집 → deterministic 값 선택
 
-- DART 재무 숫자: OpenDART/XBRL 코드 수집
-- DART 공시 본문·주석: 코드로 원문 확보 후 Research Agent 해석
-- KRX·ECOS: 코드 수집
-- FnGuide 컨센서스: 승인된 JSON endpoint를 `FnGuideConsensusProvider`가 코드 수집
-- 기업 IR·뉴스·업로드 문서: Research Agent 조사
+두 흐름은 source snapshot을 공유할 수 있지만 결과와 판정은 섞지 않는다.
 
-### 컨센서스 수집·비교
+## 10. `/projects/:projectId/process/validation` — 조사 결과·Excel 검증
 
-- 컨센서스는 실적 Review의 비교 자료다. 실제치와 사용자 미래 가정의 권위 원천이 아니다.
-- 실제치는 DART 또는 기업 공식 IR에서 가져오고, 컨센서스는 FnGuide snapshot에서 가져온다.
-- 기업, 추정 대상 기간, 분기·연간, 연결·별도, 지표와 단위가 모두 같을 때만 비교한다.
-- 연결·별도 기준은 DART·IR·Excel 기준을 먼저 확인하고 명시한다. 기본값으로 연결을 강제하지 않는다.
-- 차이 금액은 `실제치 - 컨센서스`, 차이율은 `(실제치 ÷ 컨센서스 - 1) × 100`이다.
-- 컨센서스가 비어 있으면 비교하지 않는다. `0`이면 차이 금액만 표시하고 차이율은 `비교 불가`로 표시한다.
-- 컨센서스는 실제치 셀이나 사용자의 미래 추정 셀을 자동으로 덮어쓰지 않는다.
-- 성공 응답은 원본 JSON, 요청 parameter, 수집시각, 공급자가 명시한 관측시점, 추정 대상 기간, 원본 hash와 정규화 version을 새 snapshot으로 저장한다.
-- 보고서는 `cutoff_at` 이전에 REFLO가 직접 수집한 최신 snapshot을 우선 사용한다. 없으면 FnGuide 추이의 기준시점 이하 최신값, 사용자 기준시점 자료 순으로 사용한다.
-- 공급자가 날짜만 제공한 추이 값은 다음 날 00:00 KST부터 사용 가능한 것으로 처리해 같은 날 미래값 사용을 막는다.
-- 보고서 초안은 선택한 snapshot ID를 고정한다. 새 수집값이나 정정값이 기존 보고서를 자동 변경하지 않는다.
-- 세전이익과 추정기관수처럼 승인된 JSON endpoint에 없는 값은 별도 공급자료가 있을 때만 표시한다.
-- 수집 실패 시 마지막 정상 snapshot의 시각과 stale 상태를 보여주고 사용자 확인을 받는다. 사용할 snapshot이나 사용자 자료가 없으면 컨센서스 비교만 제외하고 실제 실적 분석은 계속한다.
+목적: 원문을 확인하고, 승인된 값만 Excel 복사본과 후속 보고서에 전달.
 
-### 사용자 승인과 실행
+### 가설 탭
 
-사용자가 질문·셀·출처 계획을 승인하면 비동기 수집 작업을 시작한다. 화면을 닫아도 작업은 계속된다. 프로젝트 목록에서 진행률을 확인할 수 있다.
+- 질문별 답변, 근거, 지지/반대/중립 stance, 충족도를 표시한다.
+- 사용자는 결과 반려·복원·재조사 요청을 할 수 있다.
+- qualified 질문은 명시적으로 수락해야 한다.
+- 출처 충돌은 사용자가 근거와 이유를 선택해 해결한다.
+- DART는 보관한 원문 재무제표 표의 선택 행·필드를 강조한다.
+- PDF는 내부 viewer에서 페이지·좌표를 표시한다.
+- KRX/ECOS는 선택 record와 field를 구조화해 표시한다.
+- NEWS는 수집 시점 본문/정규 URL과 source context를 표시한다.
 
----
+### Excel 탭
 
-## 12. `/projects/:projectId/process/validation` — 조사 결과 검증
+- 검증 workbook read model과 target 셀을 표시한다.
+- target별 공식 원문, before/after 값, 쓰기 제안을 연결한다.
+- 모든 쓰기 제안에 사용자 결정이 필요하다: 원안 승인, 수정 승인, 반려.
+- 수정 승인은 검증된 값과 수치적으로 동등한 표현만 허용한다. 다른 값이면 재검증 대상이다.
+- 필수 제안을 반려한 상태로 완료할 수 없다.
+- 자동 승인은 없다.
 
-### 목적
+### 공식 Excel 값의 deterministic 규칙
 
-Research Agent가 수집한 주장과 코드로 수집한 숫자를 원문과 대조하고, 검증된 결과만 사용자에게 보여준다.
+- DART 분기 report code를 정확히 사용한다.
+  - 1분기 `11013`
+  - 반기 `11012`
+  - 3분기 `11014`
+  - 사업보고서 `11011`
+- 기준일 이전 최신 정정 공시, 기업, 연결/별도 범위를 고정한다.
+- 등록 account/statement 규칙으로 정확히 한 행만 선택한다. 다중 후보는 실패다.
+- 손익·현금흐름 누적 공시는 2~4분기 단일 분기값으로 차감할 수 있다.
+- 재무상태표는 시점 값이라 차감하지 않는다.
+- KRX는 종목코드·거래일·종가를 검증한다.
+- ECOS는 등록된 series만 사용한다.
+- Evidence에는 접수번호, statement/account/field, row fingerprint, 원시값, 정규화값, 단위 변환, 목적 sheet/cell을 남긴다.
 
-### 검증 구조
+### Excel 반영
 
-1. Research Agent가 자료 후보를 수집한다.
-2. 후보를 정형 결과로 저장한다.
-3. Validation Agent는 Research Agent의 추론을 받지 않는다.
-4. Validation Agent는 주장, 공식 URL, 문서 ID, 페이지·문단 위치, 정규화 값과 프로젝트 기준만 받는다.
-5. Validation Agent가 원문을 독립적으로 다시 열어 확인한다.
-6. 숫자 계산은 별도 코드 검증기가 재계산한다.
-7. 검증에 성공한 결과만 사용자 화면에 노출한다.
+승인된 제안으로 workbook application을 시작한다.
 
-### 최소 검증 규칙
+1. STEP 02의 원본 Excel artifact hash와 구조를 다시 확인한다.
+2. `MappingSet`이 허용한 정확한 sheet/address만 쓴다.
+3. 수식 셀·비편집 셀·구조 변경을 차단한다.
+4. 원본 대신 immutable 복사본에 쓴다.
+5. Excel Worker가 재계산하고 필수 출력·구조를 검증한다.
+6. 성공 artifact를 `validated_workbook_resource_version_id`로 저장한다.
 
-모든 자료에 같은 검사를 반복하지 않는다.
+완료 조건:
 
-#### 일반 문장
+- 포함된 필수 결과가 passed/qualified accepted 상태
+- 반려·stale·재조사·미해결 conflict 없음
+- 값·기간·scope·unit·provenance 완전
+- 모든 Excel 제안 결정 완료
+- workbook application 성공
+- 검증 Excel artifact 최신
 
-- 실제 원문에 근거 문장이 존재하는지 확인
-- 기업과 기간이 프로젝트에 맞는지 확인
+완료 산출물:
 
-#### 재무·운영 숫자
+- `ValidationApproval`
+- `ValidatedValueSet`
+- `ValidatedWorkbook`
 
-- 일반 문장 검사
-- 단위, 통화, 연결/별도, 실제치/잠정치/추정치 구분
-- 합계·증감률·Excel 계산값은 코드로 재계산
+## 11. `/projects/:projectId/process/valuation` — Excel 롤포워드·PER 밸류에이션
 
-#### 출처 충돌
+목적: STEP 05에서 공식 실제값이 반영된 Excel을 목표 보고 기간으로 전진시키고, 사용자가 추정치·PER·목표주가를 확정.
 
-- 서로 다른 원문 값이 있을 때만 충돌 검사
-- 사용자가 채택할 값을 직접 선택
+### 진입 시 Excel 준비
 
-해시, 수집시각, 기준일 필터는 백엔드가 자동 기록한다. 일반 사용자 화면에는 필요할 때만 표시한다.
+화면을 열면 서버가 최신 `ValidationApproval`, `ValidatedValueSet`, `ValidatedWorkbook`, `MappingSet`, KRX 가격 snapshot의 일치 여부를 확인한다. 그 뒤 Excel Worker의 `/valuation/prepare`가 롤포워드를 실행한다.
 
-### 검증 대상 출처와 우선순위
+롤포워드는:
 
-1. DART 공시·재무제표
-2. 기업 공식 IR·실적발표·컨퍼런스콜 자료
-3. KRX·ECOS
-4. 정부기관·공식 산업협회
-5. 실제 뉴스 원문
-6. 사용자 업로드 자료
+- 연도 헤더가 이미 목표 기간이면 다시 이동하지 않는다.
+- 정확히 5개 연속 연도, 2개 actual + 3개 forecast 구조를 기대한다.
+- 변경된 경우 새 immutable valuation workbook artifact를 만든다.
+- 동일 입력 재실행에 같은 결과가 나오는 idempotent 동작이다.
 
-이전 분기 증권사 리포트는 디자인·문체·이전 판단 참고용이다. 새로운 사실의 최종 검증 출처로 사용하지 않는다.
+### 연도 이동의 실제 예
 
-### 가설 영역 UI
-
-각 조사 질문별로 표시한다.
-
-- AI의 한 줄 답변
-- 충분한 근거인지, 불충분하거나 틀릴 가능성이 있는지 한 줄 설명
-- 지지·반박·중립 근거
-- 검증 상태
-- 사용된 원문 목록
-
-결과를 누르면 상세 설명 모달을 연다. 근거를 누르면 우측 패널 또는 새 탭에서 원문의 정확한 위치로 이동한다.
-
-### 원문 표시 규칙
-
-#### DART·IR·업로드 PDF
-
-- 공식 원본 파일을 내부 PDF 뷰어로 연다.
-- 해당 페이지로 이동한다.
-- 근거 문장·표 셀에 좌표 하이라이트를 표시한다.
-- 공식 URL, 문서명, 발행기관, 발행일을 함께 표시한다.
-
-#### 뉴스
-
-- 뉴스 복사본을 기사처럼 보여주지 않는다.
-- 실제 뉴스 URL을 새 탭으로 연다.
-- 가능하면 `#:~:text=` Text Fragment를 URL에 추가해 근거 문장으로 이동·하이라이트한다.
-- 기사 수정, 동적 렌더링, 브라우저 미지원, 사이트 정책 때문에 Text Fragment가 실패할 수 있다.
-- 실패해도 공식 URL과 Reflo가 검증한 근거 문장·위치 정보는 유지한다.
-
-Text Fragment 참고: <https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment/Text_fragments>
-
-### Excel 영역 UI
-
-왼쪽 영역:
-
-- 업로드한 Excel의 실제 시트 제목을 탭으로 표시
-- 선택한 시트의 채워진 셀, 기존 수식, 스타일 표시
-- 자동 입력값과 사용자 입력 예정값 구분
-- 읽기 전용 상태로 검증 결과 표시
-
-오른쪽 영역:
-
-- 선택한 셀의 DART·IR 원문 표시
-- 셀을 누르면 해당 수치가 있는 원문 표·문장을 하이라이트
-- 셀 주소, 값, 기간, 단위, 출처를 함께 표시
-
-예: 왼쪽이 포괄손익계산서 시트라면 오른쪽에는 DART 포괄손익계산서를 연다.
-
-### 충돌 처리
-
-DART와 IR 값이 다르면 두 원문과 차이 원인을 나란히 표시한다.
-
-- 시스템이 임의 선택하지 않는다.
-- 권장값과 권장 이유는 제시할 수 있다.
-- 사용자가 DART 또는 IR 값을 선택한다.
-- 선택 결과, 사용자, 시각, 이유를 기록한다.
-- 선택된 항목은 `확인 완료`로 이동한다.
-
-### 진행 차단
-
-- 핵심 숫자 검증 실패
-- 필수 질문에 검증된 근거 없음
-- 해결되지 않은 출처 충돌
-- Excel 실제값 셀의 원문 연결 실패
-
----
-
-## 13. `/projects/:projectId/process/valuation` — PER 밸류에이션
-
-### 목적
-
-사용자가 Excel의 추정치 입력 셀을 직접 편집하고 EPS·목표주가 변화를 실시간 확인한다.
-
-### 화면 구조
-
-- 실제 Excel 시트 구조를 유지해 보여준다.
-- 노란 배경·파란 글씨 셀만 편집할 수 있다.
-- 실제값·수식·검증된 입력 셀은 읽기 전용이다.
-- 선택 셀의 이름, 주소, 기존 값, 단위, 기간을 표시한다.
-
-### 사용자 입력
-
-판매량, ASP, 가동률, 환율, 원가율, 사업부 추정치 등 원본 Excel에서 사용자 입력 셀로 정의된 값을 입력한다.
-
-### 실시간 계산
-
-입력할 때마다 Excel 계산 엔진이 다음을 재계산한다.
-
-- 매출·영업이익·순이익 추정치
-- Forward EPS
-- Target PER 기반 목표주가
-- 현재주가 대비 상승여력
-- 관련 표·차트
-
-표시 계산식:
+목표 보고 연도 2026의 표준 연간 기간:
 
 ```text
-목표주가 = Forward EPS × Target PER
-상승여력 = 목표주가 ÷ 현재주가 - 1
+2024 actual | 2025 actual | 2026F | 2027F | 2028F
 ```
 
-### 사용자 판단
+이전 분기 Excel:
 
-- Target PER은 사용자가 0.1~100.0 범위에서 소수점 한 자리로 직접 입력·확정한다.
-- Valuation AI 제안은 MVP에서 제공하지 않는다.
-- 사용자가 1~1,000,000,000원의 정수 목표주가를 직접 입력하면 역산 PER을 보여준다.
-- 결과는 TD-021의 decimal·반올림·민감도 규칙으로 계산한다.
+```text
+2023 | 2024 | 2025F | 2026F | 2027F
+```
 
-### 저장 원칙
+실제 처리:
 
-- 원본 Excel을 수정하지 않는다.
-- 프로젝트별 복사본에 입력한다.
-- 셀 변경 전후 값과 사용자를 기록한다.
-- 모든 수식 재계산과 참조 무결성 검사를 통과해야 한다.
+1. STEP 04가 원본의 `2025F` 물리 셀을 2025 actual 입력 target으로 계획한다.
+2. STEP 05가 검증·승인된 2025 actual을 그 셀에 기록해 `ValidatedWorkbook`을 만든다.
+3. STEP 06 준비가 전체 5년 window를 한 칸 전진시킨다.
 
-### 진행 차단
+```text
+이전 2024 actual        → 새 2024 actual
+검증된 2025 actual      → 새 2025 actual
+이전 2026F             → 새 2026F
+이전 2027F             → 새 2027F
+새 2028F input          → 비움
+```
 
-- 필수 사용자 입력 셀 미입력
-- 수식 오류, 순환참조, 합계 불일치
-- Forward EPS 계산 실패
-- 사용자 확정 Target PER 또는 직접 목표주가 없음
+즉 사용자가 제시한 변환:
 
----
+```text
+2023 2024 2025F 2026F 2027F
+              ↓
+2024 2025 2026F 2027F 2028F
+```
 
-## 14. `/projects/:projectId/process/report-outline` — 페이지 내용 설정
+이 흐름이 현재 코드와 테스트에 구현되어 있다. 단순히 헤더 문자열만 바꾸지 않는다. 실제값 주입, 열 이동, 새 추정 연도 입력 준비, 수식 재생성, 후속 report period 검증까지 연결된다.
 
-### 목적
+현재 롤포워드 인식 범위:
 
-완전 복제된 페이지 구조 안에서 새 보고서의 논리와 각 블록 내용을 확정한다.
+- 연간 재무제표: visible sheet 이름이 `12_p4_`, `13_p4_`, `14_p4_`, `15_p4_`로 시작
+- 모델 시트: `M1_` 계열
+- 수정후/수정전 기준표: `10_...(수정후|revised)`와 `11_...(수정전|prior|before)` 패턴
 
-### 표시 내용
+세부 동작:
 
-업로드 PDF에서 분석한 실제 페이지별 구성요소를 보여준다.
+- 새 마지막 forecast 입력 셀은 비우고 노란 배경 `#FFF2CC`, 파란 글자 `#0000FF`로 표시한다.
+- 이 셀들은 사용자 편집 manifest에 들어간다.
+- 실제 재무제표 actual 셀은 system writable이다.
+- `M1_` 입력 행은 forecast를 왼쪽으로 이동하고 마지막 forecast를 비운다.
+- `M1_` 수식 행의 새 마지막 열은 왼쪽 수식을 상대 A1 참조로 번역해 만든다.
+- 이미 수식인 셀은 불필요하게 덮어쓰지 않는다.
+- 수정후 기준표가 바뀌면 수정전 시트에 값 snapshot을 만들고 `도표 6`을 `도표 7`, `수정후`를 `수정전`으로 바꾼다.
 
-- 리포트 제목
-- 투자의견·목표주가 영역
-- 소제목과 본문 영역
-- 표·차트·재무제표
-- 고지 문구와 고정 디자인
-- 각 구성요소의 Excel·Evidence·사용자 판단 연결 상태
+### 화면 동작
 
-### AI 추천
+두 탭:
 
-Report Outline Agent가 다음을 제안한다.
+1. Excel 추정치
+2. PER·목표주가 결정
 
-- 새 리포트 제목
-- 각 본문 소제목
-- 각 본문의 전개 방향 한 줄
-- 사용할 표·차트와 연결 데이터
-- 지지·반박 근거 배치
+사용자는 manifest가 허용한 노란색/파란색 비수식 셀만 편집한다. 저장 때마다 Excel Worker가 새 workbook version을 만들고 수식을 재계산한다. Forward EPS, Target PER cell, 목표주가, 영향 받은 보고서 binding을 다시 읽는다.
 
-추천은 검증된 근거, 확정된 Excel, 투자의견 가설만 사용한다.
+결정 방식:
 
-### 사용자 동작
+- Target PER 직접 입력: `0.1~100.0`, 소수점 한 자리
+- 목표주가 직접 입력: `1~1,000,000,000`원 정수
+- 목표주가 직접 입력 시 `목표주가 ÷ Forward EPS`로 PER을 역산해 Excel 입력 셀에 반영
+- 목표주가와 상승여력은 Excel 출력 및 KRX 현재주가로 확인
+- PER/EPS 민감도 표 제공
 
-- 제목·소제목·한 줄 전개를 수정한다.
-- 페이지별 사용할 근거를 확인한다.
-- 원본과 동일한 페이지 수와 구조 안에서 각 페이지의 내용을 확정한다.
-- 전체 페이지 구성을 승인한다.
+완료 전:
 
-### 진행 조건
+- 롤포워드 기간 헤더 일치
+- 필수 입력 셀 값 존재
+- 최신 Excel 재계산 성공
+- Forward EPS, Target PER, 목표주가가 양수
+- draft 값과 Excel 출력 일치
+- 최신 KRX snapshot, MappingSet, validated workbook, structure hash 일치
+- 사용자 입력값 승인
 
-- 모든 변경 가능한 핵심 블록에 데이터 또는 근거 연결이 있어야 한다.
-- 표·차트가 Excel 범위와 연결되어야 한다.
-- 페이지별 사용자 승인이 완료되어야 한다.
+추정치가 바뀌면 기존 valuation approval, report outline, report validation이 무효화된다.
 
----
+완료 산출물은 승인된 valuation workbook artifact와 `ValuationApproval`이다. 이 Excel이 보고서 표·차트·수치와 최종 XLSX의 정본이다.
 
-## 15. `/projects/:projectId/report` — 보고서 편집·검증·내보내기
+## 12. `/projects/:projectId/process/report-outline` — 페이지 내용 설정
 
-### 목적
+목적: 이전 PDF의 페이지 구조를 유지하면서 새 분기 보고서에 들어갈 제목·서술 방향·데이터 slot을 승인.
 
-이전 분기 PDF 디자인을 완전히 복제한 새 실적 Review 초안을 검토·수정하고 최종 산출물을 만든다.
+입력 버전:
 
-### 초안 생성
+- `Template IR`
+- 확정 `MappingSet`
+- `ValidationApproval`
+- 승인 valuation workbook와 `ValuationApproval`
+- 최신 승인 hypothesis
 
-시스템은 다음 버전을 고정해 초안을 생성한다.
+현재 동작:
 
-- PDF 템플릿 버전
-- 문체 프로필 버전
-- Excel 계산 결과 버전
-- 검증된 Evidence 버전
-- 사용한 컨센서스 snapshot과 기준시점
-- 잠정 투자의견·가설 버전
-- 페이지 구성 승인 버전
+- 원본 PDF 페이지 순서대로 outline을 만든다.
+- 코드 기반 fallback outline을 먼저 만들고 Report Outline Agent가 제목·소제목·요약을 제안한다.
+- 사용자는 페이지 제목, narrative block의 소제목·요약을 수정한다.
+- 페이지별 visual slot의 연결 상태와 원천을 본다.
+- 페이지마다 “확인 완료” 처리한다.
+- 전체 제안을 다시 생성할 수 있다.
+- 상위 version이 바뀌면 기존 outline은 재검증 상태가 된다.
 
-Report Draft Agent는 페이지별 허용 블록 안에서만 문장을 작성한다. 새로운 숫자나 출처를 임의 생성할 수 없다.
+페이지 확인 조건:
 
-새 문장이 기존 텍스트 영역을 넘으면 Agent가 숫자·의미·근거를 유지한 채 문장을 자동 축약한다. 축약 후에도 맞지 않으면 사용자 수정이 필요한 차단 오류로 처리한다. 완전 복제를 유지하기 위해 글자 크기를 줄이거나 페이지를 자동 추가하지 않는다.
+- 제목 존재
+- 필요한 서술 내용 존재
+- 해당 페이지 visual slot이 모두 confirmed
 
-### 화면 구조
+승인 시:
 
-- 중앙: 실제 출력 크기의 페이지 캔버스
-- 페이지 썸네일 또는 페이지 탐색
-- 블록 선택·편집 상태
-- 우측: 선택한 문장·숫자·표·차트의 근거 패널
-- 상단: 저장, 실행 취소, 편집 모드, 검증, 내보내기
+1. 모든 페이지 검토와 version 일치를 검사한다.
+2. outline approval을 저장한다.
+3. 비동기 report materialization 작업을 시작한다.
+4. 승인 Excel에서 scalar·table·chart를 snapshot으로 재료화한다.
+5. 각 block에 source refs와 materialization snapshot ID를 고정한다.
+6. 보고서 초안 생성 성공 후 `/projects/:projectId/report`를 연다.
 
-### 편집 가능한 대상
+현재 구현은 원본 PDF의 page count/order, 객체 좌표, 스타일·고정 자산 참조를 보존하고 편집 영역을 덮어쓰는 방식이다. “텍스트 선택 가능한 모든 증권사 PDF를 무조건 지원”하거나 “모든 입력에서 픽셀 단위 완전 복제”한다는 보장은 현재 코드 계약이 아니다. Template IR 검사와 materialization/render 검증을 통과한 입력만 지원한다.
 
-- 제목과 소제목
-- 본문 문장
-- 표의 허용 셀
-- 차트 표현 방식
-- 투자 포인트·리스크 문장
+## 13. `/projects/:projectId/report` — 초안 편집·검증·내보내기
 
-고정 로고, 배경, 페이지 규격, 고지 영역과 승인된 레이아웃 좌표는 임의로 변경할 수 없다.
+목적: 생성된 초안을 근거와 함께 검토하고 같은 승인 버전의 PDF·XLSX를 발행.
 
-### AI 문장 수정
+### 초안 데이터
 
-사용자는 문장 또는 문단을 선택하고 AI 수정 요청을 할 수 있다.
+초안은 다음을 함께 고정한다.
 
-예:
+- 원본 PDF/Template IR version
+- `MappingSet`
+- 승인 hypothesis
+- 검증 Evidence와 `ValidationApproval`
+- 승인 valuation workbook와 `ValuationApproval`
+- outline approval
+- block별 materialization snapshot
 
-- 더 간결하게
-- 이전 보고서 문체로
-- 숫자 중심으로
-- 리스크를 먼저 제시
+표·차트·수치 block은 승인 valuation workbook read model에서 만든다. 값, 시트·범위, Evidence, 계산 경로가 provenance panel에 표시된다. Excel 연결이 없거나 read model 범위가 없으면 해당 block은 차단 상태가 된다.
 
-AI 수정 규칙:
+### 편집
 
-- 연결된 숫자와 출처 ID 유지
-- 사용자가 확정한 의견·가정 변경 금지
-- 원문에 없는 사실 추가 금지
-- 수정 범위를 선택 블록으로 제한
-- 적용 전 변경 내용을 미리 표시
+- 한 보고서에 활성 편집 session 하나만 허용한다.
+- session은 heartbeat와 lease를 가진다.
+- 다른 session이 잡고 있으면 읽기 전용이며 명시적 takeover를 지원한다.
+- 편집 가능한 text block만 수정한다.
+- 한 block text는 비어 있을 수 없고 최대 2,000자다.
+- undo/redo는 현재 브라우저 편집 기록으로 제공한다.
+- 저장은 새 report version을 만든다.
+- 이전 version 목록 조회와 복원을 지원한다.
+- 수정하면 기존 preview, validation, export 상태가 stale이 된다.
 
-### 숫자 편집
+AI 문장 다듬기:
 
-- Excel 연결 숫자는 보고서에서 자유 텍스트로 직접 변경하지 않는다.
-- 숫자 변경이 필요하면 연결된 Excel 셀 또는 밸류에이션 단계로 이동한다.
-- Excel 값이 변경되면 보고서 숫자·표·차트를 다시 생성하고 검증을 무효화한다.
+- 선택한 block과 사용자 요청만 Agent에 보낸다.
+- 원문과 제안문을 비교한 뒤 사용자가 적용한다.
+- 적용도 새 report version이다.
+- AI가 검증 수치·근거·판단을 직접 바꾸는 권한은 없다.
 
-### 근거 확인
+### PDF 미리보기
 
-- 문장·숫자 옆 근거 표시를 누르면 원문을 연다.
-- DART·IR PDF는 해당 페이지·좌표를 하이라이트한다.
-- 뉴스는 실제 URL을 Text Fragment와 함께 새 탭으로 연다.
-- Excel 계산값은 입력 셀부터 결과 셀까지 계산 경로를 보여준다.
+- 비동기 PDF Worker가 source PDF와 render plan으로 미리보기를 만든다.
+- 원본 page 구조와 target rectangle에 새 text/data materialization을 렌더링한다.
+- block overflow, source/template 불일치, render 실패를 차단한다.
+- 최신 ready preview만 승인·내보내기에 사용한다.
 
-### 자동 오류 검사
+### 최종 검증
 
-내보내기 전 다음을 검사한다.
+현재 blocking 검사:
 
-- 이전 분기 기업명·연도·분기·날짜·목표주가·문구 잔존
-- 본문·표·차트 간 숫자 불일치
-- 합계·증감률·PER·EPS·목표주가 계산 오류
-- 근거 없는 핵심 주장
-- 기준일 이후 자료 사용
-- 출처 링크·원문 위치 누락
-- 표·문장 영역 넘침
-- 폰트·크기·색상·정렬·행간·페이지 좌표 불일치
-- 고정 디자인 영역 변경
-- 출력 PDF 렌더링과 승인 템플릿 비교 실패
+- 원본과 페이지 수·순서 불일치
+- 빈 report block
+- 존재하지 않는 Evidence 참조
+- 편집 영역이 원본 텍스트를 완전히 덮지 못함
+- 미확정 data binding
+- 승인 Excel에서 materialization 미완료
+- 연간 재무표 헤더가 목표 5개 기간과 불일치
+- PER, 목표주가, Forward EPS가 `ValuationApproval`과 불일치
+- PDF render의 blocking issue
 
-차단 오류가 하나라도 있으면 최종 승인과 내보내기를 할 수 없다.
+일부 font 대체, 낮은 해상도 이미지, optional source link, 경미한 pixel diff는 허용 가능한 warning code다. warning은 확인할 수 있지만 blocking issue가 하나라도 있으면 승인할 수 없다.
 
-### 최종 승인
+### 승인·내보내기
 
-사용자가 다음을 확인한다.
+순서:
 
-- 숫자와 단위
-- 투자의견과 목표주가
-- 핵심 지지·반박 근거
-- 출처와 고지 문구
-- 페이지 레이아웃
+1. 최신 report version PDF preview 생성
+2. 같은 version 최종 validation 통과
+3. report version 승인
+4. 같은 승인·validation version으로 export 생성
 
-승인 시 보고서와 검증 결과를 수정 불가능한 최종 버전으로 저장한다. 승인 후 내용을 수정하면 새 버전을 만들고 다시 검증해야 한다.
+내보내기는 PDF와 XLSX를 반드시 함께 요청한다.
 
-### 내보내기
+- PDF: 최신 승인 report version의 ready preview artifact
+- XLSX: STEP 06에서 승인된 같은 valuation workbook artifact
 
-내보내는 파일:
+따라서 최종 XLSX에는 STEP 05의 검증 실제값, STEP 06의 연도 롤포워드, 사용자 추정치, PER·목표주가 계산이 반영된다. 보고서 표·차트·수치도 그 Excel version을 사용하므로 두 산출물의 숫자 계보가 같다.
 
-1. 완전 복제된 최종 PDF
-2. 검증된 실제값과 사용자 추정치가 채워진 Excel 복사본
+export는 비동기 작업이며 상태 조회, 실패 artifact 재시도, 취소, 다운로드를 지원한다.
 
-각 파일에는 프로젝트 기업, 대상 분기, 버전, 생성 시각을 연결한다.
+## 14. 현재 구현과 이전 문서의 주요 불일치
 
----
+| 이전 문서 내용 | 현재 구현 |
+|---|---|
+| 문서는 목표 서비스 동작 정의 | 이 문서는 현재 실행 코드 기준으로 수정 |
+| STEP 02는 이전 PDF와 Excel 두 파일 화면 | 필수 이전 PDF·Excel + 선택 현재 IR의 3-slot 화면 |
+| 질문 3~5개 | 3~7개 |
+| Hypothesis prompt v3 | canonical prompt v4, `hypothesis-v4` |
+| 생성 질문과 최종 승인 질문 모두 role coverage 보장 | 생성 output만 coverage 강제. 사용자 편집 후 승인 API는 role coverage를 재검사하지 않음 |
+| FnGuide 컨센서스 자동 수집 | 현재 source option에서 제외, 자동 수집 미지원 |
+| 모든 selectable PDF 지원·완전 복제 보장 | Template IR/매핑/render 검증을 통과한 PDF만 지원. 보편적 pixel-perfect 보장 없음 |
+| 파일 단계에서 Excel을 다음 연도로 변환하는 것으로 오해 가능 | STEP 02는 구조 분석·매핑. 실제값은 STEP 05, 롤포워드는 STEP 06 진입 |
+| PBR/EV/EBITDA/DCF까지 후반 계산 가능해 보임 | setup 저장은 가능하지만 현재 STEP 06은 PER 전용 |
+| Research Agent가 Excel 실제값도 판단 | Excel 실제값은 등록 규칙과 공식 구조화 원천으로 deterministic 수집 |
+| Excel 자동 반영 | 모든 쓰기 제안에 사용자 결정 필요. 승인본의 복사본에만 반영 |
+| 원본 Excel이 후반에 계속 사용 | STEP 05 검증 Excel → STEP 06 롤포워드/계산 Excel → 최종 XLSX로 version 전진 |
+| 최종 PDF만 보고서 정본 | 최종 PDF와 XLSX가 동일한 report/valuation approval 계보를 공유 |
 
-## 16. Agent 구성
+## 15. 다른 세션이 반드시 유지해야 할 불변조건
 
-모든 Agent는 PydanticAI로 실행한다.
-
-| Agent | 입력 | 출력 | 금지사항 |
-|---|---|---|---|
-| Hypothesis Agent | 투자의견 가설, 기업·분기 | 조사 질문 3~5개 | 최종 투자의견 결정 |
-| Research Agent | 승인 질문, 출처 계획, 기준일 | 주장 후보, 값, URL, 원문 위치 | 검증 완료 표시 |
-| Validation Agent | 주장, URL, 위치, 프로젝트 기준 | 통과·실패, 근거 위치, 실패 이유 | Research Agent 추론 참조 |
-| Style Profile Agent | 이전 PDF 텍스트 | 문체 규칙 | 숫자·사실 변경 |
-| Report Outline Agent | 검증 결과, Excel, 가설 | 제목·소제목·전개·표차트 제안 | 레이아웃 변경 |
-| Report Draft Agent | 승인된 Outline과 템플릿 | 블록별 초안 | 근거 없는 숫자·주장 생성 |
-
-### 16.1 Hypothesis Agent system prompt v2
-
-기존 inline `v1` prompt는 폐기한다. canonical prompt의 단일 원본은 [`agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](./agents/HYPOTHESIS_AGENT_PROMPT_v2.md)이며 `agent_profile.prompt_version`은 `hypothesis-v2`다.
-
-`hypothesis-v2`는 가설을 뒷받침하기 위해 확인해야 할 핵심 사실을 3~5개 조사 질문으로 변환한다. 별도 질문 유형이나 반증 조건을 만들지 않는다. 각 질문의 목적·지표·기간·비교 기준·제안 출처와 초기 우선순위를 structured output으로 반환한다.
-
-Hypothesis Agent는 자료 조사, 결론 도출과 충분성 판정을 수행하지 않는다. Research Agent가 승인 질문별 자료를 수집하고 Validation Agent가 검증된 Evidence로 질문별 답변과 충분성을 계산한다.
-
-Validation Agent는 완전히 맥락이 없는 상태가 아니다. Research Agent의 추론은 받지 않지만 다음 최소 문맥은 받는다.
-
-- 프로젝트 기업과 대상 분기
-- 보고서 기준일
-- 검증할 주장과 정규화 값
-- 공식 URL·문서 식별자
-- 페이지·문단·표 위치 후보
-- 단위·통화·연결/별도·값 종류
-
-## 17. 출처별 검증 정책
-
-| 출처 | 검증 주체 | 검증 내용 |
-|---|---|---|
-| DART 구조화 재무정보 | 코드 | 기업·기간·계정·단위·연결/별도·값 |
-| DART 본문·주석 | Validation Agent | 원문 문장 존재와 문맥 |
-| 기업 IR | Validation Agent + 숫자 코드 검사 | 페이지·표·문장·단위·값 종류 |
-| KRX | 코드 | 종목·거래소·기준일·가격 |
-| ECOS | 코드 | 통계코드·기간·단위·값 |
-| 공식 기관·협회 | Validation Agent | 발행기관·날짜·원문 문장·지표 정의 |
-| 뉴스 | Validation Agent | 실제 기사 URL·본문·날짜·대상 기업 |
-| 사용자 업로드 | Validation Agent | 문서 내부 근거 존재; 외부 사실은 별도 출처 필요 |
-
-## 18. 확장 원칙
-
-MVP의 IT 제조업·실적 Review·PER 흐름이 실제 현업에서 정상 작동한 뒤 다음을 확장한다.
-
-- 다른 제조업
-- 금융·바이오·건설·통신 등 별도 회계 구조 업종
-- Preview·기업분석·산업분석·이슈 리포트
-- PBR·EV/EBITDA·DCF 등 다른 밸류에이션
-
-확장 시에도 기존 프로젝트의 템플릿, Excel, 근거, 검증, 최종 버전은 변경하지 않는다.
-
-## 19. 확정된 운영 규칙
-
-1. 완전 복제는 페이지 크기·수, 폰트·색상, 요소 좌표, 변경되지 않는 영역의 렌더링 일치율로 자동 판정한다.
-2. 새 문장이 영역을 넘으면 의미와 숫자를 유지하며 자동 축약하고 사용자 확인을 받는다. 글자 크기 축소와 자동 페이지 추가는 허용하지 않는다.
-3. 텍스트를 드래그해 선택할 수 있는 PDF만 지원한다. 스캔 이미지 PDF는 지원하지 않는다.
-4. 암호화 PDF는 지원하지 않는다.
-5. 공동 프로젝트와 역할별 승인은 지원하지 않는다. 프로젝트는 생성한 사용자에게만 귀속된다.
-6. 로그인은 Google 계정만 사용한다. 데이터와 파일은 검증된 Google 사용자 ID를 기준으로 서버에서 격리한다.
+1. 상위 version ID와 artifact hash를 생략하고 “최신 파일”만 참조하지 않는다.
+2. 이전 PDF는 현재 사실의 권위 출처가 아니라 구조·과거 맥락이다.
+3. 현재 실제값은 DART/IR 등 검증 근거를 거쳐 STEP 05에서 Excel 복사본에 쓴다.
+4. `2025F` 같은 물리 셀이 STEP 05 전에는 forecast였어도, 목표 기간 롤포워드 전 actual 입력 target이 될 수 있다.
+5. 롤포워드는 검증 실제값 반영 후 실행한다.
+6. 새 마지막 forecast 입력은 비우고 사용자가 채우게 한다. 수식 셀은 규칙으로 재생성한다.
+7. 보고서 숫자는 승인 valuation workbook 밖에서 LLM이 새로 계산하지 않는다.
+8. Excel 수정은 valuation approval과 보고서 결과를 무효화한다.
+9. 최종 PDF와 XLSX는 같은 승인 report/validation/valuation lineage에서 내보낸다.
+10. FnGuide, 비-PER 밸류에이션, 모든 PDF 완전 복제를 현재 지원 기능으로 설명하지 않는다.

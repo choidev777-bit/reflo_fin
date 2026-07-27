@@ -374,7 +374,7 @@ Excel 연결 숫자를 선택하면 `이 값은 Excel 계산 결과입니다`와
 - 적용은 일반 편집 operation으로 저장되고 undo할 수 있다.
 - 적용 성공 시 기존 full validation을 무효화한다.
 - PydanticAI의 구조화 output과 model·prompt version을 기록한다.
-- Agent runtime은 TD-023의 `pydantic-ai 2.17.0`, `openai 2.48.0`, Responses API v1, `gpt-5.6-terra` 프로필과 timeout·비용·rate limit을 적용한다.
+- Agent runtime은 TD-023의 `pydantic-ai 2.17.0`, `openai 2.48.0`, Responses API v1, `gpt-5.4-mini` 프로필과 timeout·비용·rate limit을 적용한다.
 
 ### 10.16 표 편집·첨부 계약
 

@@ -37,14 +37,21 @@ const roleContent: Record<
   }
 > = {
   previous_report_pdf: {
-    title: "① 이전 분기 실적 Review PDF",
+    title: "① 이전 분기 실적 Review PDF · 필수",
     accept: ".pdf,application/pdf",
     mediaType: "application/pdf",
     emptyHelp: "텍스트 레이어가 있는 비암호화 PDF · 최대 50 MiB",
     readyHelp: "원본 보존 · PDF 구조 검사 통과",
   },
+  current_ir_pdf: {
+    title: "③ 현재 분기 IR·잠정실적 PDF · 선택",
+    accept: ".pdf,application/pdf",
+    mediaType: "application/pdf",
+    emptyHelp: "현재 분기 공식 IR 또는 잠정실적 PDF · 최대 50 MiB",
+    readyHelp: "현재 분기 사실·사업부·회사 전망 추출에 사용",
+  },
   analysis_workbook: {
-    title: "② 실제 분석 Excel",
+    title: "② 이전 분기 분석 Excel · 필수",
     accept:
       ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     mediaType:
@@ -736,6 +743,7 @@ export function FilesScreen({ projectId }: { projectId: string }) {
   const [uploads, setUploads] = useState<Record<FileRole, UploadUi>>({
     previous_report_pdf: emptyUpload(),
     analysis_workbook: emptyUpload(),
+    current_ir_pdf: emptyUpload(),
   });
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -940,6 +948,9 @@ export function FilesScreen({ projectId }: { projectId: string }) {
     const workbook = bootstrap.slots.find(
       (slot) => slot.role === "analysis_workbook",
     )?.currentFile;
+    const currentIr = bootstrap.slots.find(
+      (slot) => slot.role === "current_ir_pdf",
+    )?.currentFile;
     if (!pdf || !workbook) return;
     setStarting(true);
     setShowResult(false);
@@ -954,6 +965,7 @@ export function FilesScreen({ projectId }: { projectId: string }) {
         body: JSON.stringify({
           pdfFileVersionId: pdf.fileVersionId,
           workbookFileVersionId: workbook.fileVersionId,
+          currentIrFileVersionId: currentIr?.fileVersionId ?? null,
         }),
       });
       await load();
@@ -1097,7 +1109,13 @@ export function FilesScreen({ projectId }: { projectId: string }) {
   }
 
   const inspection = bootstrap.inspection;
-  const slotsReady = bootstrap.slots.every((slot) => slot.status === "ready");
+  const slotsReady = bootstrap.slots.every(
+    (slot) => !slot.required || slot.status === "ready",
+  );
+  const optionalSlotsSettled = bootstrap.slots.every(
+    (slot) =>
+      slot.required || slot.status === "empty" || slot.status === "ready",
+  );
   const inspectionActive = Boolean(
     inspection &&
       ["queued", "running", "cancel_requested"].includes(
@@ -1188,9 +1206,9 @@ export function FilesScreen({ projectId }: { projectId: string }) {
             <div className="spec-screen-head">
               <div>
                 <p>STEP 02</p>
-                <h1>필수 파일 업로드 · 적합성 검사</h1>
+                <h1>분석 기준 파일 업로드 · 적합성 검사</h1>
                 <span>
-                  이전 분기 PDF와 실제 분석 Excel을 업로드하고 제작 호환성을 확인합니다.
+                  이전 분기 PDF·Excel로 구조를 읽고, 현재 분기 IR이 있으면 질문과 공식 근거에 함께 사용합니다.
                 </span>
               </div>
             </div>
@@ -1201,7 +1219,11 @@ export function FilesScreen({ projectId }: { projectId: string }) {
               </section>
             )}
             <div className="spec-upload-grid">
-              {(["previous_report_pdf", "analysis_workbook"] as FileRole[]).map(
+              {([
+                "previous_report_pdf",
+                "analysis_workbook",
+                "current_ir_pdf",
+              ] as FileRole[]).map(
                 (role) => {
                   const slot = bootstrap.slots.find((item) => item.role === role)!;
                   return (
@@ -1218,7 +1240,7 @@ export function FilesScreen({ projectId }: { projectId: string }) {
                 },
               )}
             </div>
-            {slotsReady ? (
+            {slotsReady && optionalSlotsSettled ? (
               <section
                 className={`spec-panel spec-check-result phase2-inspection-card ${
                   inspection?.outcome === "failed" || inspection?.operationStatus === "failed"
@@ -1250,15 +1272,15 @@ export function FilesScreen({ projectId }: { projectId: string }) {
                     {inspectionActive
                       ? phaseLabel(inspection?.phase ?? null)
                       : inspection?.outcome === "passed"
-                        ? "두 파일을 이번 프로젝트에 사용할 수 있습니다."
+                        ? "업로드한 파일을 이번 프로젝트에 사용할 수 있습니다."
                         : inspection?.outcome === "failed"
                           ? "차단 항목을 확인하고 파일을 교체해주세요."
-                          : "두 파일의 제작 호환성을 검사할 준비가 되었습니다."}
+                          : "파일의 제작 호환성과 역할을 검사할 준비가 되었습니다."}
                   </h3>
                   <p>
                     {inspectionActive
                       ? "브라우저를 닫아도 서버 작업은 계속됩니다."
-                      : "PDF 템플릿, Excel 구조와 두 파일의 연결을 함께 확인합니다."}
+                      : "이전 PDF의 구조, Excel 계산 모델, 현재 IR의 공식 사실을 구분해 확인합니다."}
                   </p>
                 </div>
                 {inspectionActive && (

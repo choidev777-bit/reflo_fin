@@ -30,6 +30,7 @@
       "enum": [
         "previous_report_pdf",
         "analysis_workbook",
+        "current_ir_pdf",
         "user_source",
         "report_import",
         "font"

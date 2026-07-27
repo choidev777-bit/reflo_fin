@@ -7,6 +7,15 @@ type EvidenceInput = {
   quoteExact: string;
   stance: string;
   machineStatus: string;
+  metricId: string;
+  sourceType: string;
+  period: string | null;
+  scope: string | null;
+  claimType: "fact" | "company_statement" | "calculation";
+  allowedUsage:
+    | "assertive"
+    | "attribute_to_company"
+    | "state_as_calculation";
 };
 
 type DraftSuggestion = {
@@ -91,8 +100,8 @@ export async function suggestReportDraft(input: {
             blocks,
           },
           profile: {
-            version: "report-draft-v1",
-            model: "gpt-5.6-terra",
+            version: "report-draft-v2",
+            model: "gpt-5.4-mini",
             reasoning: "medium",
           },
         }),

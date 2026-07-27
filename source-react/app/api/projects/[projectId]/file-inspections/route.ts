@@ -18,6 +18,7 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
     const body = await readJson<{
       pdfFileVersionId?: unknown;
       workbookFileVersionId?: unknown;
+      currentIrFileVersionId?: unknown;
     }>(request);
     const result = await createFileInspection({
       projectId,
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest, context: Context): Promise<Resp
       idempotencyKey: request.headers.get("idempotency-key"),
       pdfFileVersionId: body.pdfFileVersionId,
       workbookFileVersionId: body.workbookFileVersionId,
+      currentIrFileVersionId: body.currentIrFileVersionId,
     });
     kickOutboxDispatcher();
     return jsonResponse(result.body, { status: result.status }, requestId);

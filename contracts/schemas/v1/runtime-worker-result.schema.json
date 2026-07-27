@@ -33,6 +33,7 @@
           "type": "string",
           "enum": [
             "template_ir",
+            "current_ir_analysis",
             "workbook_analysis",
             "market_price_snapshot",
             "mapping_set"
@@ -626,6 +627,16 @@
         "pdf": {
           "$ref": "#/$defs/PdfInspectionPayload"
         },
+        "currentIr": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PdfInspectionPayload"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "workbook": {
           "$ref": "#/$defs/WorkbookInspectionPayload"
         },
@@ -790,6 +801,101 @@
         }
       }
     },
+    "RuntimeResearchCalculationTerm": {
+      "title": "RuntimeResearchCalculationTerm",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "quoteExact",
+        "valueOriginal",
+        "operation",
+        "period",
+        "scope"
+      ],
+      "properties": {
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "quoteExact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "valueOriginal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "add",
+            "subtract"
+          ]
+        },
+        "period": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "RuntimeResearchNumericCalculation": {
+      "title": "RuntimeResearchNumericCalculation",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "currentTerms",
+        "comparisonTerms",
+        "reportedRateOriginal"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "yoy",
+            "qoq"
+          ]
+        },
+        "currentTerms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/RuntimeResearchCalculationTerm"
+          }
+        },
+        "comparisonTerms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/RuntimeResearchCalculationTerm"
+          }
+        },
+        "reportedRateOriginal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "RuntimeResearchCandidate": {
       "title": "RuntimeResearchCandidate",
       "type": "object",
@@ -799,6 +905,7 @@
         "category",
         "questionId",
         "targetId",
+        "metricId",
         "sourceKey",
         "title",
         "quoteExact",
@@ -819,31 +926,18 @@
           "$ref": "common.schema.json#/$defs/OpaqueId"
         },
         "category": {
-          "type": "string",
-          "enum": [
-            "hypothesis",
-            "excel"
-          ]
+          "const": "hypothesis"
         },
         "questionId": {
-          "oneOf": [
-            {
-              "$ref": "common.schema.json#/$defs/OpaqueId"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "common.schema.json#/$defs/OpaqueId"
         },
         "targetId": {
-          "oneOf": [
-            {
-              "$ref": "common.schema.json#/$defs/OpaqueId"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "null"
+        },
+        "metricId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "sourceKey": {
           "type": "string",
@@ -938,6 +1032,16 @@
         },
         "criticalNumeric": {
           "type": "boolean"
+        },
+        "calculation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeResearchNumericCalculation"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -950,6 +1054,7 @@
         "category",
         "questionId",
         "targetId",
+        "metricId",
         "sourceKey",
         "title",
         "quoteExact",
@@ -973,31 +1078,18 @@
           "$ref": "common.schema.json#/$defs/OpaqueId"
         },
         "category": {
-          "type": "string",
-          "enum": [
-            "hypothesis",
-            "excel"
-          ]
+          "const": "hypothesis"
         },
         "questionId": {
-          "oneOf": [
-            {
-              "$ref": "common.schema.json#/$defs/OpaqueId"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "common.schema.json#/$defs/OpaqueId"
         },
         "targetId": {
-          "oneOf": [
-            {
-              "$ref": "common.schema.json#/$defs/OpaqueId"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "null"
+        },
+        "metricId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
         },
         "sourceKey": {
           "type": "string",
@@ -1092,6 +1184,16 @@
         },
         "criticalNumeric": {
           "type": "boolean"
+        },
+        "calculation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeResearchNumericCalculation"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "machineStatus": {
           "type": "string",
@@ -1133,6 +1235,293 @@
         "locator": {
           "type": "object",
           "additionalProperties": true
+        }
+      }
+    },
+    "RuntimeResearchQuestionAnswer": {
+      "title": "RuntimeResearchQuestionAnswer",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionId",
+        "verdict",
+        "oneLineAnswer",
+        "evidenceCandidateKeys",
+        "caveat",
+        "policyVersion"
+      ],
+      "properties": {
+        "questionId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "positive",
+            "neutral",
+            "negative",
+            "indeterminate"
+          ]
+        },
+        "oneLineAnswer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "evidenceCandidateKeys": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "caveat": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "policyVersion": {
+          "const": "stance-balance-v1"
+        }
+      }
+    },
+    "RuntimeDeterministicExcelEvidence": {
+      "title": "RuntimeDeterministicExcelEvidence",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceKey",
+        "quoteExact",
+        "locator",
+        "valueOriginal",
+        "valueNormalized",
+        "unit",
+        "currency",
+        "period",
+        "scope",
+        "valueKind",
+        "checks"
+      ],
+      "properties": {
+        "sourceKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "quoteExact": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "locator": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "valueOriginal": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "valueNormalized": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "valueKind": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "status",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            }
+          }
+        }
+      }
+    },
+    "RuntimeDeterministicExcelResult": {
+      "title": "RuntimeDeterministicExcelResult",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "metricId",
+        "title",
+        "oneLineValue",
+        "valueOriginal",
+        "valueNormalized",
+        "unit",
+        "currency",
+        "period",
+        "scope",
+        "valueKind",
+        "required",
+        "machineStatus",
+        "statusCode",
+        "evidence",
+        "checks"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "common.schema.json#/$defs/OpaqueId"
+        },
+        "metricId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "oneLineValue": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "valueOriginal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "valueNormalized": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20
+        },
+        "period": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "valueKind": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "machineStatus": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "needs_review"
+          ]
+        },
+        "statusCode": {
+          "type": "string",
+          "enum": [
+            "validated",
+            "report_unavailable",
+            "account_not_found",
+            "account_ambiguous",
+            "period_mismatch",
+            "scope_mismatch",
+            "unit_unknown",
+            "formula_cell",
+            "workbook_changed",
+            "manual_review"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeDeterministicExcelEvidence"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "status",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "passed",
+                  "failed"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            }
+          }
         }
       }
     },
@@ -1250,6 +1639,8 @@
         "sources",
         "candidates",
         "evidence",
+        "questionAnswers",
+        "excelResults",
         "warnings",
         "metadata"
       ],
@@ -1263,16 +1654,27 @@
         },
         "candidates": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "$ref": "#/$defs/RuntimeResearchCandidate"
           }
         },
         "evidence": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "$ref": "#/$defs/RuntimeValidatedEvidence"
+          }
+        },
+        "questionAnswers": {
+          "type": "array",
+          "maxItems": 7,
+          "items": {
+            "$ref": "#/$defs/RuntimeResearchQuestionAnswer"
+          }
+        },
+        "excelResults": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeDeterministicExcelResult"
           }
         },
         "newsDiscovery": {
@@ -1318,7 +1720,33 @@
             }
           }
         }
-      }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "minItems": 1
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1
+            },
+            "questionAnswers": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "excelResults": {
+              "type": "array",
+              "minItems": 1
+            }
+          }
+        }
+      ]
     }
   }
 }

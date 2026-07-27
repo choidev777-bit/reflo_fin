@@ -42,6 +42,12 @@ test("walks back from a non-trading cutoff date and parses the KRX close", async
   assert.equal(result.status, "available");
   assert.equal(result.tradingDate, "2026-07-24");
   assert.equal(result.closePrice, 88_700);
+  assert.equal(result.sourceRow?.TDD_CLSPRC, "88,700");
+  assert.equal(result.sourceRow?.ISU_CD, "005930");
+  assert.equal(
+    Object.prototype.propertyIsEnumerable.call(result, "sourceRow"),
+    false,
+  );
   assert.deepEqual(requestedDates, ["20260725", "20260724"]);
   assert.match(result.sourcePayloadHash ?? "", /^[a-f0-9]{64}$/);
 });

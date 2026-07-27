@@ -236,6 +236,7 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
               }
             : current,
         );
+        setJob(null);
         setSaveState("saved");
         setPageError("");
       } catch (error) {
@@ -511,6 +512,15 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     job &&
       ["queued", "running", "cancel_requested"].includes(job.operationStatus),
   );
+  const reviewableJob = Boolean(
+    job &&
+      ["queued", "running", "cancel_requested", "succeeded"].includes(
+        job.operationStatus,
+      ),
+  );
+  const restartableJob = Boolean(
+    job && ["failed", "cancelled"].includes(job.operationStatus),
+  );
   const sourceLabels = useMemo(
     () =>
       new Map(
@@ -601,17 +611,21 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
           <button
             type="button"
             className="primary"
-            disabled={!planReady && !job}
+            disabled={!planReady && !reviewableJob}
             onClick={() => {
-              if (job) router.push(workspace.navigation.validationRoute);
+              if (reviewableJob) {
+                router.push(workspace.navigation.validationRoute);
+              }
               else setApprovalOpen(true);
             }}
           >
-            {job
+            {reviewableJob && job
               ? job.operationStatus === "succeeded"
                 ? "조사 결과 검증"
                 : "수집 상태 보기"
-              : "다음"}
+              : restartableJob
+                ? "자료 수집 다시 시작"
+                : "다음"}
             <span aria-hidden="true">›</span>
           </button>
         </footer>
@@ -1037,8 +1051,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
           >
             <div className="phase4-plan-guide">
               <p>
-                PDF와 연결된 Excel 표·차트별로 이번 보고서에서 유지·수집·후속
-                계산할 값을 확인합니다.
+                PDF와 연결된 Excel 표·차트별 입력 계획입니다. DART·KRX·ECOS의
+                구조화 원천만 자동 반영하고, IR·컨센서스·전망값은 후속 단계에서
+                확인합니다.
               </p>
             </div>
             <nav
@@ -1125,6 +1140,11 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                         </dd>
                       </div>
                     </dl>
+                    {target.reasons.length > 0 && (
+                      <p className="phase4-report-reason">
+                        {target.reasons[0]}
+                      </p>
+                    )}
                     <div
                       className="phase4-report-periods"
                       role="table"

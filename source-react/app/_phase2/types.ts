@@ -1,4 +1,7 @@
-export type FileRole = "previous_report_pdf" | "analysis_workbook";
+export type FileRole =
+  | "previous_report_pdf"
+  | "analysis_workbook"
+  | "current_ir_pdf";
 
 export type FileVersionSummary = {
   fileVersionId: string;
@@ -291,7 +294,7 @@ export type FilesBootstrap = {
   };
   slots: Array<{
     role: FileRole;
-    required: true;
+    required: boolean;
     status: "empty" | "uploading" | "scanning" | "ready" | "rejected";
     currentFile: FileVersionSummary | null;
     maxSizeBytes: number;

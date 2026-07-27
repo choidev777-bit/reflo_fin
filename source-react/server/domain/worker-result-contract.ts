@@ -67,16 +67,22 @@ if (!compiledWorkerResultEnvelope) {
 }
 const validateWorkerResultEnvelope = compiledWorkerResultEnvelope;
 
-function invalid(): never {
-  throw new Error("WORKER_RESULT_ENVELOPE_INVALID");
+function invalid(detail?: unknown): never {
+  const suffix =
+    detail === undefined ? "" : `:${JSON.stringify(detail).slice(0, 4_000)}`;
+  throw new Error(`WORKER_RESULT_ENVELOPE_INVALID${suffix}`);
 }
 
 export function parseWorkerResultEnvelope(
   value: unknown,
 ): WorkerResultEnvelope {
-  if (!validateWorkerResultEnvelope(value)) invalid();
+  if (!validateWorkerResultEnvelope(value)) {
+    invalid(validateWorkerResultEnvelope.errors);
+  }
   const envelope = value as WorkerResultEnvelope;
-  if (envelope.results[0].hash !== contentHash(envelope.payload)) invalid();
+  if (envelope.results[0].hash !== contentHash(envelope.payload)) {
+    invalid("RESULT_HASH_MISMATCH");
+  }
   return envelope;
 }
 

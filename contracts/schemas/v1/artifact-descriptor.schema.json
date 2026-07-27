@@ -32,6 +32,7 @@
         "source_snapshot",
         "file_scan",
         "template_ir",
+        "current_ir_analysis",
         "workbook_analysis",
         "mapping_set",
         "render_plan",

@@ -50,6 +50,13 @@ export type PlanQuestion = {
   }>;
   sourceBindingIds: SourceType[];
   collectionMethods: Partial<Record<SourceType, string>>;
+  verdictPolicy?: {
+    version: "stance-balance-v1";
+    positive: "supporting_without_contradiction";
+    negative: "contradicting_without_support";
+    neutral: "mixed_or_neutral";
+    indeterminate: "missing_or_conflicting_required_metric";
+  };
   newsSearchPolicy?: NewsSearchPolicy;
   validationErrors: string[];
 };
@@ -228,6 +235,8 @@ export type ValidationResult = {
   category: "hypothesis" | "excel";
   questionId: string | null;
   targetId: string | null;
+  metricId: string;
+  statusCode: string | null;
   title: string;
   oneLineValue: string;
   stance: "supporting" | "contradicting" | "neutral";
@@ -243,13 +252,20 @@ export type ValidationResult = {
   evidenceIds: string[];
   required: boolean;
   criticalNumeric: boolean;
+  claimType: "fact" | "company_statement" | "calculation";
+  sourceTypes: string[];
   validatedAt: string;
 };
 
 export type QuestionAnswer = {
   questionId: string;
+  verdict: "positive" | "neutral" | "negative" | "indeterminate";
   answer: string;
   sufficiency: "sufficient" | "qualified" | "insufficient" | "reinvestigating";
+  claimType: "analysis_judgment";
+  includedClaimCount: number;
+  excludedClaimCount: number;
+  missingMetrics: string[];
   supportingCount: number;
   contradictingCount: number;
   neutralCount: number;
@@ -332,6 +348,30 @@ export type ResultDetail = {
     checks: Array<{ code: string; status: string; message: string }>;
     provenance: Record<string, unknown>;
   }>;
+};
+
+export type EvidenceViewer = {
+  evidenceId: string;
+  sourceVersionId: string;
+  kind: "web" | "pdf" | "structured_api" | "dart_financial_statement";
+  title: string;
+  publisher: string;
+  canonicalUrl: string | null;
+  publishedAt: string | null;
+  collectedAt: string;
+  quoteExact: string;
+  locator: Record<string, unknown>;
+  documentUrl: string | null;
+  content: {
+    report?: Record<string, unknown>;
+    rows?: Array<Record<string, unknown>>;
+    pages?: Array<{ pageNumber: number; text: string }>;
+    [key: string]: unknown;
+  };
+  audit: {
+    responseHash: string;
+    collectorVersion: string;
+  };
 };
 
 export type ValidationWorkbookManifest = {
@@ -428,4 +468,41 @@ export type WorkbookApplicationProjection = {
     version: number;
     artifactId: string | null;
   } | null;
+};
+
+export type WorkbookWriteProposalManifest = {
+  validatedValueSetVersionId: string;
+  expectedWorkbookVersion: number;
+  expectedProjectVersion: number;
+  sourceSnapshotId: string;
+  sourceFingerprint: string;
+  structureHash: string;
+  planHash: string;
+  reviewStatus: "proposed" | "approved" | "rejected";
+  proposals: Array<{
+    proposalId: string;
+    targetId: string;
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    beforeValue: string | null;
+    afterValue: string | null;
+    valueType: "number" | "string" | "boolean" | "blank";
+    evidenceIds: string[];
+    generatedBridge: boolean;
+    required: boolean;
+    decision: {
+      decisionId: string;
+      decisionNo: number;
+      action: "approve" | "modify" | "reject";
+      reason: string;
+      proposedAfterValue: string | null;
+      decidedAt: string;
+    } | null;
+    status: "proposed" | "approve" | "modify" | "reject";
+  }>;
+  blockers: Array<{
+    targetId: string;
+    reasonCode: string;
+  }>;
 };

@@ -13,14 +13,21 @@ import {
   type ResearchSourceType,
 } from "../../domain/research-validation";
 import {
+  dartViewerUrl,
+  parseDartViewerNodes,
+  type DartStatementCode,
+} from "../../domain/dart-original-statement";
+import {
   fetchKrxClosingPrice,
   type KrxMarket,
 } from "../market-data/krx";
+import { collectFnGuideConsensus } from "../market-data/fnguide";
 import {
   createWorkerDownloadUrl,
   putImmutableObject,
   readObjectBytes,
 } from "../object-storage/s3";
+import { resolveDartAccountRule } from "../../domain/dart-account-registry";
 
 export type ResearchMaterialInput = ResearchSourceReference & {
   objectKey: string | null;
@@ -41,9 +48,90 @@ export type ResearchCollectionContext = {
   excelTargets: ResearchExcelTarget[];
   userUrls: string[];
   sourceReferences: ResearchMaterialInput[];
+  workbookConsensusFallback?: Array<{
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    label: string;
+    displayValue: string;
+    rawValue: unknown;
+    formula: string | null;
+  }>;
   newsDiscoveryResults?: NewsDiscoveryResult[];
   cancellationSignal?: AbortSignal;
+  allowEmpty?: boolean;
 };
+
+function consensusScope(context: ResearchCollectionContext): "C" | "P" {
+  const hasConsolidatedTarget = context.excelTargets.some(
+    (target) => target.included && target.scopeCode === "CFS",
+  );
+  const hasSeparateTarget = context.excelTargets.some(
+    (target) => target.included && target.scopeCode === "OFS",
+  );
+  const questionText = context.questions
+    .filter((question) => question.included)
+    .map((question) => question.text)
+    .join(" ");
+  if (
+    !hasConsolidatedTarget &&
+    (hasSeparateTarget ||
+      (/별도/.test(questionText) && !/연결/.test(questionText)))
+  ) {
+    return "P";
+  }
+  return "C";
+}
+
+function workbookConsensusSource(
+  context: ResearchCollectionContext,
+): ResearchSourceSnapshot | null {
+  const cells = (context.workbookConsensusFallback ?? []).filter(
+    (cell) =>
+      cell.displayValue.trim().length > 0 &&
+      !/^#(?:N\/A|VALUE|REF|DIV\/0)/i.test(cell.displayValue.trim()),
+  );
+  if (cells.length === 0) return null;
+  const content = {
+    providerRole: "uploaded_excel_fallback",
+    warning:
+      "FnGuide 직접 수집 실패 시에만 사용하는 이전 분기 Excel 내 컨센서스 스냅샷입니다.",
+    cutoffDate: context.cutoffDate,
+    scope: consensusScope(context) === "C" ? "CFS" : "OFS",
+    latest: Object.fromEntries(
+      cells.map((cell) => [
+        `${cell.sheetId}!${cell.address}`,
+        cell.displayValue,
+      ]),
+    ),
+    cells,
+  };
+  const questionIds = context.questions
+    .filter(
+      (question) =>
+        question.included &&
+        question.sourceBindingIds.includes("FNGUIDE_CONSENSUS"),
+    )
+    .map((question) => question.questionId);
+  return {
+    sourceKey: `excel-consensus-fallback:${context.projectId}:${hash(content).slice(0, 24)}`,
+    sourceType: "FNGUIDE_CONSENSUS",
+    title: `${context.companyName} 업로드 Excel 컨센서스 (보조)`,
+    publisher: "사용자 업로드 Excel",
+    canonicalUrl: null,
+    publishedAt: null,
+    collectedAt: nowIso(),
+    responseHash: hash(content),
+    locator: {
+      kind: "workbook_consensus_fallback",
+      provenance: "uploaded_previous_quarter_excel",
+      questionIds,
+      cellCount: cells.length,
+    },
+    content,
+    collectorVersion: "uploaded-workbook-consensus-fallback-v1",
+  };
+}
 
 export type CollectionBundle = {
   sources: ResearchSourceSnapshot[];
@@ -381,6 +469,8 @@ export async function fetchPublicSource(
       ...(pdfObjectKey ? { objectKey: pdfObjectKey, pageCount: pdf?.pages.length } : {}),
     },
     content: snapshot,
+    artifactObjectKey: pdfObjectKey,
+    parserVersion: pdf?.parser.version ?? null,
     collectorVersion: pdf ? "public-pdf-v1" : "public-url-v1",
   };
   return source;
@@ -816,6 +906,8 @@ async function collectUploadedMaterial(
       pageCount: extracted.pages.length,
     },
     content,
+    artifactObjectKey: reference.objectKey,
+    parserVersion: extracted.parser.version,
     collectorVersion: "user-pdf-pymupdf-v1",
   };
   assertMaterialIdentity(source, context);
@@ -848,19 +940,96 @@ function assertMaterialIdentity(
     throw new Error("SOURCE_COMPANY_MISMATCH");
   }
   if (source.sourceType === "COMPANY_IR") {
-    const shortYear = String(context.targetYear).slice(-2);
-    const quarter = String(context.targetQuarter);
-    const periodPatterns = [
-      `${context.targetYear}년 ${quarter}분기`,
-      `${context.targetYear}년${quarter}분기`,
-      `${quarter}q${shortYear}`,
-      `${shortYear}년 ${quarter}분기`,
-      `${context.targetYear} ${quarter}q`,
-    ];
+    const periodPatterns = researchIrPeriods(context).flatMap(
+      ({ year, quarter }) => {
+        const shortYear = String(year).slice(-2);
+        return [
+          `${year}년 ${quarter}분기`,
+          `${year}년${quarter}분기`,
+          `${quarter}q${shortYear}`,
+          `${shortYear}년 ${quarter}분기`,
+          `${year} ${quarter}q`,
+          `${year} q${quarter}`,
+        ];
+      },
+    );
     if (!periodPatterns.some((period) => body.includes(period.toLowerCase()))) {
       throw new Error("SOURCE_PERIOD_MISMATCH");
     }
   }
+}
+
+export function researchIrPeriods(
+  context: Pick<
+    ResearchCollectionContext,
+    "targetYear" | "targetQuarter" | "questions"
+  >,
+): Array<{ year: number; quarter: 1 | 2 | 3 | 4 }> {
+  const periods = new Map<
+    string,
+    { year: number; quarter: 1 | 2 | 3 | 4 }
+  >();
+  const add = (year: number, quarter: number) => {
+    if (
+      year >= 2000 &&
+      year <= 2100 &&
+      quarter >= 1 &&
+      quarter <= 4
+    ) {
+      periods.set(`${year}:${quarter}`, {
+        year,
+        quarter: quarter as 1 | 2 | 3 | 4,
+      });
+    }
+  };
+  const coordinates = (value: string) => [
+    ...Array.from(
+      value.matchAll(/(20\d{2})\s*년?\s*([1-4])\s*(?:분기|q)/gi),
+      (match) => ({ year: Number(match[1]), quarter: Number(match[2]) }),
+    ),
+    ...Array.from(
+      value.matchAll(/([1-4])\s*q\s*['’]?(20)?(\d{2})/gi),
+      (match) => ({
+        year: Number(`${match[2] ?? "20"}${match[3]}`),
+        quarter: Number(match[1]),
+      }),
+    ),
+    ...Array.from(
+      value.matchAll(/(20\d{2})\s*q\s*([1-4])/gi),
+      (match) => ({ year: Number(match[1]), quarter: Number(match[2]) }),
+    ),
+  ];
+
+  add(context.targetYear, context.targetQuarter);
+  for (const question of context.questions.filter(
+    (item) =>
+      item.included && item.sourceBindingIds.includes("COMPANY_IR"),
+  )) {
+    const baseCoordinates = coordinates(question.period);
+    const bases =
+      baseCoordinates.length > 0
+        ? baseCoordinates
+        : [{ year: context.targetYear, quarter: context.targetQuarter }];
+    for (const base of bases) {
+      add(base.year, base.quarter);
+      if (/전년|yoy|year[- ]over[- ]year/i.test(question.comparison)) {
+        add(base.year - 1, base.quarter);
+      }
+      if (/전분기|qoq|quarter[- ]over[- ]quarter/i.test(question.comparison)) {
+        add(
+          base.quarter === 1 ? base.year - 1 : base.year,
+          base.quarter === 1 ? 4 : base.quarter - 1,
+        );
+      }
+    }
+    for (const comparison of coordinates(question.comparison)) {
+      add(comparison.year, comparison.quarter);
+    }
+  }
+  return [...periods.values()].sort(
+    (left, right) =>
+      right.year - left.year || right.quarter - left.quarter,
+  );
 }
 
 type DartRow = {
@@ -868,6 +1037,7 @@ type DartRow = {
   reprt_code?: string;
   bsns_year?: string;
   corp_name?: string;
+  account_id?: string;
   account_nm?: string;
   fs_div?: string;
   fs_nm?: string;
@@ -884,14 +1054,35 @@ type DartReportSnapshot = {
   quarter: number;
   reportCode: string;
   receiptNumber: string;
+  filingName: string;
   publishedAt: string;
+  scopeCodes: Array<"CFS" | "OFS">;
   rows: Array<
     DartRow & {
       _reflo_period: string;
       _reflo_report_type: "annual" | "quarterly";
     }
   >;
-  publicParameters: Record<string, string>;
+  publicParameters: Array<Record<string, string>>;
+  originalStatements?: DartOriginalStatement[];
+};
+
+type DartOriginalStatement = {
+  scopeCode: "CFS" | "OFS";
+  statementCode: DartStatementCode;
+  title: string;
+  viewerUrl: string;
+  parameters: {
+    receiptNumber: string;
+    documentNumber: string;
+    elementId: string;
+    offset: string;
+    length: string;
+    dtd: string;
+    tocNumber: string;
+  };
+  html: string;
+  responseHash: string;
 };
 
 function dartPublishedAt(receiptNumber: string | undefined): string | null {
@@ -901,22 +1092,117 @@ function dartPublishedAt(receiptNumber: string | undefined): string | null {
     : null;
 }
 
+type DartFiling = {
+  rcept_no?: string;
+  report_nm?: string;
+  rcept_dt?: string;
+};
+
+function cutoffDateInKorea(cutoffAt: string): string {
+  return new Date(Date.parse(cutoffAt) + 9 * 60 * 60 * 1_000)
+    .toISOString()
+    .slice(0, 10)
+    .replaceAll("-", "");
+}
+
+function dartReportFilingPattern(
+  businessYear: number,
+  quarter: number,
+): { name: string; period: RegExp; beginDate: string } {
+  const month = quarter === 1 ? "03" : quarter === 2 ? "06" : quarter === 3 ? "09" : "12";
+  return {
+    name:
+      quarter === 2
+        ? "반기보고서"
+        : quarter === 4
+          ? "사업보고서"
+          : "분기보고서",
+    period: new RegExp(`\\(${businessYear}[.\\-/\\s]*${month}\\)`),
+    beginDate: `${businessYear}${month}01`,
+  };
+}
+
+async function latestDartFilingBeforeCutoff(input: {
+  apiKey: string;
+  corpCode: string;
+  businessYear: number;
+  quarter: number;
+  scopeCode: "CFS" | "OFS";
+  cutoffAt: string;
+  cancellationSignal?: AbortSignal;
+}): Promise<DartFiling | null> {
+  const expected = dartReportFilingPattern(input.businessYear, input.quarter);
+  const endDate = cutoffDateInKorea(input.cutoffAt);
+  if (endDate < expected.beginDate) return null;
+  const query = new URLSearchParams({
+    crtfc_key: input.apiKey,
+    corp_code: input.corpCode,
+    bgn_de: expected.beginDate,
+    end_de: endDate,
+    pblntf_ty: "A",
+    sort: "date",
+    sort_mth: "desc",
+    page_count: "100",
+  });
+  const response = await fetch(
+    `https://opendart.fss.or.kr/api/list.json?${query}`,
+    {
+      signal: input.cancellationSignal
+        ? AbortSignal.any([
+            AbortSignal.timeout(20_000),
+            input.cancellationSignal,
+          ])
+        : AbortSignal.timeout(20_000),
+    },
+  );
+  if (!response.ok) throw new Error(`DART_LIST_HTTP_${response.status}`);
+  const payload = (await response.json()) as {
+    status?: string;
+    list?: DartFiling[];
+  };
+  if (payload.status === "013") return null;
+  if (payload.status !== "000" || !Array.isArray(payload.list)) {
+    throw new Error(`DART_LIST_${payload.status ?? "INVALID_RESPONSE"}`);
+  }
+  return (
+    payload.list
+      .filter(
+        (filing) =>
+          /^\d{14}$/.test(filing.rcept_no ?? "") &&
+          /^\d{8}$/.test(filing.rcept_dt ?? "") &&
+          (filing.report_nm ?? "").includes(expected.name) &&
+          expected.period.test(filing.report_nm ?? ""),
+      )
+      .sort(
+        (left, right) =>
+          String(right.rcept_dt).localeCompare(String(left.rcept_dt)) ||
+          String(right.rcept_no).localeCompare(String(left.rcept_no)),
+      )[0] ?? null
+  );
+}
+
 async function fetchDartReport(input: {
   apiKey: string;
   corpCode: string;
   businessYear: number;
   quarter: number;
+  scopeCode: "CFS" | "OFS";
   cutoffAt: string;
   required: boolean;
   cancellationSignal?: AbortSignal;
 }): Promise<DartReportSnapshot | null> {
   const code = reportCode(input.quarter);
+  const filing = await latestDartFilingBeforeCutoff(input);
+  if (!filing) {
+    if (input.required) throw new Error("DART_REPORT_OUTSIDE_CUTOFF");
+    return null;
+  }
   const query = new URLSearchParams({
     crtfc_key: input.apiKey,
     corp_code: input.corpCode,
     bsns_year: String(input.businessYear),
     reprt_code: code,
-    fs_div: "CFS",
+    fs_div: input.scopeCode,
   });
   const response = await fetch(
     `https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json?${query}`,
@@ -939,11 +1225,21 @@ async function fetchDartReport(input: {
   if (payload.status !== "000" || !Array.isArray(payload.list)) {
     throw new Error(`DART_${payload.status ?? "INVALID_RESPONSE"}`);
   }
+  if (
+    payload.list.some(
+      (row) =>
+        row.fs_div &&
+        row.fs_div.toUpperCase() !== input.scopeCode,
+    )
+  ) {
+    throw new Error("DART_SCOPE_MISMATCH");
+  }
   const receiptNumber =
     payload.list.find((row) => /^\d{14}$/.test(row.rcept_no ?? ""))
       ?.rcept_no ?? "";
-  const publishedAt = dartPublishedAt(receiptNumber);
+  const publishedAt = dartPublishedAt(filing.rcept_no);
   if (
+    receiptNumber !== filing.rcept_no ||
     !publishedAt ||
     new Date(publishedAt).getTime() > new Date(input.cutoffAt).getTime()
   ) {
@@ -961,87 +1257,285 @@ async function fetchDartReport(input: {
     quarter: input.quarter,
     reportCode: code,
     receiptNumber,
+    filingName: filing.report_nm ?? "",
     publishedAt,
+    scopeCodes: [input.scopeCode],
     rows: payload.list.map((row) => ({
       ...row,
+      // The response is scoped by the fs_div request parameter, but DART
+      // can omit fs_div on each successful row. Retain the requested scope
+      // for deterministic matching and the eventual Evidence locator.
+      fs_div: row.fs_div?.toUpperCase() ?? input.scopeCode,
       _reflo_period: period,
       _reflo_report_type: annual ? "annual" : "quarterly",
     })),
-    publicParameters: Object.fromEntries(publicQuery),
+    publicParameters: [Object.fromEntries(publicQuery)],
   };
+}
+
+async function fetchDartOriginalStatements(input: {
+  receiptNumber: string;
+  scopeCodes: Array<"CFS" | "OFS">;
+  cancellationSignal?: AbortSignal;
+}): Promise<DartOriginalStatement[]> {
+  const headers = {
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+    Connection: "close",
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+      "AppleWebKit/537.36 (KHTML, like Gecko) " +
+      "Chrome/138.0.0.0 Safari/537.36",
+  };
+  const mainUrl =
+    `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${input.receiptNumber}`;
+  const signal = input.cancellationSignal
+    ? AbortSignal.any([
+        AbortSignal.timeout(20_000),
+        input.cancellationSignal,
+      ])
+    : AbortSignal.timeout(20_000);
+  const mainResponse = await fetch(mainUrl, {
+    headers,
+    signal,
+  });
+  if (!mainResponse.ok) {
+    throw new Error(`DART_ORIGINAL_MAIN_HTTP_${mainResponse.status}`);
+  }
+  const mainHtml = await mainResponse.text();
+  if (Buffer.byteLength(mainHtml, "utf8") > 5 * 1024 * 1024) {
+    throw new Error("DART_ORIGINAL_MAIN_TOO_LARGE");
+  }
+  const requestedScopes = new Set(input.scopeCodes);
+  const nodes = parseDartViewerNodes(mainHtml).filter(
+    (node) =>
+      node.receiptNumber === input.receiptNumber &&
+      requestedScopes.has(node.scopeCode),
+  );
+  const uniqueNodes = [
+    ...new Map(
+      nodes.map((node) => [
+        `${node.scopeCode}:${node.statementCode}`,
+        node,
+      ]),
+    ).values(),
+  ];
+  const settled = await Promise.allSettled(
+    uniqueNodes.map(async (node): Promise<DartOriginalStatement> => {
+      const viewerUrl = dartViewerUrl(node);
+      const response = await fetch(viewerUrl, {
+        headers,
+        signal: input.cancellationSignal
+          ? AbortSignal.any([
+              AbortSignal.timeout(20_000),
+              input.cancellationSignal,
+            ])
+          : AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) {
+        throw new Error(`DART_ORIGINAL_VIEWER_HTTP_${response.status}`);
+      }
+      const html = await response.text();
+      if (
+        Buffer.byteLength(html, "utf8") > 2 * 1024 * 1024 ||
+        !/<table\b/i.test(html)
+      ) {
+        throw new Error("DART_ORIGINAL_VIEWER_INVALID");
+      }
+      return {
+        scopeCode: node.scopeCode,
+        statementCode: node.statementCode,
+        title: node.title,
+        viewerUrl,
+        parameters: {
+          receiptNumber: node.receiptNumber,
+          documentNumber: node.documentNumber,
+          elementId: node.elementId,
+          offset: node.offset,
+          length: node.length,
+          dtd: node.dtd,
+          tocNumber: node.tocNumber,
+        },
+        html,
+        responseHash: hash({ viewerUrl, html }),
+      };
+    }),
+  );
+  return settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
 }
 
 async function collectDart(
   context: ResearchCollectionContext,
-): Promise<ResearchSourceSnapshot> {
+): Promise<ResearchSourceSnapshot[]> {
   const apiKey = process.env.OPENDART_API_KEY?.trim();
   if (!apiKey) throw new Error("DART_API_KEY_MISSING");
   const corpCode =
     context.corpCode ?? (await dartCorpCode(context.ticker, apiKey));
-  const latestActualYear = context.targetYear - 1;
-  const annual = await fetchDartReport({
-    apiKey,
-    corpCode,
-    businessYear: latestActualYear,
-    quarter: 4,
-    cutoffAt: context.cutoffAt,
-    required: true,
-    cancellationSignal: context.cancellationSignal,
-  });
-  if (!annual) throw new Error("DART_ANNUAL_REPORT_MISSING");
-  const currentPeriod = await fetchDartReport({
-    apiKey,
-    corpCode,
-    businessYear: context.targetYear,
-    quarter: context.targetQuarter,
-    cutoffAt: context.cutoffAt,
-    required: false,
-    cancellationSignal: context.cancellationSignal,
-  });
-  const reports = [annual, ...(currentPeriod ? [currentPeriod] : [])];
-  const latestReport = reports.reduce((latest, report) =>
-    new Date(report.publishedAt) > new Date(latest.publishedAt)
-      ? report
-      : latest,
+  const requestedPeriods = new Map<
+    string,
+    {
+      businessYear: number;
+      quarter: 1 | 2 | 3 | 4;
+      scopeCode: "CFS" | "OFS";
+    }
+  >();
+  const requestPeriod = (
+    businessYear: number,
+    quarter: 1 | 2 | 3 | 4,
+    scopeCode: "CFS" | "OFS" = "CFS",
+  ) => {
+    requestedPeriods.set(`${businessYear}:${quarter}:${scopeCode}`, {
+      businessYear,
+      quarter,
+      scopeCode,
+    });
+  };
+  const hypothesisUsesDart = context.questions.some(
+    (question) =>
+      question.included && question.sourceBindingIds.includes("DART"),
   );
-  return {
+  if (hypothesisUsesDart) {
+    requestPeriod(context.targetYear - 1, 4);
+    requestPeriod(
+      context.targetYear,
+      context.targetQuarter as 1 | 2 | 3 | 4,
+    );
+    if (context.targetQuarter > 1) {
+      requestPeriod(
+        context.targetYear,
+        (context.targetQuarter - 1) as 1 | 2 | 3,
+      );
+    }
+    const hypothesisUsesQoq = context.questions.some(
+      (question) =>
+        question.included &&
+        question.sourceBindingIds.includes("DART") &&
+        /전분기|qoq|quarter[- ]over[- ]quarter/i.test(question.comparison),
+    );
+    if (hypothesisUsesQoq && context.targetQuarter === 1) {
+      requestPeriod(context.targetYear - 1, 3);
+    } else if (hypothesisUsesQoq && context.targetQuarter > 2) {
+      requestPeriod(
+        context.targetYear,
+        (context.targetQuarter - 2) as 1 | 2,
+      );
+    }
+  }
+  for (const target of context.excelTargets.filter(
+    (item) =>
+      item.included &&
+      item.periodSpec &&
+      item.sourcePolicy.some(
+        (policy) =>
+          policy.role === "authority" && policy.sourceType === "DART",
+      ),
+  )) {
+    const period = target.periodSpec!;
+    const quarter =
+      period.type === "annual" ? 4 : (period.quarter ?? 4);
+    requestPeriod(period.year, quarter, target.scopeCode ?? "CFS");
+    if (period.basis === "single_quarter" && quarter > 1) {
+      requestPeriod(
+        period.year,
+        (quarter - 1) as 1 | 2 | 3,
+        target.scopeCode ?? "CFS",
+      );
+    }
+  }
+  if (requestedPeriods.size === 0) {
+    requestPeriod(context.targetYear - 1, 4);
+  }
+  const settled = await Promise.allSettled(
+    [...requestedPeriods.values()].map((period) =>
+      fetchDartReport({
+        apiKey,
+        corpCode,
+        businessYear: period.businessYear,
+        quarter: period.quarter,
+        scopeCode: period.scopeCode,
+        cutoffAt: context.cutoffAt,
+        required: false,
+        cancellationSignal: context.cancellationSignal,
+      }),
+    ),
+  );
+  const collectedReports = settled.flatMap((result) =>
+    result.status === "fulfilled" && result.value ? [result.value] : [],
+  );
+  const reportByFiling = new Map<string, DartReportSnapshot>();
+  for (const report of collectedReports) {
+    const key =
+      `${report.businessYear}:${report.reportCode}:` +
+      report.receiptNumber;
+    const current = reportByFiling.get(key);
+    if (!current) {
+      reportByFiling.set(key, report);
+      continue;
+    }
+    current.rows.push(...report.rows);
+    current.publicParameters.push(...report.publicParameters);
+    current.scopeCodes = [
+      ...new Set([...current.scopeCodes, ...report.scopeCodes]),
+    ];
+  }
+  const reports = [...reportByFiling.values()];
+  if (reports.length === 0) {
+    const failure = settled.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected",
+    );
+    throw failure?.reason instanceof Error
+      ? failure.reason
+      : new Error("DART_REPORTS_UNAVAILABLE");
+  }
+  await Promise.all(
+    reports.map(async (report) => {
+      report.originalStatements = await fetchDartOriginalStatements({
+        receiptNumber: report.receiptNumber,
+        scopeCodes: report.scopeCodes,
+        cancellationSignal: context.cancellationSignal,
+      });
+    }),
+  );
+  return reports.map((report) => ({
     sourceKey:
-      `dart:${corpCode}:` +
-      reports
-        .map((report) => `${report.businessYear}:${report.reportCode}`)
-        .join("+"),
-    sourceType: "DART",
+      `dart:${corpCode}:${report.businessYear}:${report.reportCode}:` +
+      `${report.receiptNumber}:${report.scopeCodes.sort().join("+")}`,
+    sourceType: "DART" as const,
     title:
-      `${context.companyName} ${latestActualYear}년 연간` +
-      (currentPeriod
-        ? ` 및 ${context.targetYear}년 ${context.targetQuarter}분기`
-        : "") +
-      " 재무제표",
+      `${context.companyName} ${report.businessYear}년 ` +
+      `${report.quarter === 4 ? "사업보고서" : `${report.quarter}분기보고서`} 재무제표`,
     publisher: "금융감독원 전자공시시스템",
-    canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${latestReport.receiptNumber}`,
-    publishedAt: latestReport.publishedAt,
+    canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${report.receiptNumber}`,
+    publishedAt: report.publishedAt,
     collectedAt: nowIso(),
-    responseHash: hash(reports),
+    responseHash: hash(report),
     locator: {
       kind: "structured_api",
       endpoint: "/api/fnlttSinglAcntAll.json",
-      reports: reports.map((report) => ({
-        parameters: report.publicParameters,
-        rceptNo: report.receiptNumber,
-        publishedAt: report.publishedAt,
-      })),
+      parameters: report.publicParameters,
+      rceptNo: report.receiptNumber,
+      publishedAt: report.publishedAt,
     },
     content: {
-      periods: reports.map((report) => ({
+      report: {
+        corpCode,
         businessYear: report.businessYear,
         quarter: report.quarter,
         reportCode: report.reportCode,
+        receiptNumber: report.receiptNumber,
+        filingName: report.filingName,
         publishedAt: report.publishedAt,
-      })),
-      rows: reports.flatMap((report) => report.rows),
+        scopeCodes: report.scopeCodes,
+      },
+      rows: report.rows,
+      originalStatements: report.originalStatements,
     },
-    collectorVersion: "opendart-fnltt-v2",
-  };
+    collectorVersion: "opendart-fnltt-original-viewer-v4",
+  }));
 }
 
 async function collectKrx(
@@ -1056,6 +1550,13 @@ async function collectKrx(
   if (result.status !== "available") {
     throw new Error(result.errorCode ?? "KRX_MARKET_PRICE_UNAVAILABLE");
   }
+  if (!result.sourceRow) {
+    throw new Error("KRX_SOURCE_ROW_MISSING");
+  }
+  const content = {
+    ...result,
+    selectedRow: result.sourceRow,
+  };
   return {
     sourceKey: `krx:${context.ticker}:${result.tradingDate}`,
     sourceType: "KRX",
@@ -1064,14 +1565,15 @@ async function collectKrx(
     canonicalUrl: "https://data.krx.co.kr/",
     publishedAt: `${result.tradingDate}T15:30:00+09:00`,
     collectedAt: nowIso(),
-    responseHash: hash(result),
+    responseHash: hash(content),
     locator: {
       kind: "structured_api",
       endpoint: "KRX Open API 일별매매정보",
       parameters: { ticker: context.ticker, tradingDate: result.tradingDate },
-      jsonPointer: "/OutBlock_1/0/TDD_CLSPRC",
+      jsonPointer: "/selectedRow/TDD_CLSPRC",
+      selectedRecord: "selectedRow",
     },
-    content: result as unknown as Record<string, unknown>,
+    content,
     collectorVersion: "krx-open-api-v1",
   };
 }
@@ -1110,8 +1612,18 @@ async function collectEcos(
       | undefined;
     throw new Error(`ECOS_${error?.CODE ?? "NO_DATA"}`);
   }
-  const latest = rows.at(-1)!;
-  const latestTime = String(latest.TIME ?? end);
+  const latestSelection = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => {
+      const time = String(row.TIME ?? "");
+      return /^\d{8}$/.test(time) && time <= end;
+    })
+    .sort((left, right) =>
+      String(right.row.TIME ?? "").localeCompare(String(left.row.TIME ?? "")),
+    )[0];
+  if (!latestSelection) throw new Error("ECOS_NO_DATA_BEFORE_CUTOFF");
+  const latest = latestSelection.row;
+  const latestTime = String(latest.TIME);
   const publishedAt = /^\d{8}$/.test(latestTime)
     ? `${latestTime.slice(0, 4)}-${latestTime.slice(4, 6)}-${latestTime.slice(6, 8)}T00:00:00+09:00`
     : `${context.cutoffDate}T00:00:00+09:00`;
@@ -1133,7 +1645,8 @@ async function collectEcos(
         itemCode: "0000001",
         period: `${start}-${end}`,
       },
-      jsonPointer: `/StatisticSearch/row/${rows.length - 1}/DATA_VALUE`,
+      jsonPointer: `/StatisticSearch/row/${latestSelection.index}/DATA_VALUE`,
+      selectedRecord: "latest",
     },
     content: { rows, latest },
     collectorVersion: "ecos-statistic-search-v1",
@@ -1170,6 +1683,7 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       category: "hypothesis",
       questionId: question.questionId,
       targetId: null,
+      metricId: question.metrics[0] ?? question.purpose,
       sourceKey: source.sourceKey,
       title: question.metrics[0] ?? question.purpose,
       quoteExact: quote,
@@ -1186,46 +1700,135 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       criticalNumeric: false,
     });
   }
-  for (const target of context.excelTargets.filter((item) => item.included)) {
-    const normalized = String(1_000 + candidates.length * 100);
-    const quote = `${target.metric}은 ${normalized}${target.unit}입니다.`;
-    const source: ResearchSourceSnapshot = {
-      sourceKey: `fixture:excel:${target.targetId}`,
-      sourceType: target.sourcePolicy[0]?.sourceType ?? "DART",
-      title: `${context.companyName} ${target.metric} 공시`,
+  const dartTargets = context.excelTargets.filter(
+    (target) =>
+      target.included &&
+      target.sourcePolicy.some(
+        (policy) => policy.role === "authority" && policy.sourceType === "DART",
+      ) &&
+      target.periodSpec,
+  );
+  const dartPeriods = new Map<
+    string,
+    { year: number; quarter: 1 | 2 | 3 | 4; targets: ResearchExcelTarget[] }
+  >();
+  for (const target of dartTargets) {
+    const spec = target.periodSpec!;
+    const quarter = spec.type === "annual" ? 4 : (spec.quarter ?? 4);
+    const key = `${spec.year}:${quarter}`;
+    const current = dartPeriods.get(key) ?? {
+      year: spec.year,
+      quarter,
+      targets: [],
+    };
+    current.targets.push(target);
+    dartPeriods.set(key, current);
+    if (spec.basis === "single_quarter" && quarter > 1) {
+      const previousQuarter = (quarter - 1) as 1 | 2 | 3;
+      const previousKey = `${spec.year}:${previousQuarter}`;
+      if (!dartPeriods.has(previousKey)) {
+        dartPeriods.set(previousKey, {
+          year: spec.year,
+          quarter: previousQuarter,
+          targets: current.targets,
+        });
+      }
+    }
+  }
+  for (const period of dartPeriods.values()) {
+    const code = reportCode(period.quarter);
+    const receiptNumber =
+      `${period.year}${String(period.quarter).padStart(2, "0")}15000001`;
+    const rows = period.targets.flatMap((target, index) => {
+      const rule = resolveDartAccountRule(
+        target.dartRuleId ?? target.metricId ?? target.metric,
+      );
+      if (!rule) return [];
+      return [{
+        rcept_no: receiptNumber,
+        reprt_code: code,
+        bsns_year: String(period.year),
+        corp_name: context.companyName,
+        account_id: rule.allowedAccountIds[0],
+        account_nm: rule.allowedAccountNames[0],
+        fs_div: target.scopeCode ?? "CFS",
+        fs_nm: "연결재무제표",
+        sj_div: rule.allowedStatements[0],
+        sj_nm: "재무제표",
+        thstrm_nm: `${period.year}년 ${period.quarter}분기`,
+        thstrm_amount: String(100_000_000_000 + index * 10_000_000_000),
+        currency: "KRW",
+      }];
+    });
+    sources.push({
+      sourceKey: `fixture:dart:${period.year}:${code}`,
+      sourceType: "DART",
+      title: `${context.companyName} ${period.year}년 ${period.quarter}분기 재무제표`,
       publisher: "금융감독원 전자공시시스템",
-      canonicalUrl: "https://dart.fss.or.kr/",
+      canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`,
       publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
       collectedAt,
-      responseHash: hash({ targetId: target.targetId, quote }),
+      responseHash: hash(rows),
       locator: {
         kind: "structured_api",
         endpoint: "REFLO fixture",
-        jsonPointer: "/value",
+        rceptNo: receiptNumber,
       },
-      content: { metric: target.metric, value: normalized, quote },
-      collectorVersion: "research-fixture-v1",
+      content: {
+        report: {
+          corpCode: context.corpCode ?? "fixture",
+          businessYear: period.year,
+          quarter: period.quarter,
+          reportCode: code,
+          receiptNumber,
+          publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+        },
+        rows,
+      },
+      collectorVersion: "research-fixture-v2",
+    });
+  }
+  const krxTargets = context.excelTargets.filter((target) =>
+    target.sourcePolicy.some(
+      (policy) => policy.role === "authority" && policy.sourceType === "KRX",
+    ),
+  );
+  if (krxTargets.length > 0) {
+    const closePrice = 100_000 + Number(context.ticker.slice(-3));
+    const selectedRow = {
+      BAS_DD: context.cutoffDate.replaceAll("-", ""),
+      ISU_CD: context.ticker,
+      ISU_NM: context.companyName,
+      MKT_NM: context.exchange,
+      TDD_CLSPRC: closePrice.toLocaleString("en-US"),
     };
-    sources.push(source);
-    candidates.push({
-      candidateKey: `candidate:${target.targetId}`,
-      category: "excel",
-      questionId: null,
-      targetId: target.targetId,
-      sourceKey: source.sourceKey,
-      title: target.metric,
-      quoteExact: quote,
-      oneLineValue: `${Number(normalized).toLocaleString("ko-KR")}${target.unit}`,
-      valueOriginal: normalized,
-      valueNormalized: normalized,
-      unit: target.unit,
-      currency: target.unit.includes("원") ? "KRW" : null,
-      period: target.period,
-      scope: target.scope,
-      valueKind: target.valueKind,
-      stance: "supporting",
-      required: target.required,
-      criticalNumeric: true,
+    sources.push({
+      sourceKey: `fixture:krx:${context.ticker}:${context.cutoffDate}`,
+      sourceType: "KRX",
+      title: `${context.companyName} 기준일 종가`,
+      publisher: "한국거래소",
+      canonicalUrl: "https://data.krx.co.kr/",
+      publishedAt: `${context.cutoffDate}T15:30:00+09:00`,
+      collectedAt,
+      responseHash: hash({
+        closePrice,
+        tradingDate: context.cutoffDate,
+        selectedRow,
+      }),
+      locator: {
+        kind: "structured_api",
+        endpoint: "REFLO fixture",
+        parameters: { ticker: context.ticker },
+        jsonPointer: "/selectedRow/TDD_CLSPRC",
+        selectedRecord: "selectedRow",
+      },
+      content: {
+        closePrice,
+        tradingDate: context.cutoffDate,
+        currency: "KRW",
+        selectedRow,
+      },
+      collectorVersion: "research-fixture-v2",
     });
   }
   return { sources, candidates, warnings: [] };
@@ -1361,32 +1964,59 @@ export async function collectResearchSources(
   const selected = selectedSourceTypes(context);
   const warnings: CollectionBundle["warnings"] = [];
   const sources: ResearchSourceSnapshot[] = [];
-  const tasks: Array<Promise<ResearchSourceSnapshot>> = [];
+  const tasks: Array<Promise<ResearchSourceSnapshot[]>> = [];
   if (selected.has("DART")) tasks.push(collectDart(context));
-  if (selected.has("KRX")) tasks.push(collectKrx(context));
-  if (selected.has("ECOS")) tasks.push(collectEcos(context));
+  if (selected.has("KRX")) tasks.push(collectKrx(context).then((source) => [source]));
+  if (selected.has("ECOS")) tasks.push(collectEcos(context).then((source) => [source]));
+  if (selected.has("FNGUIDE_CONSENSUS")) {
+    tasks.push(
+      collectFnGuideConsensus({
+        projectId: context.projectId,
+        companyName: context.companyName,
+        ticker: context.ticker,
+        targetYear: context.targetYear,
+        targetQuarter: context.targetQuarter,
+        cutoffDate: context.cutoffDate,
+        scope: consensusScope(context),
+        cancellationSignal: context.cancellationSignal,
+      })
+        .then((source) => [source])
+        .catch((error) => {
+          const fallback = workbookConsensusSource(context);
+          if (!fallback) throw error;
+          warnings.push({
+            code: "FNGUIDE_EXCEL_FALLBACK_USED",
+            message:
+              "FnGuide 직접 수집에 실패해 업로드 Excel의 컨센서스 스냅샷을 보조 근거로 사용했습니다.",
+          });
+          return [fallback];
+        }),
+    );
+  }
   if (selected.has("NEWS")) {
     for (const result of approvedNewsDiscoveryResults(context)) {
-      tasks.push(fetchNewsSource(result, context));
+      tasks.push(fetchNewsSource(result, context).then((source) => [source]));
     }
   }
   for (const reference of context.sourceReferences) {
     if (!selected.has(reference.sourceType)) continue;
     if (reference.sourceType === "NEWS") continue;
     tasks.push(
-      reference.ingestionMethod === "user_upload"
-        ? collectUploadedMaterial(reference, context)
-        : fetchPublicSource(reference.canonicalUrl ?? "", context.cutoffAt, {
-            projectId: context.projectId,
-            sourceType: reference.sourceType,
-            title: reference.title,
-             publisher: reference.publisher,
-             publishedAt: reference.publishedAt,
-             cancellationSignal: context.cancellationSignal,
-           }).then((source) => {
-            assertMaterialIdentity(source, context);
-            return source;
-          }),
+      (
+        reference.ingestionMethod === "user_upload"
+          ? collectUploadedMaterial(reference, context)
+          : fetchPublicSource(reference.canonicalUrl ?? "", context.cutoffAt, {
+              projectId: context.projectId,
+              sourceType: reference.sourceType,
+              title: reference.title,
+              publisher: reference.publisher,
+              publishedAt: reference.publishedAt,
+              cancellationSignal: context.cancellationSignal,
+            }).then((source) => {
+              assertMaterialIdentity(source, context);
+              return source;
+            })
+      ).then((source) => [source]),
     );
   }
   for (const url of context.userUrls) {
@@ -1395,13 +2025,13 @@ export async function collectResearchSources(
          projectId: context.projectId,
          sourceType: "USER_MATERIAL",
          cancellationSignal: context.cancellationSignal,
-       }),
+       }).then((source) => [source]),
     );
   }
   const settled = await Promise.allSettled(tasks);
   for (const result of settled) {
     if (result.status === "fulfilled" && result.value) {
-      sources.push(result.value);
+      sources.push(...result.value);
     } else if (result.status === "rejected") {
       warnings.push({
         code:
@@ -1422,7 +2052,40 @@ export async function collectResearchSources(
     context,
   );
   sources.splice(0, sources.length, ...nonNewsSources, ...newsSources);
+  for (let index = 0; index < sources.length; index += 1) {
+    const source = sources[index];
+    if (!source) continue;
+    const linkedQuestionIds = context.questions
+      .filter(
+        (question) =>
+          question.included &&
+          question.sourceBindingIds.includes(source.sourceType),
+      )
+      .map((question) => question.questionId);
+    if (linkedQuestionIds.length === 0) continue;
+    sources[index] = {
+      ...source,
+      locator: {
+        ...source.locator,
+        questionIds: Array.from(
+          new Set([
+            ...(
+              Array.isArray(source.locator.questionIds)
+                ? source.locator.questionIds.filter(
+                    (value): value is string => typeof value === "string",
+                  )
+                : []
+            ),
+            ...linkedQuestionIds,
+          ]),
+        ),
+      },
+    };
+  }
   if (sources.length === 0) {
+    if (context.allowEmpty) {
+      return { sources: [], candidates: [], warnings };
+    }
     throw new Error(
       `RESEARCH_NO_SOURCES${
         warnings.length > 0
@@ -1435,14 +2098,20 @@ export async function collectResearchSources(
   for (const sourceType of [
     "COMPANY_IR",
     "NEWS",
+    "FNGUIDE_CONSENSUS",
     "USER_MATERIAL",
   ] as const) {
     if (selected.has(sourceType) && !collectedTypes.has(sourceType)) {
-      throw new Error(
-        sourceType === "NEWS"
-          ? "NEWS_NO_ELIGIBLE_ARTICLES"
-          : `REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`,
-      );
+      warnings.push({
+        code:
+          sourceType === "NEWS"
+            ? "NEWS_NO_ELIGIBLE_ARTICLES"
+            : "REQUIRED_SOURCE_UNAVAILABLE",
+        message:
+          sourceType === "NEWS"
+            ? "승인 기간 안에서 검증 가능한 뉴스 원문을 확보하지 못했습니다."
+            : `${sourceType} 원문을 확보하지 못했습니다.`,
+      });
     }
   }
   for (const question of context.questions.filter((item) => item.included)) {
@@ -1456,14 +2125,20 @@ export async function collectResearchSources(
           ).includes(question.questionId),
       )
     ) {
-      throw new Error(`NEWS_NO_ELIGIBLE_ARTICLES:${question.questionId}`);
+      warnings.push({
+        code: "NEWS_NO_ELIGIBLE_ARTICLES",
+        message: `${question.questionId} 질문의 검증 가능한 뉴스 원문을 확보하지 못했습니다.`,
+      });
     }
     if (
       !question.sourceBindingIds.some((sourceType) =>
         collectedTypes.has(sourceType),
       )
     ) {
-      throw new Error(`QUESTION_SOURCE_UNAVAILABLE:${question.questionId}`);
+      warnings.push({
+        code: "QUESTION_SOURCE_UNAVAILABLE",
+        message: `${question.questionId} 질문에 연결된 원문을 확보하지 못했습니다.`,
+      });
     }
   }
   for (const target of context.excelTargets.filter(
@@ -1473,8 +2148,9 @@ export async function collectResearchSources(
       .filter((policy) => policy.role === "authority")
       .map((policy) => policy.sourceType);
     if (
-      authorityTypes.length === 0 ||
-      !authorityTypes.some((sourceType) => collectedTypes.has(sourceType))
+      !context.allowEmpty &&
+      (authorityTypes.length === 0 ||
+        !authorityTypes.some((sourceType) => collectedTypes.has(sourceType)))
     ) {
       throw new Error(`EXCEL_SOURCE_UNAVAILABLE:${target.targetId}`);
     }

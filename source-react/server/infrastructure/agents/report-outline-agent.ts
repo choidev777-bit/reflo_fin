@@ -9,6 +9,15 @@ type EvidenceInput = {
   oneLineValue: string;
   stance: string;
   machineStatus: string;
+  metricId: string;
+  sourceType: string;
+  period: string | null;
+  scope: string | null;
+  claimType: "fact" | "company_statement" | "calculation";
+  allowedUsage:
+    | "assertive"
+    | "attribute_to_company"
+    | "state_as_calculation";
 };
 
 type AgentSuggestion = {
@@ -101,7 +110,19 @@ export async function suggestReportOutline(input: {
               targetPrice: input.targetPrice,
               currentPrice: input.currentPrice,
             },
-            evidence: input.evidence,
+            evidence: input.evidence.map((item) => ({
+              evidenceId: item.evidenceId,
+              title: item.title,
+              oneLineValue: item.oneLineValue,
+              stance: item.stance,
+              machineStatus: item.machineStatus,
+              metricId: item.metricId,
+              sourceType: item.sourceType,
+              period: item.period,
+              scope: item.scope,
+              claimType: item.claimType,
+              allowedUsage: item.allowedUsage,
+            })),
             pages: fallback.pages.map((page) => ({
               pageId: page.pageId,
               pageNumber: page.pageNumber,
@@ -131,8 +152,8 @@ export async function suggestReportOutline(input: {
             })),
           },
           profile: {
-            version: "report-outline-v1",
-            model: "gpt-5.6-terra",
+            version: "report-outline-v2",
+            model: "gpt-5.4-mini",
             reasoning: "medium",
           },
         }),

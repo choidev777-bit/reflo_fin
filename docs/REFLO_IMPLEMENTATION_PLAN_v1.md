@@ -80,7 +80,7 @@ npm run test:e2e
 
 ## Phase 3. 투자 의견·조사 질문
 
-**참고 문서:** [가설 화면](./screens/05-hypothesis.md), [Agent Prompt](./agents/HYPOTHESIS_AGENT_PROMPT_v2.md), [TD-023](./REFLO_TECHNICAL_DECISIONS_v1.md#td-023-agent-실행-profile)
+**참고 문서:** [가설 화면](./screens/05-hypothesis.md), [Agent Prompt](./agents/HYPOTHESIS_AGENT_PROMPT_v3.md), [TD-023](./REFLO_TECHNICAL_DECISIONS_v1.md#td-023-agent-실행-profile)
 
 **PydanticAI 문서 조회 규칙:**
 

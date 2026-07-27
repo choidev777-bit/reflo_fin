@@ -5,6 +5,7 @@ import {
   buildResearchReportTargets,
   type ReportMappingEntry,
 } from "../server/domain/research-report-targets";
+import type { ResearchExcelTarget } from "../server/domain/research-validation";
 
 const periodPlan = buildReportPeriodPlan({
   targetYear: 2026,
@@ -36,11 +37,33 @@ function entry(
   };
 }
 
+function executableTarget(
+  patch: Partial<ResearchExcelTarget> = {},
+): ResearchExcelTarget {
+  return {
+    targetId: "target-1",
+    sheetId: "sheet-12",
+    sheetName: "12_p4_손익계산서",
+    address: "B5",
+    metric: "매출액",
+    period: "2025",
+    unit: "백만원",
+    scope: "연결",
+    valueKind: "actual",
+    required: true,
+    included: true,
+    sourcePolicy: [{ sourceType: "DART", role: "authority" }],
+    mappingSlotIds: ["slot-1"],
+    excludedReason: null,
+    ...patch,
+  };
+}
+
 test("annual report target separates carry-forward, actual collection, and forecasts", () => {
   const [target] = buildResearchReportTargets({
     entries: [entry()],
     periodPlan,
-    executableTargets: [],
+    executableTargets: [executableTarget()],
   });
 
   assert.equal(target.title, "손익계산서");
@@ -128,19 +151,17 @@ test("backlog chart identifies missing quarters after the workbook history", () 
     executableTargets: [],
   });
 
-  assert.equal(target.status, "collection_required");
+  assert.equal(target.status, "later_stage");
   assert.deepEqual(
     target.periods.map((period) => [period.label, period.action]),
     [
       ["1Q21–3Q25", "keep"],
-      ["4Q25", "collect"],
-      ["1Q26", "collect"],
+      ["4Q25", "later_stage"],
+      ["1Q26", "later_stage"],
     ],
   );
-  assert.deepEqual(target.sourcePolicy, [
-    { sourceType: "COMPANY_IR", role: "authority" },
-    { sourceType: "USER_MATERIAL", role: "verification" },
-  ]);
+  assert.deepEqual(target.sourcePolicy, []);
+  assert.match(target.reasons[0] ?? "", /IR 원문/);
 });
 
 test("quarterly performance replaces the target-quarter forecast with actual data", () => {
@@ -169,7 +190,15 @@ test("quarterly performance replaces the target-quarter forecast with actual dat
       }),
     ],
     periodPlan,
-    executableTargets: [],
+    executableTargets: [
+      executableTarget({
+        targetId: "figure-4-target",
+        sheetId: "sheet-08",
+        sheetName: "08_도표4_분기실적추이",
+        address: "V5",
+        mappingSlotIds: [],
+      }),
+    ],
   });
 
   assert.deepEqual(
@@ -179,6 +208,10 @@ test("quarterly performance replaces the target-quarter forecast with actual dat
       ["1Q26", "collect"],
     ],
   );
+  assert.equal(target.status, "collection_required");
+  assert.deepEqual(target.sourcePolicy, [
+    { sourceType: "DART", role: "authority" },
+  ]);
 });
 
 test("deferred market data stays collectible without an Excel candidate", () => {
@@ -193,7 +226,17 @@ test("deferred market data stays collectible without an Excel candidate", () => 
       }),
     ],
     periodPlan,
-    executableTargets: [],
+    executableTargets: [
+      executableTarget({
+        targetId: "current-price-target",
+        sheetId: "market-data",
+        sheetName: "현재주가",
+        address: "A1",
+        metric: "현재주가",
+        period: "2026-03-31",
+        sourcePolicy: [{ sourceType: "KRX", role: "authority" }],
+      }),
+    ],
   });
 
   assert.equal(target.status, "collection_required");
@@ -203,7 +246,7 @@ test("deferred market data stays collectible without an Excel candidate", () => 
   ]);
 });
 
-test("FnGuide-dependent targets require a source connection", () => {
+test("FnGuide-dependent targets remain a transparent connection task", () => {
   const [target] = buildResearchReportTargets({
     entries: [
       entry({
@@ -218,8 +261,38 @@ test("FnGuide-dependent targets require a source connection", () => {
   });
 
   assert.equal(target.status, "connection_required");
-  assert.equal(target.periods[0]?.action, "connect");
+  assert.ok(target.periods.some((period) => period.action === "connect"));
   assert.match(target.reasons[0] ?? "", /FnGuide/);
+});
+
+test("required collection targets without an executable target remain blocking", () => {
+  const targets = buildResearchReportTargets({
+    entries: [
+      entry(),
+      entry({
+        mappingEntryId: "mapping-2",
+        slotId: "slot-2",
+        metric: "figure_4_chart",
+        kind: "chart",
+        candidate: {
+          sourceType: "chart",
+          sheetId: "sheet-08",
+          sheetName: "08_도표4_분기실적추이",
+          address: "B4:Y4",
+          label: "구분",
+          periodLabels: ["1Q25", "2Q25", "3Q25", "4Q25"],
+        },
+      }),
+    ],
+    periodPlan,
+    executableTargets: [executableTarget()],
+  });
+
+  const missingTarget = targets.find(
+    (target) => target.metric === "figure_4_chart",
+  );
+  assert.equal(missingTarget?.status, "connection_required");
+  assert.deepEqual(missingTarget?.executableTargetIds, []);
 });
 
 test("unmapped report element is shown as a connection task", () => {

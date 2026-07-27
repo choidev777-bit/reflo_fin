@@ -1,5 +1,15 @@
 # REFLO 화면 구현 명세: `/projects/:projectId/process/hypothesis`
 
+> **2026-07-27 현재 구현 정정 — 이 블록이 아래 초기 3~5개/v3 명세보다 우선한다.**
+>
+> - 질문은 3~7개이며 화면의 수동 추가 상한도 7개다.
+> - canonical prompt는 [`../agents/HYPOTHESIS_AGENT_PROMPT_v4.md`](../agents/HYPOTHESIS_AGENT_PROMPT_v4.md), prompt version은 `hypothesis-v4`, profile은 `hypothesis-openai-v3`, model은 `gpt-5.4-mini`다.
+> - 질문에는 `PERFORMANCE`, `DRIVER`, `SEGMENT`, `OUTLOOK`, `VALUATION` role이 저장된다. 현재 질문 행 UI는 role badge를 표시하지 않는다.
+> - Agent 생성 결과는 PERFORMANCE, OUTLOOK, VALUATION, DRIVER 또는 SEGMENT coverage를 강제한다.
+> - 사용자가 질문을 편집·삭제한 뒤의 최종 승인 API는 role coverage를 다시 검사하지 않고 개수·중복·metadata·input revision만 검사한다.
+> - optional 현재 IR은 현재 공식 사실·회사 전망으로, 이전 PDF·Excel은 현재 사실이 아닌 조사 주제·구조 배경으로 질문 생성 snapshot에 전달된다.
+> - 아래 본문의 `3~5`, 최대 5개, prompt v3, `optionalContext` 제외 설명은 현재 구현과 다르다. 실제 구현 기준 전체 설명은 [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](../REFLO_URL_SERVICE_BEHAVIOR_v1.md)의 해당 URL 절을 따른다.
+
 **문서 상태:** 1차 구현 명세 완료
 **작성일:** 2026-07-24
 **대상:** 현업 배포용 MVP
@@ -637,7 +647,7 @@ rating 또는 thesis를 자동 저장한다.
 
 ## 14. Agent 실행 계약
 
-Hypothesis Agent는 [`../agents/HYPOTHESIS_AGENT_PROMPT_v2.md`](../agents/HYPOTHESIS_AGENT_PROMPT_v2.md)의 canonical system prompt를 사용한다. 전체 prompt를 화면 코드나 이 문서에 복제하지 않고 versioned agent profile로 관리한다.
+Hypothesis Agent는 [`../agents/HYPOTHESIS_AGENT_PROMPT_v4.md`](../agents/HYPOTHESIS_AGENT_PROMPT_v4.md)의 canonical system prompt를 사용한다. 전체 prompt를 화면 코드나 이 문서에 복제하지 않고 versioned agent profile로 관리한다.
 
 필수 규칙:
 

@@ -53,7 +53,7 @@ function questionValidation(questionSet: QuestionSet | null): string | null {
   if (questionSet.questions.length < 3) {
     return `승인하려면 질문을 ${3 - questionSet.questions.length}개 더 추가해야 합니다.`;
   }
-  if (questionSet.questions.length > 5) return "질문은 최대 5개까지 승인할 수 있습니다.";
+  if (questionSet.questions.length > 7) return "질문은 최대 7개까지 승인할 수 있습니다.";
   if (questionSet.status === "stale") return "현재 입력으로 질문을 다시 만들어주세요.";
   return null;
 }
@@ -840,14 +840,14 @@ export function HypothesisScreen({ projectId }: { projectId: string }) {
                         }
                         placeholder={`${workspace.project.companyName}, 기간, 비교 기준과 지표를 포함한 질문`}
                         aria-label="새 조사 질문"
-                        disabled={workspace.questionSet.questions.length >= 5}
+                        disabled={workspace.questionSet.questions.length >= 7}
                       />
                       <button
                         className="rf-button"
                         type="button"
                         disabled={
                           !newQuestion.trim() ||
-                          workspace.questionSet.questions.length >= 5 ||
+                          workspace.questionSet.questions.length >= 7 ||
                           questionBusy
                         }
                         onClick={() => void addQuestion()}

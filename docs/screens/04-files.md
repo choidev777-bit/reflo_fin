@@ -1,5 +1,13 @@
 # REFLO 화면 구현 명세: `/projects/:projectId/process/files`
 
+> **2026-07-27 현재 구현 정정 — 이 블록이 아래 초기 2파일 명세보다 우선한다.**
+>
+> - 화면은 2개가 아니라 3개 업로드 카드를 표시한다: `① previous_report_pdf` 필수, `② analysis_workbook` 필수, `③ current_ir_pdf` 선택.
+> - 현재 IR은 PDF, 최대 50 MiB다. 비어 있어도 검사할 수 있지만 업로드를 시작했다면 `ready` 또는 `empty` 상태가 되어야 한다.
+> - 검사 요청은 선택된 `currentIrFileVersionId`를 함께 pin하고 별도 `current_ir_analysis` resource version을 만든다.
+> - 현재 IR은 이전 PDF Template IR과 합치지 않는다. STEP 03에서는 현재 공식 사실·회사 전망 문맥, STEP 04~05에서는 공식 source reference로 사용한다.
+> - 실제 구현 기준 전체 설명은 [`REFLO_URL_SERVICE_BEHAVIOR_v1.md`](../REFLO_URL_SERVICE_BEHAVIOR_v1.md)의 해당 URL 절을 따른다. 아래 본문의 “두 파일”, “두 카드”, “시각 프로토타입만 존재” 표현은 초기 목표 명세로서 현재 상태와 다르다.
+
 **문서 상태:** 파일 업로드·검사 화면 명세 작성 완료
 **작성일:** 2026-07-24
 **대상:** 현업 배포용 MVP

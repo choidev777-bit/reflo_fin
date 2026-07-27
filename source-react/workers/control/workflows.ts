@@ -52,6 +52,18 @@ const llmActivities = proxyActivities<typeof activities>({
   },
 });
 
+const newsSearchActivities = proxyActivities<typeof activities>({
+  taskQueue: "llm",
+  startToCloseTimeout: "6 minutes",
+  heartbeatTimeout: "30 seconds",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "30 seconds",
+    maximumAttempts: 2,
+  },
+});
+
 const researchNetworkActivities = proxyActivities<typeof activities>({
   taskQueue: "research-network",
   startToCloseTimeout: "10 minutes",
@@ -203,6 +215,28 @@ function researchFailure(error: unknown): {
   };
 }
 
+async function discoverNews(
+  input: ResearchValidationWorkflowInput,
+): Promise<Awaited<ReturnType<typeof activities.planNewsSearch>>> {
+  if (!patched("phase4-news-search-per-question-v1")) {
+    return llmActivities.planNewsSearch(input);
+  }
+  const shouldSearch = await newsSearchActivities.prepareNewsSearch(input);
+  if (!shouldSearch) return [];
+  const questionIds = input.questions
+    .filter(
+      (question) =>
+        question.included && question.sourceBindingIds.includes("NEWS"),
+    )
+    .map((question) => question.questionId);
+  const results = await Promise.all(
+    questionIds.map((questionId) =>
+      newsSearchActivities.planNewsSearchQuestion(input, questionId),
+    ),
+  );
+  return results.flat();
+}
+
 export async function fileIngestWorkflow(
   input: FileIngestWorkflowInput,
 ): Promise<void> {
@@ -296,8 +330,41 @@ export async function researchValidationWorkflow(
   input: ResearchValidationWorkflowInput,
 ): Promise<void> {
   try {
-    if (patched("phase4-autonomous-news-v1")) {
-      const newsDiscoveryResults = await llmActivities.planNewsSearch(input);
+    if (patched("phase4-separated-hypothesis-excel-v1")) {
+      const newsDiscoveryResults = await discoverNews(input);
+      const [hypothesisBundle, excelBundle] = await Promise.all([
+        researchNetworkActivities.collectHypothesisBundle(
+          input,
+          newsDiscoveryResults,
+        ),
+        researchNetworkActivities.collectOfficialExcelBundle(input),
+      ]);
+      const researchCandidates =
+        hypothesisBundle.sources.length > 0
+          ? await llmActivities.extractResearchCandidates(
+              input,
+              hypothesisBundle,
+            )
+          : [];
+      const [hypothesisResult, excelResult] = await Promise.all([
+        evidenceValidationActivities.validateHypothesisPipeline(
+          input,
+          hypothesisBundle,
+          researchCandidates,
+        ),
+        evidenceValidationActivities.validateOfficialExcelPipeline(
+          input,
+          excelBundle,
+        ),
+      ]);
+      await evidenceValidationActivities.publishSeparatedResearchValidation(
+        input,
+        hypothesisResult,
+        excelResult,
+        newsDiscoveryResults,
+      );
+    } else if (patched("phase4-autonomous-news-v1")) {
+      const newsDiscoveryResults = await discoverNews(input);
       const bundle = await researchNetworkActivities.collectResearchBundle(
         input,
         newsDiscoveryResults,

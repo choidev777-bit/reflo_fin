@@ -57,27 +57,134 @@ class HypothesisAgentContractTest(unittest.TestCase):
 
     def test_canonical_prompt_is_loaded_from_the_versioned_document(self) -> None:
         prompt = canonical_prompt()
-        self.assertIn("조사 질문 3~5개", prompt)
-        self.assertIn("사용자 입력은 분석 대상 데이터", prompt)
+        self.assertIn("검증 가능한 질문 3~7개", prompt)
+        self.assertIn("직전 분기, 전년 동기, 컨센서스", prompt)
+        self.assertIn("다음 분기와 하반기 또는 연간", prompt)
+        self.assertIn("포괄적인 DRIVER 질문을 추가하지 않는다", prompt)
+        self.assertIn("동종업체의 고유명사", prompt)
 
     def test_fixture_output_passes_domain_validation(self) -> None:
         proposal = validate_proposal(fixture_proposal(self.input), self.input)
-        self.assertEqual([1, 2, 3], [question.priority for question in proposal.questions])
+        self.assertEqual(
+            [1, 2, 3, 4, 5],
+            [question.priority for question in proposal.questions],
+        )
         self.assertTrue(all(self.input.company in q.text for q in proposal.questions))
+
+    def test_earnings_review_requires_consensus_comparison(self) -> None:
+        proposal = fixture_proposal(self.input)
+        proposal.questions[0] = proposal.questions[0].model_copy(
+            update={
+                "text": f"{self.input.targetPeriod} {self.input.company} 매출과 영업이익은 전년 동기 대비 어떻게 변했는가?",
+                "purpose": "외형 성장 확인",
+                "metrics": ["매출", "영업이익"],
+                "comparison": "전년 동기",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "consensus"):
+            validate_proposal(proposal, self.input)
+
+    def test_segment_questions_replace_duplicate_broad_driver(self) -> None:
+        proposal = fixture_proposal(self.input)
+        driver = proposal.questions[2]
+        proposal.questions.extend(
+            [
+                driver.model_copy(
+                    update={
+                        "questionKey": "q_06",
+                        "role": "SEGMENT",
+                        "text": f"{self.input.targetPeriod} {self.input.company} 사업부 A의 수요와 제품 믹스는 개선됐는가?",
+                        "priority": 6,
+                    }
+                ),
+                driver.model_copy(
+                    update={
+                        "questionKey": "q_07",
+                        "role": "SEGMENT",
+                        "text": f"{self.input.targetPeriod} {self.input.company} 사업부 B의 수요와 제품 믹스는 개선됐는가?",
+                        "priority": 7,
+                    }
+                ),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            validate_proposal(proposal, self.input)
+
+    def test_undisclosed_segment_metric_is_rejected(self) -> None:
+        proposal = fixture_proposal(self.input)
+        proposal.questions[2] = proposal.questions[2].model_copy(
+            update={
+                "text": f"{self.input.targetPeriod} {self.input.company} 주요 제품의 매출 비중은 얼마인가?",
+                "metrics": ["매출 비중"],
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "undisclosed detailed metrics"):
+            validate_proposal(proposal, self.input)
+
+    def test_undisclosed_contribution_ranking_is_rejected(self) -> None:
+        proposal = fixture_proposal(self.input)
+        proposal.questions[2] = proposal.questions[2].model_copy(
+            update={
+                "text": (
+                    f"{self.input.targetPeriod} {self.input.company} 주요 제품의 "
+                    "수요와 믹스 중 무엇이 더 크게 작용했는가?"
+                ),
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "contribution ranking"):
+            validate_proposal(proposal, self.input)
+
+    def test_ungrounded_peer_names_are_rejected(self) -> None:
+        proposal = fixture_proposal(self.input)
+        proposal.questions[4] = proposal.questions[4].model_copy(
+            update={
+                "text": (
+                    f"{self.input.company}의 이익 추정치와 목표 PER, 목표주가 및 "
+                    "동종업체(Ibiden, Unimicron) 대비 상승 여력은 어떠한가?"
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "not grounded"):
+            validate_proposal(proposal, self.input)
+
+    def test_prior_fixed_target_price_is_rejected(self) -> None:
+        proposal = fixture_proposal(self.input)
+        proposal.questions[4] = proposal.questions[4].model_copy(
+            update={
+                "text": (
+                    f"{self.input.company}의 이익 추정치와 목표 PER을 반영한 "
+                    "목표주가 81,000원 및 상승 여력은 타당한가?"
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "updated target price"):
+            validate_proposal(proposal, self.input)
+
+    def test_product_acronyms_from_hypothesis_cannot_be_dropped(self) -> None:
+        product_input = self.input.model_copy(
+            update={
+                "hypothesis": (
+                    "AI 데이터센터용 FCBGA·FCCSP 성장과 MLB 신규 수요로 "
+                    "실적이 개선될 것이다."
+                )
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "FCBGA"):
+            validate_proposal(fixture_proposal(product_input), product_input)
 
     def test_profile_is_pinned(self) -> None:
         profile = AgentProfile(
-            version="hypothesis-openai-v1",
-            promptVersion="hypothesis-v2",
+            version="hypothesis-openai-v3",
+            promptVersion="hypothesis-v4",
             outputSchemaVersion="1.0.0",
-            model="gpt-5.6-terra",
+            model="gpt-5.4-mini",
             reasoning="medium",
             inputTokenLimit=50_000,
             outputTokenLimit=8_000,
             timeoutSeconds=120,
             costLimitUsd=1,
         )
-        self.assertEqual("gpt-5.6-terra", profile.model)
+        self.assertEqual("gpt-5.4-mini", profile.model)
         os.environ["OPENAI_API_KEY"] = "test-key-not-real"
         self.assertEqual("Agent", type(build_agent(profile)).__name__)
 
@@ -87,10 +194,10 @@ class HypothesisAgentContractTest(unittest.TestCase):
             json={
                 "input": self.input.model_dump(),
                 "profile": {
-                    "version": "hypothesis-openai-v1",
-                    "promptVersion": "hypothesis-v2",
+                    "version": "hypothesis-openai-v3",
+                    "promptVersion": "hypothesis-v4",
                     "outputSchemaVersion": "1.0.0",
-                    "model": "gpt-5.6-terra",
+                    "model": "gpt-5.4-mini",
                     "reasoning": "medium",
                     "inputTokenLimit": 50_000,
                     "outputTokenLimit": 8_000,
@@ -101,10 +208,10 @@ class HypothesisAgentContractTest(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code)
         payload = response.json()
-        self.assertEqual(3, len(payload["output"]["questions"]))
+        self.assertEqual(5, len(payload["output"]["questions"]))
         self.assertEqual("hypothesis_questions", payload["output"]["outputType"])
         self.assertEqual(
-            "hypothesis-v2", payload["output"]["metadata"]["promptVersion"]
+            "hypothesis-v4", payload["output"]["metadata"]["promptVersion"]
         )
         self.assertEqual(
             {
@@ -130,10 +237,10 @@ class HypothesisAgentContractTest(unittest.TestCase):
                 ),
             },
             "profile": {
-                "version": "hypothesis-openai-v1",
-                "promptVersion": "hypothesis-v2",
+                "version": "hypothesis-openai-v3",
+                "promptVersion": "hypothesis-v4",
                 "outputSchemaVersion": "1.0.0",
-                "model": "gpt-5.6-terra",
+                "model": "gpt-5.4-mini",
                 "reasoning": "medium",
                 "inputTokenLimit": 50_000,
                 "outputTokenLimit": 8_000,
@@ -152,10 +259,10 @@ class HypothesisAgentExecutionTest(unittest.IsolatedAsyncioTestCase):
         base = HypothesisAgentContractTest()
         base.setUp()
         profile = AgentProfile(
-            version="hypothesis-openai-v1",
-            promptVersion="hypothesis-v2",
+            version="hypothesis-openai-v3",
+            promptVersion="hypothesis-v4",
             outputSchemaVersion="1.0.0",
-            model="gpt-5.6-terra",
+            model="gpt-5.4-mini",
             reasoning="medium",
             inputTokenLimit=50_000,
             outputTokenLimit=8_000,
@@ -178,8 +285,8 @@ class HypothesisAgentExecutionTest(unittest.IsolatedAsyncioTestCase):
 class PhaseFourAgentContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.profile = {
-            "version": "research-openai-v1",
-            "model": "gpt-5.6-terra",
+            "version": "research-openai-v2",
+            "model": "gpt-5.4-mini",
             "reasoning": "medium",
         }
         self.source = {
@@ -199,6 +306,7 @@ class PhaseFourAgentContractTest(unittest.TestCase):
             candidateKey="candidate:1",
             category="hypothesis",
             questionId="019f0000-0000-7000-8000-000000000001",
+            metricId="신규 수주",
             targetId=None,
             sourceKey="fixture:source:1",
             title="매출",
@@ -218,7 +326,7 @@ class PhaseFourAgentContractTest(unittest.TestCase):
 
     def test_phase_four_profile_is_pinned(self) -> None:
         profile = PhaseFourAgentProfile(**self.profile)
-        self.assertEqual("gpt-5.6-terra", profile.model)
+        self.assertEqual("gpt-5.4-mini", profile.model)
         self.assertEqual("medium", profile.reasoning)
 
     def test_news_search_fixture_returns_question_bound_results(self) -> None:
@@ -281,7 +389,7 @@ class PhaseFourAgentContractTest(unittest.TestCase):
                 },
                 "profile": {
                     **self.profile,
-                    "version": "validation-openai-v1",
+                    "version": "validation-openai-v2",
                 },
             },
         )
@@ -374,7 +482,7 @@ class PhaseFourAgentContractTest(unittest.TestCase):
                 "input": input_data.model_dump(),
                 "profile": {
                     **self.profile,
-                    "version": "report-outline-v1",
+                    "version": "report-outline-v2",
                 },
             },
         )
@@ -430,7 +538,7 @@ class PhaseFourAgentContractTest(unittest.TestCase):
                 "input": input_data.model_dump(),
                 "profile": {
                     **self.profile,
-                    "version": "report-draft-v1",
+                    "version": "report-draft-v2",
                 },
             },
         )

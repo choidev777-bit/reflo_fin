@@ -573,6 +573,87 @@ export function resolveWorkbookWriteDecision(
   return { action: "modify", effectiveCommand: command };
 }
 
+export function finalizeWorkbookApplicationPlan(input: {
+  plan: WorkbookApplicationPlan;
+  decisions: Array<{
+    targetId: string;
+    required: boolean;
+    action: WorkbookWriteDecisionAction | null;
+    proposedAfterValue?: string | null;
+  }>;
+}): {
+  plan: WorkbookApplicationPlan;
+  resolutions: Array<{
+    originalCommand: WorkbookPatchCommand;
+    action: WorkbookWriteDecisionAction;
+    effectiveCommand: WorkbookPatchCommand | null;
+  }>;
+} {
+  const decisionByTarget = new Map(
+    input.decisions.map((decision) => [decision.targetId, decision]),
+  );
+  if (decisionByTarget.size !== input.decisions.length) {
+    return fail(
+      409,
+      "WORKBOOK_WRITE_PROPOSAL_DECISION_INVALID",
+      "Workbook 반영 제안 결정이 중복되었습니다.",
+    );
+  }
+  const resolutions = input.plan.commands.map((command) => {
+    const decision = decisionByTarget.get(command.targetId);
+    if (!decision?.action) {
+      return fail(
+        409,
+        "WORKBOOK_WRITE_PROPOSAL_DECISION_REQUIRED",
+        "모든 Workbook 반영 제안을 사용자가 결정해야 합니다.",
+        command.targetId,
+      );
+    }
+    if (decision.action === "reject" && decision.required) {
+      return fail(
+        409,
+        "WORKBOOK_WRITE_PROPOSAL_REJECTED",
+        "필수 Workbook 반영 제안의 거절을 검증 단계에서 다시 확인해주세요.",
+        command.targetId,
+      );
+    }
+    const resolved = resolveWorkbookWriteDecision(command, {
+      action: decision.action,
+      proposedAfterValue: decision.proposedAfterValue,
+    });
+    return {
+      originalCommand: command,
+      action: resolved.action,
+      effectiveCommand: resolved.effectiveCommand,
+    };
+  });
+  const effectiveCommands = resolutions.flatMap((resolution) =>
+    resolution.effectiveCommand ? [resolution.effectiveCommand] : [],
+  );
+  const withoutHash = {
+    schemaVersion: input.plan.schemaVersion,
+    applicationId: input.plan.applicationId,
+    sourceSnapshotId: input.plan.sourceSnapshotId,
+    sourceFingerprint: input.plan.sourceFingerprint,
+    sourceWorkbookResourceVersionId:
+      input.plan.sourceWorkbookResourceVersionId,
+    sourceWorkbookArtifactId: input.plan.sourceWorkbookArtifactId,
+    inputWorkbookVersion: input.plan.inputWorkbookVersion,
+    structureHash: input.plan.structureHash,
+    validatedValueSetId: input.plan.validatedValueSetId,
+    validatedValueSetContentHash: input.plan.validatedValueSetContentHash,
+    commands: effectiveCommands,
+    blocked: input.plan.blocked,
+  };
+  return {
+    plan: {
+      ...withoutHash,
+      planHash: contentHash(withoutHash),
+    },
+    resolutions,
+  };
+}
+
 export function createWorkbookApplicationPlan(input: {
   applicationId: string;
   sourceSnapshotId: string;

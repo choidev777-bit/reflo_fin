@@ -73,6 +73,73 @@ test("hypothesis question output can be wrapped in the canonical worker result e
   assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
 });
 
+test("research validation envelope accepts an Excel-only targeted rerun", () => {
+  const envelope = createWorkerResultEnvelope({
+    attempt: 1,
+    sequence: 8,
+    inputVersionIds: ["rv_plan", "rv_workbook"],
+    resultType: "research_validation",
+    payload: {
+      sources: [
+        {
+          sourceKey: "dart:targeted",
+          sourceType: "DART",
+          title: "DART targeted source",
+          publisher: "금융감독원",
+          canonicalUrl: "https://dart.fss.or.kr/",
+          publishedAt: "2026-05-14T00:00:00.000Z",
+          collectedAt: "2026-07-27T00:00:00.000Z",
+          responseHash: HASH,
+          locator: { kind: "dart_financial_statement" },
+          content: { rows: [] },
+          collectorVersion: "test-v1",
+        },
+      ],
+      candidates: [],
+      evidence: [],
+      questionAnswers: [],
+      excelResults: [
+        {
+          targetId: "target_1",
+          metricId: "revenue",
+          title: "매출액",
+          oneLineValue: "재수집 확인",
+          valueOriginal: null,
+          valueNormalized: null,
+          unit: null,
+          currency: null,
+          period: "2026년 1분기",
+          scope: "연결",
+          valueKind: "actual",
+          required: true,
+          machineStatus: "failed",
+          statusCode: "account_not_found",
+          evidence: [],
+          checks: [],
+        },
+      ],
+      newsDiscovery: [],
+      warnings: [],
+      metadata: {
+        researchAgentProfile: "test-v1",
+        validationAgentProfile: "test-v1",
+        validationRuleVersion: "test-v1",
+        startedAt: "2026-07-27T00:00:00.000Z",
+        finishedAt: "2026-07-27T00:00:01.000Z",
+      },
+    },
+    result: {
+      entityType: "research_validation",
+      entityId: "run_1",
+      version: 1,
+    },
+    artifacts: [],
+    tool: { name: "reflo-control", version: "1.0.0" },
+  });
+
+  assert.deepEqual(parseWorkerResultEnvelope(envelope), envelope);
+});
+
 test("worker result envelopes reject legacy versions and missing commit lineage", () => {
   assert.throws(
     () =>
@@ -142,6 +209,46 @@ test("runtime result types stay synchronized with the schema registry", () => {
   assert.deepEqual(
     [...WORKER_RESULT_TYPES].sort(),
     registry.resultTypes.map((item) => item.resultType).sort(),
+  );
+});
+
+test("file inspection contracts accept current-quarter IR analysis artifacts", () => {
+  const runtimeSchema = workerResultSchemas.find(
+    (schema) =>
+      schema.$id ===
+      "https://schemas.reflo.dev/worker/v1/runtime-worker-result.schema.json",
+  ) as
+    | {
+        $defs?: {
+          RuntimeArtifactDescriptor?: {
+            properties?: {
+              artifactRole?: { enum?: string[] };
+            };
+          };
+        };
+      }
+    | undefined;
+  const artifactSchema = workerResultSchemas.find(
+    (schema) =>
+      schema.$id ===
+      "https://schemas.reflo.dev/worker/v1/artifact-descriptor.schema.json",
+  ) as
+    | {
+        properties?: {
+          artifactRole?: { enum?: string[] };
+        };
+      }
+    | undefined;
+
+  assert.ok(
+    runtimeSchema?.$defs?.RuntimeArtifactDescriptor?.properties?.artifactRole?.enum?.includes(
+      "current_ir_analysis",
+    ),
+  );
+  assert.ok(
+    artifactSchema?.properties?.artifactRole?.enum?.includes(
+      "current_ir_analysis",
+    ),
   );
 });
 

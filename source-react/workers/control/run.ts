@@ -39,8 +39,11 @@ async function run(): Promise<void> {
     connection,
     namespace,
     taskQueue: "llm",
+    maxConcurrentActivityTaskExecutions: 2,
     activities: {
       generateHypothesisQuestions: activities.generateHypothesisQuestions,
+      prepareNewsSearch: activities.prepareNewsSearch,
+      planNewsSearchQuestion: activities.planNewsSearchQuestion,
       planNewsSearch: activities.planNewsSearch,
       extractResearchCandidates: activities.extractResearchCandidates,
       runResearchValidation: activities.runResearchValidation,
@@ -52,6 +55,8 @@ async function run(): Promise<void> {
     taskQueue: "research-network",
     activities: {
       collectResearchBundle: activities.collectResearchBundle,
+      collectHypothesisBundle: activities.collectHypothesisBundle,
+      collectOfficialExcelBundle: activities.collectOfficialExcelBundle,
     },
   });
   const evidenceValidationWorker = await Worker.create({
@@ -60,6 +65,11 @@ async function run(): Promise<void> {
     taskQueue: "evidence-validation",
     activities: {
       validateAndPublishResearch: activities.validateAndPublishResearch,
+      validateHypothesisPipeline: activities.validateHypothesisPipeline,
+      validateOfficialExcelPipeline:
+        activities.validateOfficialExcelPipeline,
+      publishSeparatedResearchValidation:
+        activities.publishSeparatedResearchValidation,
     },
   });
   const reportMaterializationWorker = await Worker.create({

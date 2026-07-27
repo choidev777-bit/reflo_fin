@@ -6,7 +6,10 @@ export type FileIngestWorkflowInput = {
   uploadId: string;
   fileVersionId: string;
   artifactId: string;
-  fileRole: "previous_report_pdf" | "analysis_workbook";
+  fileRole:
+    | "previous_report_pdf"
+    | "analysis_workbook"
+    | "current_ir_pdf";
   objectKey: string;
   sha256: string;
   byteSize: number;
@@ -33,6 +36,7 @@ export type FileInspectionWorkflowInput = {
   reportPeriodPlan: import("../../server/domain/report-period-plan").ReportPeriodPlan;
   pdf: InspectionFileInput;
   workbook: InspectionFileInput;
+  currentIr: InspectionFileInput | null;
   marketData: {
     companyMasterId: string;
     ticker: string;
@@ -97,6 +101,8 @@ export type ResearchValidationWorkflowInput = {
   cutoffDate: string;
   cutoffAt: string;
   questions: import("../../server/domain/research-validation").ResearchPlanQuestion[];
+  answerQuestions?: import("../../server/domain/research-validation").ResearchPlanQuestion[];
+  priorEvidence?: import("../../server/domain/research-validation").ValidatedEvidence[];
   excelTargets: import("../../server/domain/research-validation").ResearchExcelTarget[];
   userUrls: string[];
   sourceReferences: Array<
@@ -104,6 +110,15 @@ export type ResearchValidationWorkflowInput = {
       objectKey: string | null;
     }
   >;
+  workbookConsensusFallback: Array<{
+    sheetId: string;
+    sheetName: string;
+    address: string;
+    label: string;
+    displayValue: string;
+    rawValue: unknown;
+    formula: string | null;
+  }>;
   researchAgentProfile: {
     version: string;
     model: string;

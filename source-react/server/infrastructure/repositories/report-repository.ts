@@ -150,6 +150,15 @@ type EvidenceSummary = {
   stance: string;
   machineStatus: string;
   quoteExact: string;
+  metricId: string;
+  period: string | null;
+  scope: string | null;
+  valueKind: string | null;
+  claimType: "fact" | "company_statement" | "calculation";
+  allowedUsage:
+    | "assertive"
+    | "attribute_to_company"
+    | "state_as_calculation";
   sourceType: string;
   publisher: string;
   sourceTitle: string;
@@ -536,6 +545,10 @@ async function loadEvidence(
     stance: string;
     machine_status: string;
     quote_exact: string;
+    metric_id: string;
+    period: string | null;
+    scope: string | null;
+    value_kind: string | null;
     source_type: string;
     publisher: string;
     source_title: string;
@@ -545,8 +558,9 @@ async function loadEvidence(
     provenance_json: Record<string, unknown>;
   }>(
     `SELECT DISTINCT ON (e.evidence_id)
-       e.evidence_id, e.evidence_version, result.title,
+       e.evidence_id, e.evidence_version, result.title, result.metric_id,
        result.one_line_value, e.stance, e.machine_status, e.quote_exact,
+       result.period, result.scope, result.value_kind,
        source_version.source_type, source_version.publisher,
        source_version.title AS source_title, source_version.published_at,
        source_version.canonical_url, e.locator_json, e.provenance_json
@@ -560,22 +574,55 @@ async function loadEvidence(
      ORDER BY e.evidence_id, e.evidence_version DESC`,
     [projectId, validationRunId],
   );
-  return result.rows.map((row) => ({
-    evidenceId: row.evidence_id,
-    evidenceVersion: Number(row.evidence_version),
-    title: row.title,
-    oneLineValue: row.one_line_value,
-    stance: row.stance,
-    machineStatus: row.machine_status,
-    quoteExact: row.quote_exact,
-    sourceType: row.source_type,
-    publisher: row.publisher,
-    sourceTitle: row.source_title,
-    publishedAt: row.published_at?.toISOString() ?? null,
-    canonicalUrl: row.canonical_url,
-    locator: row.locator_json,
-    provenance: row.provenance_json,
-  }));
+  return result.rows.map((row) => {
+    const storedClaimType = row.provenance_json.claimType;
+    const claimType =
+      storedClaimType === "calculation" ||
+      storedClaimType === "company_statement"
+        ? storedClaimType
+        : /calculated|calculation|computed|derived|계산|산출/i.test(
+              row.value_kind ?? "",
+            )
+          ? "calculation"
+          : row.source_type === "COMPANY_IR" &&
+              /전망|예상|계획|목표|가이던스|지속될|이어질|확대할|추진|forecast|outlook|guidance|plan|expect/i.test(
+                [row.title, row.one_line_value, row.quote_exact].join(" "),
+              )
+            ? "company_statement"
+        : "fact";
+    const storedUsage = row.provenance_json.allowedUsage;
+    const allowedUsage =
+      storedUsage === "attribute_to_company" ||
+      storedUsage === "state_as_calculation"
+        ? storedUsage
+        : claimType === "company_statement"
+          ? "attribute_to_company"
+          : claimType === "calculation"
+            ? "state_as_calculation"
+            : "assertive";
+    return {
+      evidenceId: row.evidence_id,
+      evidenceVersion: Number(row.evidence_version),
+      title: row.title,
+      oneLineValue: row.one_line_value,
+      stance: row.stance,
+      machineStatus: row.machine_status,
+      quoteExact: row.quote_exact,
+      metricId: row.metric_id,
+      period: row.period,
+      scope: row.scope,
+      valueKind: row.value_kind,
+      claimType,
+      allowedUsage,
+      sourceType: row.source_type,
+      publisher: row.publisher,
+      sourceTitle: row.source_title,
+      publishedAt: row.published_at?.toISOString() ?? null,
+      canonicalUrl: row.canonical_url,
+      locator: row.locator_json,
+      provenance: row.provenance_json,
+    };
+  });
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -3345,6 +3392,12 @@ async function buildReportMaterialization(
       quoteExact: item.quoteExact,
       stance: item.stance,
       machineStatus: item.machineStatus,
+      metricId: item.metricId,
+      sourceType: item.sourceType,
+      period: item.period,
+      scope: item.scope,
+      claimType: item.claimType,
+      allowedUsage: item.allowedUsage,
     })),
   });
   const baseDocument = buildReportDocument({

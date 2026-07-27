@@ -36,6 +36,7 @@ export type SourceType =
 export type HypothesisQuestion = {
   questionId: string;
   order: number;
+  role: "PERFORMANCE" | "DRIVER" | "SEGMENT" | "OUTLOOK" | "VALUATION";
   text: string;
   purpose: string;
   metrics: string[];
@@ -47,6 +48,7 @@ export type HypothesisQuestion = {
 
 export type AgentQuestion = {
   questionKey: string;
+  role: "PERFORMANCE" | "DRIVER" | "SEGMENT" | "OUTLOOK" | "VALUATION";
   text: string;
   purpose: string;
   metrics: string[];
@@ -116,12 +118,12 @@ type HypothesisRow = {
 
 type IdempotentResult = { status: number; body: unknown };
 
-const AGENT_PROFILE_VERSION = "hypothesis-openai-v1";
-const PROMPT_VERSION = "hypothesis-v2";
+const AGENT_PROFILE_VERSION = "hypothesis-openai-v3";
+const PROMPT_VERSION = "hypothesis-v4";
 const OUTPUT_SCHEMA_VERSION = "1.0.0";
 const OUTPUT_SCHEMA_ID =
   "https://schemas.reflo.dev/worker/v1/agent-output.schema.json";
-const CONFIGURED_MODEL = "gpt-5.6-terra";
+const CONFIGURED_MODEL = "gpt-5.4-mini";
 const SOURCE_TYPES = new Set<SourceType>([
   "filing",
   "company",
@@ -129,6 +131,171 @@ const SOURCE_TYPES = new Set<SourceType>([
   "industry",
   "market_data",
 ]);
+
+type JsonRecord = Record<string, unknown>;
+
+function jsonRecord(value: unknown): JsonRecord | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function jsonRecords(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) => {
+        const record = jsonRecord(item);
+        return record ? [record] : [];
+      })
+    : [];
+}
+
+function jsonString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function compactPlanningText(value: string, maximum = 700): string {
+  const compact = value.normalize("NFC").replace(/\s+/g, " ").trim();
+  return compact.length <= maximum
+    ? compact
+    : `${compact.slice(0, maximum - 1).trimEnd()}…`;
+}
+
+export function buildHypothesisPlanningContext(input: {
+  templateIr: unknown;
+  workbookAnalysis: unknown;
+  currentIr?: unknown;
+}): { knownFacts: string[]; optionalContext: string } {
+  const knownFacts: string[] = [];
+  const appendPdfFacts = (
+    source: unknown,
+    label: string,
+    currentFact: boolean,
+  ) => {
+    const parsed = jsonRecord(source);
+    for (const [pageIndex, page] of jsonRecords(parsed?.pages)
+      .slice(0, 12)
+      .entries()) {
+      const text = jsonRecords(page.objects)
+        .flatMap((object) => {
+          const textRun = jsonRecord(object.textRun);
+          const value = jsonString(textRun?.text);
+          return value ? [value] : [];
+        })
+        .join(" ");
+      const compact = compactPlanningText(text);
+      if (compact.length < 40) continue;
+      const pageNumber =
+        typeof page.pageNumber === "number" ? page.pageNumber : pageIndex + 1;
+      knownFacts.push(
+        `${label} ${pageNumber}쪽${currentFact ? "의 공식 사실·회사 전망" : "의 주제·표현(현재 분기 사실 아님)"}: ${compact}`,
+      );
+    }
+  };
+
+  appendPdfFacts(input.currentIr, "현재 분기 공식 IR", true);
+
+  const template = jsonRecord(input.templateIr);
+  appendPdfFacts(template, "이전 분기 리포트", false);
+
+  const workbook = jsonRecord(input.workbookAnalysis);
+  const sheetNames = jsonRecords(workbook?.sheets)
+    .filter((sheet) => jsonString(sheet.visibility) !== "hidden")
+    .flatMap((sheet) => {
+      const name = jsonString(sheet.name);
+      return name ? [name] : [];
+    })
+    .slice(0, 30);
+  if (sheetNames.length > 0) {
+    knownFacts.push(
+      compactPlanningText(
+        `이전 분기 Excel의 분석 시트: ${sheetNames.join(", ")}`,
+      ),
+    );
+  }
+
+  for (const range of jsonRecords(workbook?.candidateRanges).slice(0, 15)) {
+    const sheetName =
+      jsonString(range.sheetName) ?? jsonString(range.sheet) ?? "시트";
+    const address = jsonString(range.range) ?? "";
+    const headers = Array.isArray(range.headerValues)
+      ? range.headerValues.flatMap((item) => {
+          const value = jsonString(item);
+          return value ? [value] : [];
+        })
+      : [];
+    const periods = jsonRecords(range.periodColumns).flatMap((column) => {
+      const label = jsonString(column.label);
+      return label ? [label] : [];
+    });
+    const rowKeys = jsonRecords(range.rowKeyColumns).flatMap((column) => {
+      const label = jsonString(column.label);
+      return label ? [label] : [];
+    });
+    const descriptors = [...headers, ...rowKeys, ...periods]
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .slice(0, 18);
+    if (descriptors.length > 0) {
+      knownFacts.push(
+        compactPlanningText(
+          `이전 분기 Excel ${sheetName}${address ? ` ${address}` : ""}: ${descriptors.join(", ")}`,
+        ),
+      );
+    }
+  }
+
+  return {
+    knownFacts: knownFacts.slice(0, 40),
+    optionalContext:
+      "현재 분기 공식 IR은 현재 사실과 회사 전망을 찾는 우선 자료다. " +
+      "이전 분기 PDF와 Excel은 현재 분기 사실의 근거가 아니라 조사 주제와 보고서 구조를 찾는 배경 자료다. " +
+      "실적 리뷰 질문은 목표 분기 실적, 자료에서 확인된 주요 사업·제품별 실적 원인, 향후 지속 가능성, " +
+      "추정치·밸류에이션의 논리 흐름을 빠짐없이 다루되 회사별 명칭과 지표는 입력 자료에서만 선택한다.",
+  };
+}
+
+async function loadHypothesisPlanningContext(
+  client: TransactionClient,
+  context: ProjectContext,
+): Promise<{
+  knownFacts: string[];
+  optionalContext: string;
+  currentIrResourceVersionId: string | null;
+}> {
+  const result = await client.query<{
+    template_ir_json: unknown;
+    workbook_analysis_json: unknown;
+    current_ir_json: unknown;
+    current_ir_resource_version_id: string | null;
+  }>(
+    `SELECT template.template_ir_json,
+       workbook.analysis_json AS workbook_analysis_json,
+       current_ir.analysis_json AS current_ir_json,
+       inspection.current_ir_resource_version_id
+     FROM file_inspection inspection
+     JOIN template_ir_version template
+       ON template.resource_version_id = inspection.template_resource_version_id
+     JOIN workbook_version workbook
+       ON workbook.resource_version_id = inspection.workbook_resource_version_id
+     LEFT JOIN current_ir_version current_ir
+       ON current_ir.resource_version_id = inspection.current_ir_resource_version_id
+     WHERE inspection.project_id = $1
+       AND inspection.mapping_set_resource_version_id = $2
+       AND inspection.outcome = 'passed'
+     ORDER BY inspection.completed_at DESC
+     LIMIT 1`,
+    [context.projectId, context.filesResourceVersionId],
+  );
+  const row = result.rows[0];
+  return {
+    ...buildHypothesisPlanningContext({
+    templateIr: row?.template_ir_json ?? null,
+    workbookAnalysis: row?.workbook_analysis_json ?? null,
+    currentIr: row?.current_ir_json ?? null,
+    }),
+    currentIrResourceVersionId:
+      row?.current_ir_resource_version_id ?? null,
+  };
+}
 
 function cleanText(value: unknown, maximum: number, code: string): string {
   if (typeof value !== "string") {
@@ -462,6 +629,7 @@ async function loadQuestionSet(
   const questions = await client.query<{
     question_id: string;
     display_order: number;
+    question_role: HypothesisQuestion["role"];
     question_text: string;
     purpose: string;
     metrics: string[];
@@ -470,7 +638,7 @@ async function loadQuestionSet(
     suggested_source_types: SourceType[];
     origin: "agent" | "user";
   }>(
-    `SELECT question_id, display_order, question_text, purpose, metrics,
+    `SELECT question_id, display_order, question_role, question_text, purpose, metrics,
        period, comparison, suggested_source_types, origin
      FROM hypothesis_question
      WHERE question_set_id = $1 AND set_version = $2
@@ -489,6 +657,7 @@ async function loadQuestionSet(
     questions: questions.rows.map((row) => ({
       questionId: row.question_id,
       order: row.display_order,
+      role: row.question_role,
       text: row.question_text,
       purpose: row.purpose,
       metrics: row.metrics,
@@ -1005,6 +1174,29 @@ export async function createHypothesisGeneration(input: {
     }
     const generationId = uuidv7();
     const jobId = uuidv7();
+    const planningContext = await loadHypothesisPlanningContext(client, context);
+    const sourceInputs = [
+      {
+        role: "hypothesis_input",
+        resourceVersionId: hypothesis.resourceVersionId,
+      },
+      {
+        role: "project_setup",
+        resourceVersionId: context.setupResourceVersionId,
+      },
+      {
+        role: "files_completion",
+        resourceVersionId: context.filesResourceVersionId,
+      },
+      ...(planningContext.currentIrResourceVersionId
+        ? [
+            {
+              role: "current_ir",
+              resourceVersionId: planningContext.currentIrResourceVersionId,
+            },
+          ]
+        : []),
+    ];
     await client.query(
       `INSERT INTO workflow_job (
          job_id, project_id, job_type, temporal_workflow_id,
@@ -1024,15 +1216,13 @@ export async function createHypothesisGeneration(input: {
     );
     await client.query(
       `INSERT INTO workflow_job_input (job_id, input_role, resource_version_id)
-       VALUES
-         ($1, 'hypothesis_input', $2),
-         ($1, 'project_setup', $3),
-         ($1, 'files_completion', $4)`,
+       SELECT $1, input_role, resource_version_id
+       FROM unnest($2::text[], $3::uuid[])
+         AS source(input_role, resource_version_id)`,
       [
         jobId,
-        hypothesis.resourceVersionId,
-        context.setupResourceVersionId,
-        context.filesResourceVersionId,
+        sourceInputs.map((source) => source.role),
+        sourceInputs.map((source) => source.resourceVersionId),
       ],
     );
     await pinWorkflowJobSourceSnapshot(client, { jobId });
@@ -1062,11 +1252,9 @@ export async function createHypothesisGeneration(input: {
       projectId: input.projectId,
       generationId,
       inputResourceVersionId: hypothesis.resourceVersionId,
-      sourceInputVersionIds: [
-        hypothesis.resourceVersionId,
-        context.setupResourceVersionId,
-        context.filesResourceVersionId,
-      ],
+      sourceInputVersionIds: sourceInputs.map(
+        (source) => source.resourceVersionId,
+      ),
       inputDraftVersion: hypothesis.draftVersion,
       inputContentHash: contentHash({
         provisionalRating: hypothesis.provisionalRating,
@@ -1081,9 +1269,9 @@ export async function createHypothesisGeneration(input: {
       reportType: context.reportType,
       rating: hypothesis.provisionalRating,
       hypothesis: hypothesis.thesis,
-      knownFacts: [],
+      knownFacts: planningContext.knownFacts,
       availableSourceTypes: Array.from(SOURCE_TYPES),
-      optionalContext: null,
+      optionalContext: planningContext.optionalContext,
       agentProfile: {
         version: AGENT_PROFILE_VERSION,
         promptVersion: PROMPT_VERSION,
@@ -1209,7 +1397,7 @@ export function validateHypothesisAgentOutput(
     !Array.isArray(result.warnings) ||
     !Array.isArray(result.questions) ||
     result.questions.length < 3 ||
-    result.questions.length > 5
+    result.questions.length > 7
   ) {
     throw new ApiError(
       422,
@@ -1232,6 +1420,9 @@ export function validateHypothesisAgentOutput(
     normalized.add(normalizedText);
     if (
       !cleanText(question.purpose, 500, "AGENT_OUTPUT_INVALID") ||
+      !["PERFORMANCE", "DRIVER", "SEGMENT", "OUTLOOK", "VALUATION"].includes(
+        question.role,
+      ) ||
       !cleanText(question.period, 200, "AGENT_OUTPUT_INVALID") ||
       !cleanText(question.comparison, 300, "AGENT_OUTPUT_INVALID") ||
       !Array.isArray(question.metrics) ||
@@ -1259,6 +1450,19 @@ export function validateHypothesisAgentOutput(
       422,
       "AGENT_OUTPUT_INVALID",
       "질문 우선순위가 연속적이지 않습니다.",
+    );
+  }
+  const roles = new Set(result.questions.map((question) => question.role));
+  if (
+    !roles.has("PERFORMANCE") ||
+    !roles.has("OUTLOOK") ||
+    !roles.has("VALUATION") ||
+    (!roles.has("DRIVER") && !roles.has("SEGMENT"))
+  ) {
+    throw new ApiError(
+      422,
+      "AGENT_OUTPUT_INVALID",
+      "실적·원인/사업부·전망·밸류에이션 질문 구성이 완전하지 않습니다.",
     );
   }
   return [...result.questions].sort((a, b) => a.priority - b.priority);
@@ -1403,13 +1607,14 @@ export async function commitHypothesisGenerationResult(
       await client.query(
         `INSERT INTO hypothesis_question (
            question_set_id, set_version, question_id, display_order,
-           question_text, purpose, metrics, period, comparison,
+           question_role, question_text, purpose, metrics, period, comparison,
            suggested_source_types, origin
-         ) VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, 'agent')`,
+         ) VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'agent')`,
         [
           questionSetId,
           uuidv7(),
           index + 1,
+          question.role,
           question.text.trim(),
           question.purpose.trim(),
           JSON.stringify(question.metrics),
@@ -1643,7 +1848,18 @@ function inferQuestionMetadata(
   if (/시장|업종|경쟁사|점유율/.test(text)) sourceTypes.push("industry");
   if (/주가|시가총액|밸류에이션/.test(text)) sourceTypes.push("market_data");
   if (/뉴스|이슈|사건/.test(text)) sourceTypes.push("news");
+  const role: HypothesisQuestion["role"] =
+    /PER|PBR|밸류에이션|목표\s*주가|상승\s*여력|주가/.test(text)
+      ? "VALUATION"
+      : /다음\s*분기|향후|전망|지속|하반기|연간/.test(text)
+        ? "OUTLOOK"
+        : /사업부|제품|부문|세그먼트/.test(text)
+          ? "SEGMENT"
+          : /원인|요인|개선|악화|믹스|수요/.test(text)
+            ? "DRIVER"
+            : "PERFORMANCE";
   return {
+    role,
     purpose: `${metrics[0]} 변화 확인`,
     metrics,
     period: periodMatch[0],
@@ -1740,14 +1956,15 @@ async function createQuestionSetVersion(
     await client.query(
       `INSERT INTO hypothesis_question (
          question_set_id, set_version, question_id, display_order,
-         question_text, purpose, metrics, period, comparison,
+         question_role, question_text, purpose, metrics, period, comparison,
          suggested_source_types, origin
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         input.questionSetId,
         nextVersion,
         question.questionId,
         question.order,
+        question.role,
         question.text,
         question.purpose,
         JSON.stringify(question.metrics),
@@ -1833,11 +2050,11 @@ export async function addHypothesisQuestion(input: {
       input.questionSetId,
       input.expectedQuestionSetVersion,
     );
-    if (current.questions.length >= 5) {
+    if (current.questions.length >= 7) {
       throw new ApiError(
         422,
         "QUESTION_COUNT_INVALID",
-        "질문은 최대 5개까지 추가할 수 있습니다.",
+        "질문은 최대 7개까지 추가할 수 있습니다.",
       );
     }
     if (
@@ -2048,11 +2265,11 @@ function validateQuestionSetForApproval(
   current: Awaited<ReturnType<typeof mutableQuestionSet>>,
   inputRevision: string,
 ): void {
-  if (current.questions.length < 3 || current.questions.length > 5) {
+  if (current.questions.length < 3 || current.questions.length > 7) {
     throw new ApiError(
       422,
       "QUESTION_COUNT_INVALID",
-      "질문은 3개 이상 5개 이하여야 합니다.",
+      "질문은 3개 이상 7개 이하여야 합니다.",
     );
   }
   if (
