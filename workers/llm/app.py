@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import UTC, datetime
@@ -29,6 +30,59 @@ OUTPUT_SCHEMA_ID = "https://schemas.reflo.dev/worker/v1/agent-output.schema.json
 SOURCE_TYPES = {"filing", "company", "news", "industry", "market_data"}
 FIXTURE_FAIL_TWICE_MARKER = "[fixture:fail-twice]"
 fixture_failure_attempts: dict[str, int] = {}
+
+# TD-023 "Research·Validation 보조 추론" profile. reasoning=medium 실행에서는
+# reasoning token이 output token에 함께 계상되므로 이전 6,000~8,000 상한은
+# 정상 응답에서도 UsageLimitExceeded를 발생시켰다.
+PHASE4_INPUT_TOKEN_LIMIT = 120_000
+# 요청 1건당 상한 (TD-023 "Research·Validation 보조 추론" output 상한).
+PHASE4_OUTPUT_TOKEN_LIMIT = 16_000
+PHASE4_ANSWER_OUTPUT_TOKEN_LIMIT = 8_000
+PHASE4_TIMEOUT_SECONDS = 300
+PHASE4_OUTPUT_RETRIES = 2
+PHASE4_REQUEST_LIMIT = 6
+# UsageLimits는 run 1회의 *누적* 사용량을 본다. output_validator가 ModelRetry를
+# 던지면 재시도 응답이 같은 예산에 더해지므로, 요청 상한을 그대로 run 상한으로
+# 쓰면 정상 재시도만으로 UsageLimitExceeded가 난다. run 상한은
+# 요청 상한 x (retries + 1) + 여유로 잡는다.
+PHASE4_RUN_OUTPUT_TOKEN_LIMIT = PHASE4_OUTPUT_TOKEN_LIMIT * (
+    PHASE4_OUTPUT_RETRIES + 1
+) + 16_000
+PHASE4_RUN_ANSWER_OUTPUT_TOKEN_LIMIT = PHASE4_ANSWER_OUTPUT_TOKEN_LIMIT * (
+    PHASE4_OUTPUT_RETRIES + 1
+) + 8_000
+PHASE4_RUN_INPUT_TOKEN_LIMIT = PHASE4_INPUT_TOKEN_LIMIT * (
+    PHASE4_OUTPUT_RETRIES + 1
+)
+
+# 뉴스 검색어는 '기업명 + 키워드 1개'의 짧은 엔티티 질의여야 한다. 키워드를
+# 몰아넣거나 매체명·연월을 붙이면 검색 엔진이 무의미한 결과를 돌려준다.
+NEWS_QUERY_MAX_WORDS = 4
+NEWS_QUERY_BANNED_TOKENS = (
+    "기사",
+    "뉴스",
+    "연합뉴스",
+    "이데일리",
+    "매일경제",
+    "한국경제",
+    "머니투데이",
+    "서울경제",
+    "뉴스핌",
+    "파이낸셜뉴스",
+    "아시아경제",
+)
+
+phase4_logger = logging.getLogger("reflo.phase4")
+
+
+def phase4_retry(reason: str) -> ModelRetry:
+    """output_validator 반려 사유를 로그로 남기고 모델에도 그대로 돌려준다.
+
+    사유를 남기지 않으면 재시도가 모두 소진됐을 때 호출자는
+    'Exceeded maximum output retries'만 보게 되어 원인을 알 수 없다.
+    """
+    phase4_logger.warning("phase4 output rejected: %s", reason)
+    return ModelRetry(reason)
 
 
 class StrictModel(BaseModel):
@@ -803,11 +857,11 @@ def build_research_agent(
             "없는 숫자나 계산 입력은 만들지 않는다."
         ),
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=8_000,
-            timeout=120,
+            max_tokens=PHASE4_OUTPUT_TOKEN_LIMIT,
+            timeout=PHASE4_TIMEOUT_SECONDS,
             openai_reasoning_effort=profile.reasoning,
         ),
-        retries=1,
+        retries=PHASE4_OUTPUT_RETRIES,
     )
 
     @agent.output_validator
@@ -817,19 +871,33 @@ def build_research_agent(
     ) -> ResearchCandidateOutput:
         keys = [candidate.candidateKey for candidate in output.candidates]
         if len(keys) != len(set(keys)):
-            raise ModelRetry("candidate keys must be unique")
-        if any(
-            candidate.sourceKey not in ctx.deps.source_keys
-            for candidate in output.candidates
-        ):
-            raise ModelRetry("candidate references an unknown source")
-        if any(
-            candidate.questionId not in ctx.deps.question_metrics
-            or candidate.metricId
-            not in ctx.deps.question_metrics[candidate.questionId]
-            for candidate in output.candidates
-        ):
-            raise ModelRetry("candidate references an unapproved question metric")
+            raise phase4_retry("candidate keys must be unique")
+        unknown_sources = sorted(
+            {
+                candidate.sourceKey
+                for candidate in output.candidates
+                if candidate.sourceKey not in ctx.deps.source_keys
+            }
+        )
+        if unknown_sources:
+            raise phase4_retry(
+                f"candidate references unknown sourceKey {unknown_sources}. "
+                f"sourceKey는 입력 sources의 값만 사용한다."
+            )
+        for candidate in output.candidates:
+            approved = ctx.deps.question_metrics.get(candidate.questionId)
+            if approved is None:
+                raise phase4_retry(
+                    "candidate references an unknown questionId "
+                    f"{candidate.questionId!r}. 허용된 questionId: "
+                    f"{sorted(ctx.deps.question_metrics)}"
+                )
+            if candidate.metricId not in approved:
+                raise phase4_retry(
+                    f"candidate metricId {candidate.metricId!r} is not approved "
+                    f"for question {candidate.questionId!r}. metricId는 다음 중 "
+                    f"하나를 문자 그대로 사용한다: {sorted(approved)}"
+                )
         for candidate in output.candidates:
             if candidate.calculation is None:
                 continue
@@ -838,12 +906,16 @@ def build_research_agent(
                 + candidate.calculation.comparisonTerms
             ):
                 if term.sourceKey not in ctx.deps.source_keys:
-                    raise ModelRetry("calculation references an unknown source")
+                    raise phase4_retry(
+                        f"calculation references unknown sourceKey "
+                        f"{term.sourceKey!r}"
+                    )
                 normalized_quote = re.sub(r"[,\s]", "", term.quoteExact)
                 normalized_value = re.sub(r"[,\s]", "", term.valueOriginal)
                 if not normalized_value or normalized_value not in normalized_quote:
-                    raise ModelRetry(
-                        "calculation raw value must exist in its exact quote"
+                    raise phase4_retry(
+                        f"calculation valueOriginal {term.valueOriginal!r} must "
+                        f"appear inside quoteExact {term.quoteExact[:120]!r}"
                     )
         return output
 
@@ -871,20 +943,31 @@ def build_news_search_agent(
             )
         ],
         instructions=(
-            "너는 REFLO Research Agent의 뉴스 탐색 단계다. 각 질문마다 승인된 발행 기간 "
-            "안의 실제 언론사 기사 상세 페이지를 웹 검색한다. 검색 결과 목록, 포털 홈, "
-            "블로그, 커뮤니티, DART 공시, 기업 IR, 보도자료는 제외한다. 기사 URL과 날짜를 "
-            "추측하거나 만들지 않는다. 각 실행에는 질문 하나만 주어지며 구체적인 검색어 "
-            "2개만 사용하고, "
+            "너는 REFLO Research Agent의 뉴스 탐색 단계다. 각 실행에는 질문 하나만 "
+            "주어진다. 승인된 발행 기간 안의 실제 언론사 기사 상세 페이지를 웹 검색한다.\n"
+            "\n"
+            "검색어 작성 규칙 (반드시 지킨다):\n"
+            "1. 검색어는 '기업명 + 핵심 키워드 1개' 형태의 2~3단어로 짧게 쓴다. "
+            "예: '대덕전자 FC-BGA', '대덕전자 데이터센터', '대덕전자 전장'.\n"
+            "2. 키워드는 질문의 metrics와 질문 문장에 나오는 제품·사업부·수요처 같은 "
+            "구체적인 명사에서 고른다.\n"
+            "3. 질문 문장을 그대로 옮기거나 바꿔 쓰지 않는다. 여러 키워드를 한 검색어에 "
+            "몰아넣지 않는다.\n"
+            "4. 검색어에 매체명(연합뉴스·이데일리·매일경제 등), 연도·월, 기사 제목 조각, "
+            "'기사'·'뉴스' 같은 단어를 넣지 않는다. 발행 기간은 서버가 이미 제한한다.\n"
+            "5. 서로 다른 키워드로 2~3개만 만든다. 같은 키워드의 변형을 늘리지 않는다.\n"
+            "\n"
+            "검색 결과 규칙: 검색 결과 목록, 포털 홈, 블로그, 커뮤니티, DART 공시, "
+            "기업 IR, 보도자료는 제외한다. 기사 URL과 날짜를 추측하거나 만들지 않고 "
             "실제 검색에서 확인한 후보만 반환한다. 결과는 아직 Evidence가 아니며 서버가 "
             "원문, 발행일, 기업 일치 여부를 다시 검증한다."
         ),
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=6_000,
-            timeout=120,
+            max_tokens=PHASE4_OUTPUT_TOKEN_LIMIT,
+            timeout=PHASE4_TIMEOUT_SECONDS,
             openai_reasoning_effort=profile.reasoning,
         ),
-        retries=1,
+        retries=PHASE4_OUTPUT_RETRIES,
     )
 
     @agent.output_validator
@@ -897,6 +980,24 @@ def build_news_search_agent(
         query_ids: dict[str, set[str]] = {}
         result_counts: dict[str, int] = {}
         for item in output.results:
+            words = item.queryText.split()
+            if len(words) > NEWS_QUERY_MAX_WORDS:
+                raise phase4_retry(
+                    f"queryText {item.queryText!r} is too long "
+                    f"({len(words)} words). '기업명 + 키워드 1개' 형태로 "
+                    f"{NEWS_QUERY_MAX_WORDS}단어 이내로 줄인다."
+                )
+            banned = [
+                token
+                for token in NEWS_QUERY_BANNED_TOKENS
+                if token in item.queryText
+            ]
+            if banned or re.search(r"\d{4}\s*년|\d{1,2}\s*월", item.queryText):
+                raise phase4_retry(
+                    f"queryText {item.queryText!r} contains banned tokens "
+                    f"{banned or ['연월']}. 매체명·연월·'기사'·'뉴스'는 검색어에 "
+                    f"넣지 않는다. 발행 기간은 서버가 이미 제한한다."
+                )
             question = questions.get(item.questionId)
             if question is None:
                 raise ModelRetry("news result references an unknown question")
@@ -941,11 +1042,11 @@ def build_validation_agent(
             "최종 충분성과 사용자 결정을 확정하지 않는다."
         ),
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=8_000,
-            timeout=120,
+            max_tokens=PHASE4_OUTPUT_TOKEN_LIMIT,
+            timeout=PHASE4_TIMEOUT_SECONDS,
             openai_reasoning_effort=profile.reasoning,
         ),
-        retries=1,
+        retries=PHASE4_OUTPUT_RETRIES,
     )
 
     @agent.output_validator
@@ -990,11 +1091,11 @@ def build_question_answer_agent(
             "evidenceCandidateKeys에 넣고, 제한이 있으면 caveat에 짧게 기록한다."
         ),
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=3_000,
-            timeout=120,
+            max_tokens=PHASE4_ANSWER_OUTPUT_TOKEN_LIMIT,
+            timeout=PHASE4_TIMEOUT_SECONDS,
             openai_reasoning_effort=profile.reasoning,
         ),
-        retries=1,
+        retries=PHASE4_OUTPUT_RETRIES,
     )
 
     @agent.output_validator
@@ -1553,9 +1654,9 @@ async def research_news_search(body: NewsSearchRequest) -> dict[str, object]:
             + json.dumps(safe_input, ensure_ascii=False, separators=(",", ":")),
             deps=NewsSearchDependencies(body.input),
             usage_limits=UsageLimits(
-                input_tokens_limit=120_000,
-                output_tokens_limit=6_000,
-                request_limit=4,
+                input_tokens_limit=PHASE4_RUN_INPUT_TOKEN_LIMIT,
+                output_tokens_limit=PHASE4_RUN_OUTPUT_TOKEN_LIMIT,
+                request_limit=PHASE4_REQUEST_LIMIT,
             ),
         )
         return result.output.model_dump()
@@ -1596,9 +1697,9 @@ async def research_candidates(body: ResearchAgentRequest) -> dict[str, object]:
                 question_metrics,
             ),
             usage_limits=UsageLimits(
-                input_tokens_limit=80_000,
-                output_tokens_limit=8_000,
-                request_limit=3,
+                input_tokens_limit=PHASE4_RUN_INPUT_TOKEN_LIMIT,
+                output_tokens_limit=PHASE4_RUN_OUTPUT_TOKEN_LIMIT,
+                request_limit=PHASE4_REQUEST_LIMIT,
             ),
         )
         return result.output.model_dump()
@@ -1638,9 +1739,9 @@ async def validation_evidence(body: ValidationAgentRequest) -> dict[str, object]
                 },
             ),
             usage_limits=UsageLimits(
-                input_tokens_limit=80_000,
-                output_tokens_limit=8_000,
-                request_limit=3,
+                input_tokens_limit=PHASE4_RUN_INPUT_TOKEN_LIMIT,
+                output_tokens_limit=PHASE4_RUN_OUTPUT_TOKEN_LIMIT,
+                request_limit=PHASE4_REQUEST_LIMIT,
             ),
         )
         return result.output.model_dump()
@@ -1689,9 +1790,9 @@ async def validation_question_answers(
             ),
             deps=QuestionAnswerDependencies(body.input),
             usage_limits=UsageLimits(
-                input_tokens_limit=30_000,
-                output_tokens_limit=3_000,
-                request_limit=2,
+                input_tokens_limit=PHASE4_RUN_INPUT_TOKEN_LIMIT,
+                output_tokens_limit=PHASE4_RUN_ANSWER_OUTPUT_TOKEN_LIMIT,
+                request_limit=PHASE4_REQUEST_LIMIT,
             ),
         )
         return result.output.model_dump()

@@ -136,11 +136,11 @@ test("로그인 → 프로젝트 생성 → setup 자동 저장 → 완료 → �
   await page.getByRole("button", { name: "설정 완료" }).click();
   await expect(page).toHaveURL(/\/process\/files$/);
   await expect(
-    page.getByRole("heading", { name: "필수 파일 업로드 · 적합성 검사" }),
+    page.getByRole("heading", { name: "분석 기준 파일 업로드 · 적합성 검사" }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "필수 파일 업로드 · 적합성 검사" }),
+    page.getByRole("heading", { name: "분석 기준 파일 업로드 · 적합성 검사" }),
   ).toBeVisible();
 
   const currentSession = await session(page.request);
@@ -312,7 +312,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
 
   await page.goto(`/projects/${projectId}/process/files`);
   await expect(
-    page.getByRole("heading", { name: "필수 파일 업로드 · 적합성 검사" }),
+    page.getByRole("heading", { name: "분석 기준 파일 업로드 · 적합성 검사" }),
   ).toBeVisible();
 
   const inputs = page.locator(".phase2-upload-card input[type=file]");

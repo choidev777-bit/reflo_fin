@@ -64,6 +64,38 @@ if (!workerToken) {
 }
 const controlWorkerTool = { name: "reflo-control", version: "1.0.0" };
 
+// LLM worker의 phase 4 agent timeout은 TD-023 기준 300초다. client fetch는 그보다
+// 길어야 worker가 돌려주는 실제 오류를 받을 수 있고, activity의 startToCloseTimeout은
+// 다시 이 값보다 길어야 한다 (workflows.ts의 llm·news·evidence proxy 참고).
+const PHASE4_AGENT_FETCH_TIMEOUT_MS = 330_000;
+
+// 원문 그룹/후보 배치 분석은 서로 독립이므로 동시에 돌린다. 직렬 실행에서는
+// 호출 간격 중앙값이 52초라 14회에 12분이 걸렸다.
+const PHASE4_AGENT_CONCURRENCY = 4;
+
+/** 순서를 보존하면서 최대 limit개까지 동시에 실행한다. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      for (;;) {
+        const index = next;
+        next += 1;
+        if (index >= items.length) return;
+        results[index] = await run(items[index]!, index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 export async function runWithPeriodicActivityHeartbeat<T>(
   phase: string,
   operation: () => Promise<T>,
@@ -923,7 +955,7 @@ async function callResearchAgentBatch(
         profile: input.researchAgentProfile,
       }),
       signal: AbortSignal.any([
-        AbortSignal.timeout(120_000),
+        AbortSignal.timeout(PHASE4_AGENT_FETCH_TIMEOUT_MS),
         Context.current().cancellationSignal,
       ]),
       },
@@ -985,14 +1017,35 @@ async function callResearchAgent(
 ): Promise<ResearchCandidate[]> {
   const candidates: ResearchCandidate[] = [];
   const candidateKeys = new Set<string>();
-  for (const sourceGroup of groupSourceProjections(sources)) {
-    const questions = questionsForSources(input, sourceGroup);
-    if (questions.length === 0) continue;
-    const batch = await callResearchAgentBatch(input, questions, sourceGroup);
-    for (const candidate of batch) {
-      if (candidateKeys.has(candidate.candidateKey)) {
-        throw new Error("RESEARCH_AGENT_OUTPUT_INVALID");
+  const groups = groupSourceProjections(sources)
+    .map((sourceGroup) => ({
+      sourceGroup,
+      questions: questionsForSources(input, sourceGroup),
+    }))
+    .filter((entry) => entry.questions.length > 0);
+  // 원문 그룹끼리는 독립이므로 동시에 분석한다. 그룹 하나가 실패해도 나머지
+  // 원문의 후보는 살린다. 수집 단계는 이미 부분 실패를 견디는데 추출만
+  // all-or-nothing이었다.
+  const batches = await mapWithConcurrency(
+    groups,
+    PHASE4_AGENT_CONCURRENCY,
+    async ({ sourceGroup, questions }) => {
+      try {
+        return await callResearchAgentBatch(input, questions, sourceGroup);
+      } catch (error) {
+        console.warn(
+          "research candidate extraction failed for a source group",
+          error instanceof Error ? error.message : error,
+        );
+        return [] as ResearchCandidate[];
       }
+    },
+  );
+  // 중복 제거는 전체를 모은 뒤 한 번에 한다. 그룹 순서가 보존되므로 결과는
+  // 직렬 실행과 동일하다.
+  for (const batch of batches) {
+    for (const candidate of batch) {
+      if (candidateKeys.has(candidate.candidateKey)) continue;
       candidateKeys.add(candidate.candidateKey);
       candidates.push(candidate);
     }
@@ -1062,7 +1115,7 @@ async function callNewsSearchAgent(
                   profile: input.researchAgentProfile,
                 }),
                 signal: AbortSignal.any([
-                  AbortSignal.timeout(300_000),
+                  AbortSignal.timeout(PHASE4_AGENT_FETCH_TIMEOUT_MS),
                   Context.current().cancellationSignal,
                 ]),
               },
@@ -1241,7 +1294,7 @@ async function callValidationAgentBatch(
         profile: input.validationAgentProfile,
       }),
       signal: AbortSignal.any([
-        AbortSignal.timeout(120_000),
+        AbortSignal.timeout(PHASE4_AGENT_FETCH_TIMEOUT_MS),
         Context.current().cancellationSignal,
       ]),
       },
@@ -1313,9 +1366,14 @@ async function callValidationAgent(
   const sourceByKey = new Map(
     sources.map((source) => [source.sourceKey, source]),
   );
-  const accepted: ResearchCandidate[] = [];
+  const slices: ResearchCandidate[][] = [];
   for (let start = 0; start < candidates.length; start += 12) {
-    const batch = candidates.slice(start, start + 12);
+    slices.push(candidates.slice(start, start + 12));
+  }
+  const acceptedBatches = await mapWithConcurrency(
+    slices,
+    PHASE4_AGENT_CONCURRENCY,
+    async (batch) => {
     const quotesBySource = new Map<string, string[]>();
     for (const candidate of batch) {
       const references = [
@@ -1333,18 +1391,27 @@ async function callValidationAgent(
         quotesBySource.set(reference.sourceKey, quotes);
       }
     }
-    const projectedSources = [...quotesBySource.entries()].map(
+    const projectedSources = [...quotesBySource.entries()].flatMap(
       ([sourceKey, quotes]) => {
         const source = sourceByKey.get(sourceKey);
-        if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
-        return sourceExcerptForQuotes(source, quotes);
+        // 원문을 못 찾은 후보는 검증할 수 없으므로 조용히 제외된다. 근거 없는
+        // 후보가 통과하는 게 아니라, 검증 입력에서 빠져 채택되지 않는다.
+        return source ? [sourceExcerptForQuotes(source, quotes)] : [];
       },
     );
-    accepted.push(
-      ...(await callValidationAgentBatch(input, projectedSources, batch)),
-    );
-  }
-  return accepted;
+      // 배치 하나가 실패해도 나머지 후보 배치의 검증 결과는 유지한다.
+      try {
+        return await callValidationAgentBatch(input, projectedSources, batch);
+      } catch (error) {
+        console.warn(
+          "evidence validation failed for a candidate batch",
+          error instanceof Error ? error.message : error,
+        );
+        return [] as ResearchCandidate[];
+      }
+    },
+  );
+  return acceptedBatches.flat();
 }
 
 async function synthesizeQuestionAnswers(
@@ -1417,7 +1484,7 @@ async function synthesizeQuestionAnswers(
             profile: input.validationAgentProfile,
           }),
           signal: AbortSignal.any([
-            AbortSignal.timeout(120_000),
+            AbortSignal.timeout(PHASE4_AGENT_FETCH_TIMEOUT_MS),
             Context.current().cancellationSignal,
           ]),
           },
@@ -1445,8 +1512,21 @@ async function synthesizeQuestionAnswers(
       return indeterminateQuestionAnswer(decision);
     }
     const answer = generatedByQuestion.get(decision.question.questionId);
-    if (!answer) throw new Error("QUESTION_ANSWER_MISSING");
-    return validateQuestionAnswer(answer, decision);
+    if (!answer) return indeterminateQuestionAnswer(decision);
+    try {
+      return validateQuestionAnswer(answer, decision);
+    } catch (error) {
+      // 답변 검증 실패는 그 질문 하나만 미확정으로 내린다. 여기서 throw하면
+      // 질문 하나 때문에 전체 수집·검증 실행이 사라진다. 검증되지 않은 문장이
+      // 보고서로 나가지 않는다는 불변조건은 indeterminate로 그대로 지켜진다.
+      const reason =
+        error instanceof Error ? error.message : "QUESTION_ANSWER_INVALID";
+      const fallback = indeterminateQuestionAnswer(decision);
+      return {
+        ...fallback,
+        caveat: `답변 검증에 실패해 미확정으로 처리했습니다. (${reason})`,
+      };
+    }
   });
 }
 

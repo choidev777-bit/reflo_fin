@@ -29,12 +29,16 @@ import type {
 } from "../../domain/worker-result-contract";
 import {
   RESEARCH_SOURCE_TYPES,
+  allowedResearchSources,
   attachNewsSearchPolicies,
   calculateQuestionSufficiency,
   canonicalResearchNumericValue,
   classifyResearchClaim,
   defaultCollectionMethod,
+  deriveNewsSearchPolicy,
+  normalizeNewsWindowInput,
   normalizePublicResearchUrls,
+  restrictSourcesToRole,
   suggestedResearchSources,
   validateResearchPlan,
   type PlanValidationIssue,
@@ -808,11 +812,16 @@ async function buildDefaultSnapshot(
             row.question_role === "OUTLOOK"
           ? ["COMPANY_IR", "NEWS"]
           : ["KRX"];
-    const sources = Array.from(
-      new Set([
-        ...roleSources,
-        ...suggestedResearchSources(row.suggested_source_types),
-      ]),
+    // Agent 제안(suggested_source_types)이 role 정책을 덮어쓰지 않도록,
+    // 합집합을 만든 뒤 role 허용 집합으로 반드시 교집합한다.
+    const sources = restrictSourcesToRole(
+      row.question_role,
+      Array.from(
+        new Set([
+          ...roleSources,
+          ...suggestedResearchSources(row.suggested_source_types),
+        ]),
+      ),
     );
     return {
       questionId: row.question_id,
@@ -1519,6 +1528,12 @@ type PlanChange =
       sourceBindingIds: ResearchSourceType[];
     }
   | {
+      op: "set_question_news_window";
+      questionId: string;
+      startDate: string;
+      endDate: string;
+    }
+  | {
       op: "set_excel_target_included";
       targetId: string;
       included: boolean;
@@ -1564,6 +1579,18 @@ function applyPlanChanges(
       ) {
         throw new ApiError(400, "INVALID_PLAN_CHANGE", "질문 출처를 다시 선택해주세요.");
       }
+      // 서버가 role 정책을 최종 강제한다. 화면이 보내온 값을 그대로 믿지 않는다.
+      const allowed = allowedResearchSources(question.role);
+      const rejected = change.sourceBindingIds.filter(
+        (source) => !allowed.includes(source),
+      );
+      if (rejected.length > 0) {
+        throw new ApiError(
+          400,
+          "SOURCE_NOT_ALLOWED_FOR_ROLE",
+          `이 질문 유형에서는 사용할 수 없는 출처입니다: ${rejected.join(", ")}`,
+        );
+      }
       question.sourceBindingIds = Array.from(new Set(change.sourceBindingIds));
       question.collectionMethods = Object.fromEntries(
         question.sourceBindingIds.map((source) => [
@@ -1571,6 +1598,39 @@ function applyPlanChanges(
           defaultCollectionMethod(source),
         ]),
       );
+    } else if (change.op === "set_question_news_window") {
+      const question = next.questions.find(
+        (item) => item.questionId === change.questionId,
+      );
+      if (!question) {
+        throw new ApiError(400, "INVALID_PLAN_CHANGE", "질문 대상을 다시 선택해주세요.");
+      }
+      if (!question.sourceBindingIds.includes("NEWS")) {
+        throw new ApiError(
+          422,
+          "NEWS_SEARCH_WINDOW_INVALID",
+          "뉴스를 출처로 선택한 질문만 검색 기간을 설정할 수 있습니다.",
+        );
+      }
+      const window = normalizeNewsWindowInput({
+        startDate: change.startDate,
+        endDate: change.endDate,
+        cutoffAt: context.cutoffAt,
+      });
+      // Each question keeps its own policy so subjectPeriods stays bound to
+      // that question's period. Only the publication window is shared.
+      const base =
+        question.newsSearchPolicy ??
+        deriveNewsSearchPolicy({
+          targetYear: context.targetYear,
+          targetQuarter: context.targetQuarter,
+          cutoffAt: context.cutoffAt,
+          subjectPeriods: [question.period],
+        });
+      question.newsSearchPolicy = {
+        ...base,
+        publicationWindows: [{ purpose: "current_period", ...window }],
+      };
     } else if (change.op === "set_excel_target_included") {
       const target = next.excelTargets.find(
         (item) => item.targetId === change.targetId,
@@ -3071,9 +3131,18 @@ async function recomputeStageGate(
     conflict_id: string;
     result_id: string;
   }>(
-    `SELECT conflict_id, result_id
-     FROM validation_conflict
-     WHERE project_id = $1 AND status = 'unresolved'`,
+    // 미해결 충돌은 사용자에게 노출하지 않으므로 완료를 막을 수 있는 것은
+    // Excel 실제값 충돌뿐이다. 그 값은 workbook에 실제로 기록되므로 조용히
+    // 넘어가면 틀린 숫자가 보고서로 나간다.
+    //
+    // 가설 근거 충돌은 정성 판단이고 서로 다른 매체가 다르게 쓰는 것이 정상이다.
+    // 해당 근거는 채택되지 않고(validated value 재집계에서 CONFLICT_UNRESOLVED
+    // 제외) 나머지 근거로 질문 판정이 이뤄지므로, 완료를 막지 않는다.
+    `SELECT vc.conflict_id, vc.result_id
+     FROM validation_conflict vc
+     JOIN validation_result vr ON vr.result_id = vc.result_id
+     WHERE vc.project_id = $1 AND vc.status = 'unresolved'
+       AND vr.category = 'excel'`,
     [projectId],
   );
   const answerRows = await client.query<{
@@ -4396,6 +4465,9 @@ export async function getValidationWorkspace(
          AND validation_run_id = $2
          AND machine_status = 'passed'
          AND cardinality(evidence_ids) > 0
+         -- 미해결 충돌 결과는 사용자에게 노출하지 않는다. 대신 완료를 막지도
+         -- 않는다(recomputeStageGate 참고). 충돌 근거는 채택되지 않고 감사 기록에만
+         -- 남는다.
          AND exception_status IN ('AVAILABLE', 'CONFLICT_RESOLVED')
        ORDER BY category, question_id NULLS LAST, validated_at`,
       [projectId, workspace.validation_run_id],

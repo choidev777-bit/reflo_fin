@@ -80,3 +80,19 @@ pending_count: 0
     - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
     - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
     - `../source-react/app/globals.css`
+- id: `2026-07-27-phase4-question-card-sources-only`
+  status: applied
+  correction: STEP 04 질문 card는 `출처 · 수집 방식`만 표시하고 `확인할 근거`와 `기간 · 비교` 행은 제거한다. 두 값은 이 화면에서 편집할 수 없고 질문 본문과 중복되므로 수집·검증 입력으로만 유지한다.
+  note: 같은 원칙의 STEP 03 교정 `2026-07-27-phase3-question-metadata-visibility`를 STEP 04에 동일하게 적용한 것이다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+- id: `2026-07-27-phase4-news-window-user-editable`
+  status: applied
+  correction: 뉴스 검색 기간은 서버 고정값이 아니라 출처 설정 dialog에서 사용자가 시작일·종료일을 직접 지정한다. 종료일 상한은 보고서 기준일, 최대 기간은 240일이며 비워 두면 기존 기본값을 적용한다.
+  applied_to:
+    - `../docs/REFLO_UI_IMPLEMENTATION_DECISIONS_v1.md`
+    - `../source-react/app/_phase4/ResearchPlanScreen.tsx`
+    - `../source-react/app/globals.css`
+    - `../source-react/server/domain/research-validation.ts`
+    - `../source-react/server/infrastructure/repositories/phase4-repository.ts`

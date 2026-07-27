@@ -42,8 +42,22 @@ const inspectionActivities = proxyActivities<typeof activities>({
 
 const llmActivities = proxyActivities<typeof activities>({
   taskQueue: "llm",
-  startToCloseTimeout: "3 minutes",
+  startToCloseTimeout: "7 minutes",
   heartbeatTimeout: "30 seconds",
+  retry: {
+    initialInterval: "3 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "30 seconds",
+    maximumAttempts: 2,
+  },
+});
+
+// extractResearchCandidates는 source group마다 LLM을 순차 호출한다. 단일 호출이
+// 아니라 N회 루프이므로 llmActivities의 단건 예산으로는 중간에 잘린다.
+const researchExtractionActivities = proxyActivities<typeof activities>({
+  taskQueue: "llm",
+  startToCloseTimeout: "45 minutes",
+  heartbeatTimeout: "2 minutes",
   retry: {
     initialInterval: "3 seconds",
     backoffCoefficient: 2,
@@ -54,8 +68,10 @@ const llmActivities = proxyActivities<typeof activities>({
 
 const newsSearchActivities = proxyActivities<typeof activities>({
   taskQueue: "llm",
-  startToCloseTimeout: "6 minutes",
-  heartbeatTimeout: "30 seconds",
+  startToCloseTimeout: "7 minutes",
+  // 뉴스 검색 3건이 동시에 돌면 30초 heartbeat는 빠듯해 heartbeat timeout으로
+  // 불필요한 재시도가 걸린다(실측: 뉴스 단계 5분 47초 중 2회 재시도).
+  heartbeatTimeout: "2 minutes",
   retry: {
     initialInterval: "3 seconds",
     backoffCoefficient: 2,
@@ -76,10 +92,12 @@ const researchNetworkActivities = proxyActivities<typeof activities>({
   },
 });
 
+// validateHypothesisPipeline도 source group마다 /validation/evidence를 순차 호출한
+// 뒤 question-answers를 한 번 더 부른다. 단건 예산으로 잡으면 안 된다.
 const evidenceValidationActivities = proxyActivities<typeof activities>({
   taskQueue: "evidence-validation",
-  startToCloseTimeout: "5 minutes",
-  heartbeatTimeout: "30 seconds",
+  startToCloseTimeout: "45 minutes",
+  heartbeatTimeout: "2 minutes",
   retry: {
     initialInterval: "3 seconds",
     backoffCoefficient: 2,
@@ -332,29 +350,35 @@ export async function researchValidationWorkflow(
   try {
     if (patched("phase4-separated-hypothesis-excel-v1")) {
       const newsDiscoveryResults = await discoverNews(input);
-      const [hypothesisBundle, excelBundle] = await Promise.all([
-        researchNetworkActivities.collectHypothesisBundle(
-          input,
-          newsDiscoveryResults,
-        ),
-        researchNetworkActivities.collectOfficialExcelBundle(input),
-      ]);
+      // 공식 원문(DART/KRX/ECOS)은 한 번만 수집해 두 축이 공유한다.
+      //
+      // 이전에는 가설 축과 Excel 축이 같은 공시를 각각 수집했다. 같은 공시라도
+      // 축마다 필요한 계정 행이 달라 스냅샷 두 개가 생겼고, 게시할 때
+      // (1) 같은 sourceKey에 다른 내용이면 SOURCE_SNAPSHOT_CONFLICT,
+      // (2) key를 내용별로 나누면 서버의 Excel 규칙 재계산이 워커와 다른
+      //     스냅샷을 골라 RESEARCH_RESULT_INVALID가 났다.
+      // 수집을 하나로 합치면 워커와 서버의 재계산 입력이 같아져 둘 다 사라지고,
+      // 중복 DART 호출도 없어진다.
+      const bundle = await researchNetworkActivities.collectResearchBundle(
+        input,
+        newsDiscoveryResults,
+      );
       const researchCandidates =
-        hypothesisBundle.sources.length > 0
-          ? await llmActivities.extractResearchCandidates(
+        bundle.sources.length > 0
+          ? await researchExtractionActivities.extractResearchCandidates(
               input,
-              hypothesisBundle,
+              bundle,
             )
           : [];
       const [hypothesisResult, excelResult] = await Promise.all([
         evidenceValidationActivities.validateHypothesisPipeline(
           input,
-          hypothesisBundle,
+          bundle,
           researchCandidates,
         ),
         evidenceValidationActivities.validateOfficialExcelPipeline(
           input,
-          excelBundle,
+          bundle,
         ),
       ]);
       await evidenceValidationActivities.publishSeparatedResearchValidation(
@@ -369,10 +393,11 @@ export async function researchValidationWorkflow(
         input,
         newsDiscoveryResults,
       );
-      const researchCandidates = await llmActivities.extractResearchCandidates(
-        input,
-        bundle,
-      );
+      const researchCandidates =
+        await researchExtractionActivities.extractResearchCandidates(
+          input,
+          bundle,
+        );
       await evidenceValidationActivities.validateAndPublishResearch(
         input,
         bundle,

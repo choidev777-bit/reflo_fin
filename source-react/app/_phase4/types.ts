@@ -58,6 +58,8 @@ export type PlanQuestion = {
     indeterminate: "missing_or_conflicting_required_metric";
   };
   newsSearchPolicy?: NewsSearchPolicy;
+  /** 질문 role이 허용하는 출처. 선택지는 이 목록으로 제한된다. */
+  allowedSourceTypes?: SourceType[];
   validationErrors: string[];
 };
 

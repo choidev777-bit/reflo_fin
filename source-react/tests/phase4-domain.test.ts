@@ -3,6 +3,7 @@ import test, { mock } from "node:test";
 import {
   attachNewsSearchPolicies,
   calculateQuestionSufficiency,
+  normalizeNewsWindowInput,
   normalizePublicResearchUrl,
   validateEvidenceCandidate,
   validateResearchPlan,
@@ -272,6 +273,61 @@ test("뉴스는 사용자 URL 대신 기준일이 고정된 자동 검색 정책
       "2026-07-25T23:59:59+09:00",
     ).some((issue) => issue.code === "NEWS_SEARCH_POLICY_INVALID"),
   );
+});
+
+test("사용자가 고른 뉴스 검색 기간은 기준일 당일까지 허용한다", () => {
+  // cutoffAt is the KST end of the report cutoff date, so picking the cutoff
+  // date itself must land exactly on the boundary rather than past it.
+  const cutoffAt = new Date("2026-05-30T14:59:59.999Z").toISOString();
+  const window = normalizeNewsWindowInput({
+    startDate: "2025-12-02",
+    endDate: "2026-05-30",
+    cutoffAt,
+  });
+
+  assert.equal(window.startAt, "2025-12-02T00:00:00.000+09:00");
+  assert.equal(Date.parse(window.endAt), Date.parse(cutoffAt));
+
+  const snapshot = plan();
+  snapshot.questions[0].sourceBindingIds = ["DART", "NEWS"];
+  snapshot.questions[0].collectionMethods.NEWS = "research_agent";
+  const hydrated = attachNewsSearchPolicies(snapshot, {
+    targetYear: 2026,
+    targetQuarter: 1,
+    cutoffAt,
+  });
+  hydrated.questions[0].newsSearchPolicy = {
+    ...hydrated.questions[0].newsSearchPolicy!,
+    publicationWindows: [{ purpose: "current_period", ...window }],
+  };
+
+  assert.equal(
+    validateResearchPlan(hydrated, cutoffAt).some(
+      (issue) => issue.code === "NEWS_SEARCH_POLICY_INVALID",
+    ),
+    false,
+  );
+});
+
+test("뉴스 검색 기간은 기준일 초과·역순·240일 초과를 거절한다", () => {
+  const cutoffAt = new Date("2026-05-30T14:59:59.999Z").toISOString();
+  const rejected = [
+    { startDate: "2025-12-02", endDate: "2026-05-31" },
+    { startDate: "2026-05-30", endDate: "2026-01-01" },
+    { startDate: "2025-09-01", endDate: "2026-05-30" },
+    { startDate: "2025-12-02", endDate: "2026/05/30" },
+  ];
+
+  for (const input of rejected) {
+    assert.throws(
+      () => normalizeNewsWindowInput({ ...input, cutoffAt }),
+      (error: unknown) =>
+        error instanceof ApiError &&
+        error.status === 422 &&
+        error.code === "NEWS_SEARCH_WINDOW_INVALID",
+      `${input.startDate} ~ ${input.endDate} 는 거절되어야 한다`,
+    );
+  }
 });
 
 test("뉴스는 Excel 실제값의 권위 출처가 될 수 없다", () => {

@@ -106,6 +106,46 @@ function sourceRoleLabel(
   return "비교";
 }
 
+const NEWS_WINDOW_MAX_DAYS = 240;
+
+/** Reads a stored policy instant back into the KST date a date input shows. */
+function kstDateInput(value: string | undefined): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parsed);
+}
+
+/**
+ * Mirrors the server rules in `normalizeNewsWindowInput` so the dialog can
+ * explain a bad range before saving. The server stays authoritative.
+ */
+function newsWindowError(
+  startDate: string,
+  endDate: string,
+  cutoffDate: string,
+): string {
+  if (!startDate || !endDate) return "";
+  if (startDate > endDate) {
+    return "종료일은 시작일과 같거나 뒤여야 합니다.";
+  }
+  if (endDate > cutoffDate) {
+    return `종료일은 보고서 기준일(${cutoffDate})까지만 설정할 수 있습니다.`;
+  }
+  const span =
+    Date.parse(`${endDate}T00:00:00.000Z`) -
+    Date.parse(`${startDate}T00:00:00.000Z`);
+  if (span > NEWS_WINDOW_MAX_DAYS * 24 * 60 * 60 * 1_000) {
+    return `검색 기간은 최대 ${NEWS_WINDOW_MAX_DAYS}일입니다.`;
+  }
+  return "";
+}
+
 export function ResearchPlanScreen({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { session } = useSession();
@@ -121,6 +161,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     "bulk" | { questionId: string } | null
   >(null);
   const [sourceDraft, setSourceDraft] = useState<SourceType[]>([]);
+  const [sourceChoices, setSourceChoices] = useState<SourceType[]>([]);
+  const [newsStartDraft, setNewsStartDraft] = useState("");
+  const [newsEndDraft, setNewsEndDraft] = useState("");
   const [materialType, setMaterialType] =
     useState<ManualMaterialType>("COMPANY_IR");
   const [materialMethod, setMaterialMethod] = useState<
@@ -257,9 +300,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     question?: PlanQuestion,
   ) => {
     setSourceTarget(target);
+    const included =
+      workspace?.plan.questions.filter((item) => item.included) ?? [];
     if (target === "bulk") {
-      const included =
-        workspace?.plan.questions.filter((item) => item.included) ?? [];
       const common = workspace?.sourceOptions
         .map((option) => option.sourceType)
         .filter((source) =>
@@ -269,6 +312,28 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
     } else {
       setSourceDraft(question?.sourceBindingIds ?? []);
     }
+    // 일괄 설정은 포함된 모든 질문에 같은 출처를 쓰므로, 선택지는 각 질문이
+    // 허용하는 출처의 교집합이어야 한다. 하나라도 허용하지 않으면 서버가 거부한다.
+    setSourceChoices(
+      target === "bulk"
+        ? (workspace?.sourceOptions ?? [])
+            .map((option) => option.sourceType)
+            .filter((source) =>
+              included.every((item) =>
+                (item.allowedSourceTypes ?? []).includes(source),
+              ),
+            )
+        : (question?.allowedSourceTypes ?? []),
+    );
+    // Prefill from the edited question, then from any question that already
+    // carries a window. With neither, the fields stay blank and the server
+    // applies its derived default.
+    const seed =
+      question?.newsSearchPolicy?.publicationWindows[0] ??
+      included.find((item) => item.newsSearchPolicy)?.newsSearchPolicy
+        ?.publicationWindows[0];
+    setNewsStartDraft(kstDateInput(seed?.startAt));
+    setNewsEndDraft(kstDateInput(seed?.endAt));
   };
 
   const saveSources = async () => {
@@ -279,13 +344,32 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
             .filter((question) => question.included)
             .map((question) => question.questionId)
         : [sourceTarget.questionId];
+    const newsSelected = sourceDraft.includes("NEWS");
+    const windowSet = Boolean(newsStartDraft && newsEndDraft);
+    if (newsSelected && windowSet && newsWindowIssue) {
+      setPageError(newsWindowIssue);
+      return;
+    }
     try {
       await saveChanges(
-        questionIds.map((questionId) => ({
-          op: "set_question_sources",
-          questionId,
-          sourceBindingIds: sourceDraft,
-        })),
+        questionIds.flatMap((questionId) => [
+          // Sources must bind before the window op validates NEWS membership.
+          {
+            op: "set_question_sources",
+            questionId,
+            sourceBindingIds: sourceDraft,
+          },
+          ...(newsSelected && windowSet
+            ? [
+                {
+                  op: "set_question_news_window",
+                  questionId,
+                  startDate: newsStartDraft,
+                  endDate: newsEndDraft,
+                },
+              ]
+            : []),
+        ]),
       );
       setSourceTarget(null);
     } catch {
@@ -531,6 +615,13 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
       ),
     [workspace],
   );
+  const newsWindowIssue = workspace
+    ? newsWindowError(
+        newsStartDraft,
+        newsEndDraft,
+        workspace.project.cutoffDate,
+      )
+    : "";
 
   if (!workspace) {
     return (
@@ -803,20 +894,6 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                     </label>
                   </header>
                   <dl>
-                    <div>
-                      <dt>확인할 근거</dt>
-                      <dd>
-                        {question.collectionTargets.map((target) => (
-                          <span key={target.label}>{target.label}</span>
-                        ))}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>기간 · 비교</dt>
-                      <dd>
-                        {question.period} · {question.comparison}
-                      </dd>
-                    </div>
                     <div>
                       <dt>출처 · 수집 방식</dt>
                       <dd>
@@ -1229,7 +1306,9 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
               </button>
             </header>
             <div className="phase4-source-options">
-              {workspace.sourceOptions.map((option) => (
+              {workspace.sourceOptions
+                .filter((option) => sourceChoices.includes(option.sourceType))
+                .map((option) => (
                 <label key={option.sourceType}>
                   <input
                     type="checkbox"
@@ -1252,6 +1331,47 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
                 </label>
               ))}
             </div>
+            {sourceDraft.includes("NEWS") && (
+              <div className="phase4-news-window">
+                <div>
+                  <strong>뉴스 검색 기간</strong>
+                  <small>
+                    이 기간에 발행된 기사만 근거로 사용합니다. 최대{" "}
+                    {NEWS_WINDOW_MAX_DAYS}일, 보고서 기준일(
+                    {workspace.project.cutoffDate})까지.
+                  </small>
+                </div>
+                <div className="phase4-news-window-fields">
+                  <label>
+                    <span>시작일</span>
+                    <input
+                      type="date"
+                      value={newsStartDraft}
+                      max={workspace.project.cutoffDate}
+                      onChange={(event) =>
+                        setNewsStartDraft(event.target.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>종료일</span>
+                    <input
+                      type="date"
+                      value={newsEndDraft}
+                      max={workspace.project.cutoffDate}
+                      onChange={(event) => setNewsEndDraft(event.target.value)}
+                    />
+                  </label>
+                </div>
+                {newsWindowIssue ? (
+                  <p role="alert">{newsWindowIssue}</p>
+                ) : (
+                  !(newsStartDraft && newsEndDraft) && (
+                    <p>기간을 비워 두면 기본 기간이 적용됩니다.</p>
+                  )
+                )}
+              </div>
+            )}
             <footer>
               <button type="button" onClick={() => setSourceTarget(null)}>
                 취소
@@ -1259,7 +1379,11 @@ export function ResearchPlanScreen({ projectId }: { projectId: string }) {
               <button
                 type="button"
                 className="primary"
-                disabled={sourceDraft.length === 0 || saveState === "saving"}
+                disabled={
+                  sourceDraft.length === 0 ||
+                  saveState === "saving" ||
+                  Boolean(newsWindowIssue)
+                }
                 onClick={() => void saveSources()}
               >
                 설정 저장

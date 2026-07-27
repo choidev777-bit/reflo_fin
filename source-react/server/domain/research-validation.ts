@@ -67,6 +67,8 @@ export type ResearchPlanQuestion = {
     indeterminate: "missing_or_conflicting_required_metric";
   };
   newsSearchPolicy?: NewsSearchPolicy;
+  /** role이 허용하는 출처. 화면은 이 목록만 선택지로 보여준다. */
+  allowedSourceTypes?: ResearchSourceType[];
   validationErrors: string[];
 };
 
@@ -556,6 +558,52 @@ export function suggestedResearchSources(values: string[]): ResearchSourceType[]
   return Array.from(new Set(result.length > 0 ? result : ["DART"]));
 }
 
+export type ResearchQuestionRole =
+  | "PERFORMANCE"
+  | "DRIVER"
+  | "SEGMENT"
+  | "OUTLOOK"
+  | "VALUATION";
+
+// 질문 role별로 선택 가능한 출처를 제한한다.
+//
+// NEWS를 실적·밸류에이션 질문에서 빼는 이유: 확정 실적 수치의 권위 출처는 DART고,
+// 주가·컨센서스는 KRX/FnGuide다. 같은 숫자를 옮겨 적은 기사는 2차 인용이라
+// 근거로서 열등하고, 답이 이미 있는 질문에 뉴스 검색을 돌리면 비용과 실패면적만
+// 늘어난다. 뉴스는 공시에 나오지 않는 원인·사업부·전망 질문에서만 쓴다.
+const ALLOWED_SOURCES_BY_ROLE: Record<
+  ResearchQuestionRole,
+  ResearchSourceType[]
+> = {
+  PERFORMANCE: ["DART", "COMPANY_IR", "FNGUIDE_CONSENSUS", "USER_MATERIAL"],
+  VALUATION: ["KRX", "DART", "FNGUIDE_CONSENSUS", "COMPANY_IR", "ECOS"],
+  DRIVER: ["COMPANY_IR", "NEWS", "DART", "USER_MATERIAL"],
+  SEGMENT: ["COMPANY_IR", "NEWS", "DART", "USER_MATERIAL"],
+  OUTLOOK: ["COMPANY_IR", "NEWS", "DART", "USER_MATERIAL", "ECOS"],
+};
+
+export function allowedResearchSources(
+  role: ResearchQuestionRole,
+): ResearchSourceType[] {
+  return ALLOWED_SOURCES_BY_ROLE[role] ?? ["DART", "COMPANY_IR"];
+}
+
+/** role이 허용하지 않는 출처를 제거한다. 최소 1개는 남긴다. */
+export function restrictSourcesToRole(
+  role: ResearchQuestionRole,
+  sources: ResearchSourceType[],
+): ResearchSourceType[] {
+  const allowed = allowedResearchSources(role);
+  const kept = sources.filter((source) => allowed.includes(source));
+  return kept.length > 0 ? kept : [allowed[0]!];
+}
+
+export function usesNewsSource(
+  role: ResearchQuestionRole,
+): boolean {
+  return allowedResearchSources(role).includes("NEWS");
+}
+
 export function defaultCollectionMethod(
   sourceType: ResearchSourceType,
 ): CollectionMethod {
@@ -600,6 +648,66 @@ export function deriveNewsSearchPolicy(input: {
   };
 }
 
+const NEWS_WINDOW_MAX_DAYS = 240;
+
+function isDateOnly(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+}
+
+/**
+ * Converts the KST date-only range a user picks into the offset-qualified
+ * instants the news policy stores. The end instant is the KST end of day so a
+ * user may select the report cutoff date itself: `${date}T23:59:59.999+09:00`
+ * parses to the same instant as the stored `cutoffAt`.
+ */
+export function normalizeNewsWindowInput(input: {
+  startDate: unknown;
+  endDate: unknown;
+  cutoffAt: string;
+}): { startAt: string; endAt: string } {
+  if (!isDateOnly(input.startDate) || !isDateOnly(input.endDate)) {
+    throw new ApiError(
+      422,
+      "NEWS_SEARCH_WINDOW_INVALID",
+      "뉴스 검색 기간은 시작일과 종료일을 날짜로 입력해주세요.",
+    );
+  }
+  const startAt = `${input.startDate}T00:00:00.000+09:00`;
+  const endAt = `${input.endDate}T23:59:59.999+09:00`;
+  const start = Date.parse(startAt);
+  const end = Date.parse(endAt);
+  const cutoff = Date.parse(input.cutoffAt);
+  if (start > end) {
+    throw new ApiError(
+      422,
+      "NEWS_SEARCH_WINDOW_INVALID",
+      "뉴스 검색 종료일은 시작일과 같거나 뒤여야 합니다.",
+    );
+  }
+  if (Number.isFinite(cutoff) && end > cutoff) {
+    throw new ApiError(
+      422,
+      "NEWS_SEARCH_WINDOW_INVALID",
+      "뉴스 검색 기간은 보고서 기준일까지만 설정할 수 있습니다.",
+    );
+  }
+  if (end - start > NEWS_WINDOW_MAX_DAYS * 24 * 60 * 60 * 1_000) {
+    throw new ApiError(
+      422,
+      "NEWS_SEARCH_WINDOW_INVALID",
+      `뉴스 검색 기간은 최대 ${NEWS_WINDOW_MAX_DAYS}일까지 설정할 수 있습니다.`,
+    );
+  }
+  return { startAt, endAt };
+}
+
 export function attachNewsSearchPolicies(
   snapshot: ResearchPlanSnapshot,
   input: {
@@ -611,12 +719,31 @@ export function attachNewsSearchPolicies(
 ): ResearchPlanSnapshot {
   return {
     ...snapshot,
-    questions: snapshot.questions.map((question) => {
+    questions: snapshot.questions.map((rawQuestion) => {
+      const allowedSourceTypes = allowedResearchSources(rawQuestion.role);
+      // 저장된 snapshot에도 role 정책을 적용한다. 정책 도입 전에 만들어진 계획이
+      // 허용되지 않는 출처를 들고 있으면, 화면에서 선택지에는 없는데 선택된 상태로
+      // 남아 해제할 수 없게 된다.
+      const sourceBindingIds = restrictSourcesToRole(
+        rawQuestion.role,
+        rawQuestion.sourceBindingIds,
+      );
+      const collectionMethods = Object.fromEntries(
+        Object.entries(rawQuestion.collectionMethods).filter(([source]) =>
+          sourceBindingIds.includes(source as ResearchSourceType),
+        ),
+      ) as ResearchPlanQuestion["collectionMethods"];
+      const question = {
+        ...rawQuestion,
+        sourceBindingIds,
+        collectionMethods,
+      };
       if (!question.sourceBindingIds.includes("NEWS")) {
-        return { ...question, newsSearchPolicy: undefined };
+        return { ...question, allowedSourceTypes, newsSearchPolicy: undefined };
       }
       return {
         ...question,
+        allowedSourceTypes,
         newsSearchPolicy:
           question.newsSearchPolicy ??
           deriveNewsSearchPolicy({
@@ -663,9 +790,9 @@ function newsSearchPolicyIssue(
       !Number.isFinite(end) ||
       start > end ||
       end > cutoff ||
-      end - start > 240 * 24 * 60 * 60 * 1_000
+      end - start > NEWS_WINDOW_MAX_DAYS * 24 * 60 * 60 * 1_000
     ) {
-      return "뉴스 검색 기간은 기준일 이전 240일 안으로 설정해야 합니다.";
+      return `뉴스 검색 기간은 기준일 이전 ${NEWS_WINDOW_MAX_DAYS}일 안으로 설정해야 합니다.`;
     }
   }
   return null;
