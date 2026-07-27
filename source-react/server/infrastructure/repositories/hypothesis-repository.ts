@@ -2358,22 +2358,33 @@ export async function approveHypothesisQuestionSet(input: {
        WHERE resource_version_id = $1`,
       [current.resourceVersionId],
     );
-    const approvalId = uuidv7();
-    await client.query(
-      `INSERT INTO hypothesis_approval (
-         approval_id, project_id, question_set_id, question_set_version,
-         question_set_resource_version_id, input_revision, approved_by_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        approvalId,
-        input.projectId,
-        input.questionSetId,
-        expectedVersion,
-        current.resourceVersionId,
-        inputRevision,
-        input.userId,
-      ],
+    // 같은 버전을 다시 승인해도 unique 위반(23505)으로 500이 나면 안 된다.
+    // UI는 클릭마다 새 Idempotency-Key를 만들므로 위쪽 replay로는 잡히지 않는다.
+    // STEP 05 `validation_approval`에 적용한 것과 같은 가드.
+    const existingApproval = await client.query<{ approval_id: string }>(
+      `SELECT approval_id FROM hypothesis_approval
+       WHERE question_set_id = $1 AND question_set_version = $2
+         AND input_revision = $3`,
+      [input.questionSetId, expectedVersion, inputRevision],
     );
+    const approvalId = existingApproval.rows[0]?.approval_id ?? uuidv7();
+    if (!existingApproval.rows[0]) {
+      await client.query(
+        `INSERT INTO hypothesis_approval (
+           approval_id, project_id, question_set_id, question_set_version,
+           question_set_resource_version_id, input_revision, approved_by_user_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          approvalId,
+          input.projectId,
+          input.questionSetId,
+          expectedVersion,
+          current.resourceVersionId,
+          inputRevision,
+          input.userId,
+        ],
+      );
+    }
     const previous = await client.query<{
       stage_completion_id: string;
       completion_no: string;

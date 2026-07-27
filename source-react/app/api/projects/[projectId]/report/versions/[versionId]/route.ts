@@ -21,11 +21,11 @@ export async function PATCH(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await patchReportVersion({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
         reportVersionId: versionId,
         leaseToken: request.headers.get("X-Edit-Lease"),
-        ...body,
       }),
       {},
       requestId,

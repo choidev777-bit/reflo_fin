@@ -166,9 +166,11 @@ export function validateQuestionAnswer(
   decision: QuestionAnswerDecision,
 ): ResearchQuestionAnswer {
   const normalizedAnswer = answer.oneLineAnswer.trim();
+  // verdict는 서버의 decideQuestionAnswers가 근거로부터 결정하는 정책 권위다.
+  // 워커/활동이 계산한 verdict가 어긋나도 파이프라인을 실패시키지 않고 서버 값으로
+  // 확정한다(아래 return에서 decision.verdict 사용). 한 줄 답변·근거·숫자는 계속 검증한다.
   if (
     answer.questionId !== decision.question.questionId ||
-    answer.verdict !== decision.verdict ||
     answer.policyVersion !== decision.policyVersion
   ) {
     throw new Error("QUESTION_ANSWER_POLICY_MISMATCH");
@@ -213,6 +215,7 @@ export function validateQuestionAnswer(
   }
   return {
     ...answer,
+    verdict: decision.verdict,
     oneLineAnswer: normalizedAnswer,
     evidenceCandidateKeys: [...new Set(answer.evidenceCandidateKeys)],
     caveat: decision.caveat,
@@ -255,33 +258,18 @@ export function validateQuestionAnswerSet(input: {
     }
     answerByQuestion.set(answer.questionId, answer);
   }
-  if (
-    answerByQuestion.size !== decisions.length ||
-    decisions.some(
-      (decision) => !answerByQuestion.has(decision.question.questionId),
-    )
-  ) {
-    throw new Error("QUESTION_ANSWER_SET_MISMATCH");
-  }
   return decisions.map((decision) => {
-    const answer = answerByQuestion.get(decision.question.questionId)!;
-    if (decision.readyForSynthesis) {
-      return validateQuestionAnswer(answer, decision);
+    // 서버의 decideQuestionAnswers가 근거로부터 verdict·판단가능여부를 정하는 정책
+    // 권위다. 워커는 스키마상 indeterminate 답변을 표현할 수 없으므로, indeterminate로
+    // 판정된 질문은 워커 답변과 무관하게 정규 indeterminate 답변으로 확정한다.
+    // 판단 가능한 질문만 워커의 한 줄 답변(prose)을 검증해 사용한다.
+    if (!decision.readyForSynthesis) {
+      return indeterminateQuestionAnswer(decision);
     }
-    const expected = indeterminateQuestionAnswer(decision);
-    if (
-      answer.verdict !== expected.verdict ||
-      answer.oneLineAnswer !== expected.oneLineAnswer ||
-      answer.policyVersion !== expected.policyVersion ||
-      answer.caveat !== expected.caveat ||
-      answer.evidenceCandidateKeys.length !==
-        expected.evidenceCandidateKeys.length ||
-      answer.evidenceCandidateKeys.some(
-        (key) => !expected.evidenceCandidateKeys.includes(key),
-      )
-    ) {
-      throw new Error("QUESTION_ANSWER_POLICY_MISMATCH");
+    const answer = answerByQuestion.get(decision.question.questionId);
+    if (!answer) {
+      throw new Error("QUESTION_ANSWER_SET_MISMATCH");
     }
-    return expected;
+    return validateQuestionAnswer(answer, decision);
   });
 }

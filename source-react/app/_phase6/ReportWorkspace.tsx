@@ -158,13 +158,18 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     [],
   );
 
+  // 겹치는 로드가 순서 역전으로 최신 상태를 덮어쓰지 않도록 시퀀스 가드를 둔다.
+  // 초기 로드와 저장 실패 후 재로드(persistText catch)가 경합할 수 있다.
+  const loadSeq = useRef(0);
   const loadWorkspace = useCallback(async () => {
     if (session.status !== "authenticated") return;
+    const seq = (loadSeq.current += 1);
     setError(null);
     try {
       const data = await apiJson<ReportWorkspaceData>(
         `/api/projects/${projectId}/report`,
       );
+      if (loadSeq.current !== seq) return;
       workspaceRef.current = data;
       setWorkspace(data);
       setActivePageId((current) => current || data.pages[0]?.pageId || "");
@@ -173,9 +178,11 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         const currentExport = await apiJson<ExportJob>(
           `/api/projects/${projectId}/report/exports/${data.jobs.export.exportId}`,
         );
+        if (loadSeq.current !== seq) return;
         setExportJob(currentExport);
       }
     } catch (caught) {
+      if (loadSeq.current !== seq) return;
       setError(errorMessage(caught));
     }
   }, [projectId, session.status]);
@@ -191,6 +198,7 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (!editSession || session.status !== "authenticated") return;
+    let missed = 0;
     const timer = window.setInterval(() => {
       void apiJson<{ expiresAt: string }>(
         `/api/projects/${projectId}/report/edit-sessions/${editSession.editSessionId}/heartbeat`,
@@ -200,13 +208,22 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         },
       )
         .then((result) => {
+          missed = 0;
           setEditSession((current) =>
             current ? { ...current, expiresAt: result.expiresAt } : current,
           );
         })
         .catch((caught) => {
-          setEditSession(null);
-          setError(errorMessage(caught));
+          // Tolerate transient heartbeat failures within the lease TTL. A single
+          // network blip must not drop the user's own still-valid edit session
+          // (that would lock them out with no takeover path, since a self-owned
+          // stale lease never shows the takeover banner). Surrender only after
+          // repeated consecutive misses.
+          missed += 1;
+          if (missed >= 3) {
+            setEditSession(null);
+            setError(errorMessage(caught));
+          }
         });
     }, editSession.heartbeatSeconds * 1000);
     return () => window.clearInterval(timer);
@@ -332,7 +349,16 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         const current = workspaceRef.current;
         const currentLease = editSessionRef.current;
         const block = current ? findBlock(current, blockId) : null;
-        if (!current || !currentLease || !block) return;
+        if (!current || !currentLease || !block) {
+          // 큐에 쌓인 저장이 실행되기 전에 편집 리스가 사라지면(하트비트 3회 실패로
+          // editSession=null) 저장이 조용히 중단된다. saveState를 "saving"에 방치하면
+          // export가 영구 비활성되므로, 저장 실패로 표시해 잠금을 푼다.
+          setSaveState("error");
+          setError(
+            "편집 세션이 종료되어 변경 사항을 저장하지 못했습니다. 편집 권한을 다시 확인해주세요.",
+          );
+          return;
+        }
         try {
           const result = await apiJson<{
             reportVersionId: string;
@@ -459,36 +485,49 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     }
   };
 
+  /** 승인 버전의 PDF를 렌더링하고 완료된 preview job을 돌려준다. */
+  const renderPreview = async (
+    reportVersionId: string,
+    csrfToken: string,
+  ): Promise<PreviewJob> => {
+    let result = await apiJson<PreviewJob>(
+      `/api/projects/${projectId}/report/previews`,
+      {
+        method: "POST",
+        headers: mutationHeaders(csrfToken),
+        body: JSON.stringify({ reportVersionId }),
+      },
+    );
+    for (
+      let attempt = 0;
+      ["queued", "rendering", "verifying"].includes(result.status) &&
+      attempt < 300;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      result = await apiJson<PreviewJob>(
+        `/api/projects/${projectId}/report/previews/${result.previewId}`,
+      );
+    }
+    if (result.status !== "ready" || !result.contentUrl) {
+      throw new Error("PDF 미리보기 생성에 실패했습니다.");
+    }
+    return result;
+  };
+
   const openPreview = async () => {
     if (!workspace || session.status !== "authenticated") return;
     setPanel("preview");
     setPending("preview");
+    // 이전 버전의 미리보기가 새 버전의 것처럼 남지 않게 먼저 비운다.
+    setPreviewUrl(null);
+    setPreviewWarnings([]);
     try {
-      let result = await apiJson<PreviewJob>(
-        `/api/projects/${projectId}/report/previews`,
-        {
-          method: "POST",
-          headers: mutationHeaders(session.csrfToken),
-          body: JSON.stringify({
-            reportVersionId: workspace.report.activeVersionId,
-          }),
-        },
+      const result = await renderPreview(
+        workspace.report.activeVersionId,
+        session.csrfToken,
       );
-      for (
-        let attempt = 0;
-        ["queued", "rendering", "verifying"].includes(result.status) &&
-        attempt < 300;
-        attempt += 1
-      ) {
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-        result = await apiJson<PreviewJob>(
-          `/api/projects/${projectId}/report/previews/${result.previewId}`,
-        );
-      }
-      if (result.status !== "ready" || !result.contentUrl) {
-        throw new Error("PDF 미리보기 생성에 실패했습니다.");
-      }
-      setPreviewUrl(result.contentUrl);
+      setPreviewUrl(result.contentUrl ?? null);
       setPreviewWarnings(
         (result.warnings ?? []) as Array<{ code: string; message: string }>,
       );
@@ -711,6 +750,17 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const createExport = async (validationRunId: string) => {
     const current = workspaceRef.current;
     if (!current || session.status !== "authenticated") return;
+    // 서버는 승인 버전의 렌더된 PDF가 있어야 내보내기를 허용한다
+    // (`RENDERED_PDF_REQUIRED`). 안내된 흐름에서는 미리보기를 따로 누르지 않으므로
+    // 여기서 먼저 만든다.
+    const preview = await renderPreview(
+      current.report.activeVersionId,
+      session.csrfToken,
+    );
+    setPreviewUrl(preview.contentUrl ?? null);
+    setPreviewWarnings(
+      (preview.warnings ?? []) as Array<{ code: string; message: string }>,
+    );
     let result = await apiJson<ExportJob>(
       `/api/projects/${projectId}/report/exports`,
       {

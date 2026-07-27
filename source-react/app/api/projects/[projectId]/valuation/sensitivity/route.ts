@@ -19,9 +19,9 @@ export async function POST(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await getSensitivity({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
-        ...body,
       }),
       {},
       requestId,

@@ -1535,10 +1535,39 @@ static string EditableValueType(IXLCell cell)
     var valueType = ValueType(cell);
     if (valueType != "blank") return valueType;
     var format = cell.Style.NumberFormat.Format ?? "";
-    return string.IsNullOrWhiteSpace(format) ||
-           string.Equals(format, "General", StringComparison.OrdinalIgnoreCase)
-        ? "string"
-        : "decimal";
+    if (!string.IsNullOrWhiteSpace(format) &&
+        !string.Equals(format, "General", StringComparison.OrdinalIgnoreCase))
+    {
+        return "decimal";
+    }
+    // 빈 칸은 서식만으로 형식을 알 수 없다. roll forward가 비운 새 전망 칸은
+    // 서식이 General이어도 같은 행(실적 연도)·같은 열에 숫자가 있다. 여기서
+    // "string"을 돌려주면 EPS·BPS 같은 숫자 칸에 텍스트만 입력할 수 있게 되어
+    // 이후 수식이 #VALUE!로 깨진다.
+    return HasNumericNeighbour(cell) ? "decimal" : "string";
+}
+
+static bool HasNumericNeighbour(IXLCell cell)
+{
+    var column = cell.Address.ColumnNumber;
+    var row = cell.Address.RowNumber;
+    try
+    {
+        return cell.WorksheetRow()
+                   .CellsUsed(XLCellsUsedOptions.Contents)
+                   .Any(sibling =>
+                       sibling.Address.ColumnNumber != column &&
+                       sibling.Value.Type == XLDataType.Number) ||
+               cell.WorksheetColumn()
+                   .CellsUsed(XLCellsUsedOptions.Contents)
+                   .Any(sibling =>
+                       sibling.Address.RowNumber != row &&
+                       sibling.Value.Type == XLDataType.Number);
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static bool ChangeTypeMatches(

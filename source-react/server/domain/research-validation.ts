@@ -612,6 +612,8 @@ export function defaultCollectionMethod(
   return "research_agent";
 }
 
+const NEWS_WINDOW_MAX_DAYS = 240;
+
 export function deriveNewsSearchPolicy(input: {
   targetYear: number;
   targetQuarter: number;
@@ -624,6 +626,20 @@ export function deriveNewsSearchPolicy(input: {
     Date.UTC(input.targetYear, (quarter - 1) * 3, 1),
   );
   quarterStart.setUTCDate(quarterStart.getUTCDate() - 30);
+  // 기준일이 대상 분기보다 한참 뒤면 (분기 시작 − 30일) ~ 기준일 구간이
+  // 사용자 편집 시 적용되는 최대 기간을 넘어, 저장하려는 순간 자기 기본값이
+  // 거부된다. 시작일은 기준일에서 최대 기간만큼만 거슬러 올라간다.
+  const cutoff = new Date(input.cutoffAt);
+  if (!Number.isNaN(cutoff.getTime())) {
+    const earliest = new Date(cutoff.getTime());
+    earliest.setUTCDate(earliest.getUTCDate() - NEWS_WINDOW_MAX_DAYS);
+    if (quarterStart.getTime() < earliest.getTime()) {
+      quarterStart.setTime(earliest.getTime());
+    }
+    if (quarterStart.getTime() > cutoff.getTime()) {
+      quarterStart.setTime(cutoff.getTime());
+    }
+  }
   return {
     mode: "agent_web_search",
     publicationWindows: [
@@ -647,8 +663,6 @@ export function deriveNewsSearchPolicy(input: {
     policyVersion: NEWS_SEARCH_POLICY_VERSION,
   };
 }
-
-const NEWS_WINDOW_MAX_DAYS = 240;
 
 function isDateOnly(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {

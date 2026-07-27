@@ -18,10 +18,10 @@ export async function POST(request: NextRequest, context: Context) {
       valuationApprovalVersion: unknown;
     }>(request);
     const result = await completeValuation({
+      ...body,
       projectId: requireUuid(projectId),
       userId: session.userId,
       idempotencyKey: request.headers.get("Idempotency-Key"),
-      ...body,
     });
     return jsonResponse(result.body, { status: result.status }, requestId);
   });

@@ -23,9 +23,9 @@ export async function PUT(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await updateValuationDraft({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
-        ...body,
       }),
       {},
       requestId,

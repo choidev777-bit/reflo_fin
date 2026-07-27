@@ -12,6 +12,7 @@ import {
   evaluateMappingDataReadiness,
   type MappingState,
 } from "../../domain/mapping-data-readiness";
+import { missingValuationOutputSlots } from "../../domain/valuation-output-slots";
 import {
   detectNarrativeSections,
   detectReportHeaderFields,
@@ -2308,19 +2309,33 @@ export async function completeFilesStage(input: {
        WHERE project_id = $1 AND stage_key = 'files'`,
       [input.projectId, completionId],
     );
+    // 다음 단계는 아직 시작하지 않았을 때만 연다. 조건 없이 덮어쓰면 STEP 02로
+    // 되돌아와 `결과 확정 · 다음`을 다시 누른 사용자의 완료된 가설 단계가
+    // `in_progress`로 내려앉아 STEP 04 이후가 PREREQUISITE_INCOMPLETE로 막힌다
+    // (`hypothesis-repository.ts`의 다른 단계 전이와 같은 가드).
     await client.query(
       `UPDATE project_stage_state
        SET stage_status = 'in_progress', blocker_codes = '{}', updated_at = now()
+       WHERE project_id = $1 AND stage_key = 'hypothesis'
+         AND stage_status IN ('blocked', 'not_started')`,
+      [input.projectId],
+    );
+    const nextStage = await client.query<{ stage_status: string }>(
+      `SELECT stage_status FROM project_stage_state
        WHERE project_id = $1 AND stage_key = 'hypothesis'`,
       [input.projectId],
     );
     const updated = await client.query<{ row_version: string }>(
       `UPDATE project
-       SET row_version = row_version + 1, current_stage = 'hypothesis',
+       SET row_version = row_version + 1,
+           current_stage = CASE
+             WHEN $2::text = 'completed' THEN current_stage
+             ELSE 'hypothesis'
+           END,
            updated_at = now(), last_saved_at = now()
        WHERE project_id = $1
        RETURNING row_version`,
-      [input.projectId],
+      [input.projectId, nextStage.rows[0]?.stage_status ?? "not_started"],
     );
     const body = {
       completedStage: "files",
@@ -4195,7 +4210,15 @@ export async function commitInspectionResult(
         list.push(candidate);
         candidatesBySlot.set(candidate.slotId, list);
       }
-      const slots = payload.pdf.templateIr.pages.flatMap((page) => page.slots);
+      const templateSlots = payload.pdf.templateIr.pages.flatMap(
+        (page) => page.slots,
+      );
+      // buildMappingSet과 동일한 합성 슬롯을 mapping entry로도 남겨야
+      // STEP 05·06이 EPS·PER·목표주가 Excel 셀을 찾을 수 있다.
+      const slots = [
+        ...templateSlots,
+        ...missingValuationOutputSlots(templateSlots),
+      ];
       for (const slot of slots) {
         const entryId = uuidv7();
         const binding = bindings.get(slot.slotId);

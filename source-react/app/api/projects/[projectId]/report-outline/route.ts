@@ -36,9 +36,9 @@ export async function PATCH(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await patchReportOutline({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
-        ...body,
       }),
       {},
       requestId,

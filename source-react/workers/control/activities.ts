@@ -69,9 +69,12 @@ const controlWorkerTool = { name: "reflo-control", version: "1.0.0" };
 // 다시 이 값보다 길어야 한다 (workflows.ts의 llm·news·evidence proxy 참고).
 const PHASE4_AGENT_FETCH_TIMEOUT_MS = 330_000;
 
-// 원문 그룹/후보 배치 분석은 서로 독립이므로 동시에 돌린다. 직렬 실행에서는
-// 호출 간격 중앙값이 52초라 14회에 12분이 걸렸다.
-const PHASE4_AGENT_CONCURRENCY = 4;
+// 원문 그룹/후보 배치 분석은 서로 독립이라 원칙적으로는 동시에 돌릴 수 있다.
+// 다만 배치 1건이 약 3.2만 토큰을 요청해, 동시 4개(≈13만 토큰 버스트)면
+// 검증 단계와 겹칠 때 org의 분당 토큰 한도(200k TPM)를 순간 초과해 429 →
+// 근거 부실 → RESEARCH_RESULT_INVALID로 종료됐다. 순차(1)로 되돌려 병합 전
+// 동작을 복원한다. TPM 등급이 오르면 값을 올린다.
+const PHASE4_AGENT_CONCURRENCY = 1;
 
 /** 순서를 보존하면서 최대 limit개까지 동시에 실행한다. */
 async function mapWithConcurrency<T, R>(
@@ -1091,9 +1094,15 @@ async function callNewsSearchAgent(
   if (onlyQuestionId && questions.length !== 1) {
     throw new Error(`NEWS_SEARCH_POLICY_INVALID:${onlyQuestionId}`);
   }
+  // 뉴스 검색도 질문마다 OpenAI 호출이라, 여러 질문을 한 번에 쏘면 조사·검증
+  // 배치와 겹쳐 분당 토큰 한도를 넘길 수 있다. 다른 에이전트 루프와 같은 상한을
+  // 적용한다(per-question 경로에서는 이미 워커 동시성 2로 제한되지만, 전체 질문을
+  // 한 번에 도는 레거시 경로를 위해 여기서도 제한한다).
   const discovered = (
-    await Promise.all(
-      questions.map(async (question) => {
+    await mapWithConcurrency(
+      questions,
+      PHASE4_AGENT_CONCURRENCY,
+      async (question) => {
         const response = await runWithPeriodicActivityHeartbeat(
           "planning_news_search",
           () =>
@@ -1135,7 +1144,7 @@ async function callNewsSearchAgent(
           throw new Error("NEWS_QUERY_PLAN_INVALID");
         }
         return payload.results;
-      }),
+      },
     )
   ).flat();
   const questionById = new Map(

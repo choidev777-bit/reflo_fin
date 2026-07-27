@@ -14,6 +14,10 @@ import {
   deferredMappingResolvesRequiredSlot,
 } from "../../server/domain/mapping-policy";
 import {
+  missingValuationOutputSlots,
+  REQUIRED_VALUATION_OUTPUT_METRICS,
+} from "../../server/domain/valuation-output-slots";
+import {
   IGNORED_RANGE_CONTEXT,
   LEGACY_ISC_WORKBOOK_PROFILE,
   MAPPING_RULES,
@@ -1358,9 +1362,18 @@ export function buildMappingSet(
   workbook: WorkbookAnalysis,
   marketPrice?: MarketPriceSnapshot,
 ): { mappingSet: MappingSet; summary: MappingSummary } {
-  const slotContexts = template.pages.flatMap((page) =>
+  const templateSlotContexts = template.pages.flatMap((page) =>
     page.slots.map((slot) => ({ slot, pageNumber: page.pageNumber })),
   );
+  // 밸류에이션 출력(EPS·PER·목표주가)은 보고서 표 안에 인쇄되어 template IR
+  // scalar slot으로 감지되지 않는 경우가 많다. 누락분은 workbook 전용 합성
+  // 슬롯으로 보완해 mapping 후보 산정과 사용자 확인 대상에 포함시킨다.
+  const slotContexts = [
+    ...templateSlotContexts,
+    ...missingValuationOutputSlots(
+      templateSlotContexts.map(({ slot }) => slot),
+    ).map((slot) => ({ slot: slot as TemplateSlot, pageNumber: 0 })),
+  ];
   const slots = slotContexts.map(({ slot }) => slot);
   const candidateSeeds = slotContexts.flatMap(({ slot, pageNumber }) => {
     const deferredPolicy = deferredMappingPolicy(slot.semanticKey.metric);
@@ -1420,6 +1433,18 @@ export function buildMappingSet(
     )
     .map((slot) => slot.slotId);
   const status = unmappedRequiredSlots.length === 0 ? "confirmed" : "suggested";
+  // 밸류에이션 출력은 STEP 02를 막지 않지만, 미해결이면 STEP 06에서 계산이
+  // 불가능하므로 경고로 남겨 사용자가 매핑 화면에서 지정하도록 안내한다.
+  const unresolvedValuationOutputs = REQUIRED_VALUATION_OUTPUT_METRICS.filter(
+    (metric) =>
+      !slots.some(
+        (slot) =>
+          slot.semanticKey.metric === metric &&
+          slot.valueType !== "table" &&
+          slot.valueType !== "chart" &&
+          boundSlotIds.has(slot.slotId),
+      ),
+  );
   const mappingSetId = opaque(
     "mapset",
     `${template.templateId}:${workbook.workbookVersionId}:${workbook.structureHash}`,
@@ -1439,6 +1464,16 @@ export function buildMappingSet(
             code: "KRX_MARKET_PRICE_PENDING",
             message:
               "KRX 기준일 종가는 Excel 값으로 대체하지 않고 후속 자료 수집에서 다시 조회합니다.",
+          },
+        ]
+      : []),
+    ...(unresolvedValuationOutputs.length > 0
+      ? [
+          {
+            code: "VALUATION_OUTPUT_MAPPING_UNRESOLVED",
+            message:
+              `밸류에이션 출력 ${unresolvedValuationOutputs.join("·")}의 ` +
+              "Excel 셀을 매핑 화면에서 지정해야 PER 밸류에이션을 계산할 수 있습니다.",
           },
         ]
       : []),
