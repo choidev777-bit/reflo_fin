@@ -17,6 +17,10 @@ import {
   type ResearchCandidate,
   type ValidatedEvidence,
 } from "../../server/domain/research-validation";
+import {
+  buildResearchAgentInput,
+  compactResearchSource,
+} from "../../server/domain/research-agent-payload";
 import { createWorkerResultEnvelope } from "../../server/domain/worker-result-contract";
 import {
   collectResearchSources,
@@ -721,17 +725,19 @@ async function callResearchAgent(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        input: {
-          company: input.companyName,
-          ticker: input.ticker,
-          targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
-          cutoffAt: input.cutoffAt,
-          questions: input.questions,
-          excelTargets: input.excelTargets,
+        input: buildResearchAgentInput(
+          {
+            company: input.companyName,
+            ticker: input.ticker,
+            targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
+            cutoffAt: input.cutoffAt,
+            questions: input.questions,
+            excelTargets: input.excelTargets,
+            approvedPlanResourceVersionId:
+              input.approvedPlanResourceVersionId,
+          },
           sources,
-          approvedPlanResourceVersionId:
-            input.approvedPlanResourceVersionId,
-        },
+        ),
         profile: input.researchAgentProfile,
       }),
       signal: AbortSignal.any([
@@ -741,8 +747,12 @@ async function callResearchAgent(
     },
   );
   if (!response.ok) {
+    const responseBody = (await response.text()).slice(0, 300);
+    if (response.status === 413) {
+      throw new Error(`RESEARCH_AGENT_INPUT_LIMIT:${responseBody}`);
+    }
     throw new Error(
-      `Research Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+      `Research Agent ${response.status}: ${responseBody}`,
     );
   }
   const payload = (await response.json()) as {
@@ -888,7 +898,7 @@ async function callValidationAgent(
           ticker: input.ticker,
           targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
           cutoffAt: input.cutoffAt,
-          sources,
+          sources: sources.map(compactResearchSource),
           candidates,
         },
         profile: input.validationAgentProfile,
@@ -900,8 +910,12 @@ async function callValidationAgent(
     },
   );
   if (!response.ok) {
+    const responseBody = (await response.text()).slice(0, 300);
+    if (response.status === 413) {
+      throw new Error(`VALIDATION_AGENT_INPUT_LIMIT:${responseBody}`);
+    }
     throw new Error(
-      `Validation Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+      `Validation Agent ${response.status}: ${responseBody}`,
     );
   }
   const payload = (await response.json()) as {

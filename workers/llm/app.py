@@ -18,6 +18,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models.openai import (
     OpenAIResponsesModel,
     OpenAIResponsesModelSettings,
@@ -1116,6 +1117,11 @@ async def research_candidates(body: ResearchAgentRequest) -> dict[str, object]:
             ),
         )
         return result.output.model_dump()
+    except UsageLimitExceeded as error:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Research Agent input limit exceeded: {str(error)[:200]}",
+        ) from error
     except Exception as error:
         raise HTTPException(
             status_code=503,
@@ -1148,6 +1154,11 @@ async def validation_evidence(body: ValidationAgentRequest) -> dict[str, object]
             ),
         )
         return result.output.model_dump()
+    except UsageLimitExceeded as error:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Validation Agent input limit exceeded: {str(error)[:200]}",
+        ) from error
     except Exception as error:
         raise HTTPException(
             status_code=503,

@@ -8,6 +8,7 @@
 - 업로드 PDF 내부 뷰어와 인증 스트리밍 API
 - Phase 2→5 E2E 및 Excel/Phase 6·7에서 함께 발견된 회귀 수정
 - 실제 사용자 테스트에서 확인된 4→5단계 뉴스 수집 실패
+- 뉴스 조정 후 반복된 Research Agent 입력 한도 초과
 - 승인 계획 수정 후 발생한 5단계 리다이렉트 루프
 - 현재 검증 결과와 남은 정책·외부 API 확인 항목
 
@@ -76,6 +77,24 @@
 페이지 접근 가드는 차단된 `/process/validation` 요청을 `project.current_stage`의 canonical route로 보낸다. 그런데 canonical route도 동일한 `/process/validation`이어서 307 redirect가 반복됐다.
 
 브라우저 로그에는 짧은 시간에 `history.replaceState()`가 100회 이상 호출됐다는 `SecurityError`가 확인됐다. 서버 프로세스가 죽은 것은 아니지만 반복 요청 때문에 사용자에게는 페이지가 다운된 것처럼 보였다.
+
+### 2.4 뉴스 조정 후 Research Agent 반복 실패
+
+뉴스를 보조 출처로 낮춘 뒤 새로 시작한 실제 수집 작업은 DART 원문까지 정상 수집했지만, 후보 추출 단계에서 다시 실패했다.
+
+- 실패 위치: `extractResearchCandidates()` → LLM worker `/research/candidates`
+- 실제 LLM worker 응답: `UsageLimitExceeded`
+- 기존 사용자 오류: `RESEARCH_VALIDATION_FAILED`
+- 원인: OpenAI 계정 결제/쿼터가 아니라 애플리케이션의 `UsageLimits(input_tokens_limit=50_000)` 초과
+
+실제 대덕전자 승인 계획으로 입력 크기를 측정한 결과는 다음과 같았다.
+
+- 기존 전체 요청: 약 172KB
+- DART source snapshot: 약 132KB
+- 축소 후 전체 요청: 약 99KB
+- 축소 후 DART: 약 73KB
+
+저장·검증용 원문 snapshot 자체는 문제가 없었다. 동일 DART 데이터를 locator, 수집 메타데이터, Workbook 매핑 필드까지 중복 포함한 채 LLM에 전달한 것이 문제였다.
 
 ---
 
@@ -212,6 +231,30 @@ Phase 2→5 E2E를 실제 6페이지 fixture로 확장하면서 후속 단계에
 - required unconfirmed visual slot은 계속 차단한다.
 - E2E는 필수 P/E/P/B 매핑이 없을 때 보안 정책대로 차단되는지 확인한다.
 
+## 3.8 Research/Validation Agent 입력 축소와 오류 분류
+
+관련 파일:
+
+- `source-react/server/domain/research-agent-payload.ts`
+- `source-react/workers/control/activities.ts`
+- `source-react/workers/control/workflows.ts`
+- `workers/llm/app.py`
+- `source-react/tests/research-agent-payload.test.ts`
+
+변경 내용:
+
+- DB와 Evidence 검증에 사용하는 전체 source snapshot은 그대로 보존한다.
+- LLM 전송 시에만 별도의 최소 projection을 만든다.
+- DART는 계정명, 재무제표 구분, 당기/전기 금액, 사업연도와 REFLO 기간만 전달한다.
+- ECOS는 통계 코드·항목·단위·시점·값만 전달한다.
+- PDF는 페이지 번호와 텍스트를 유지하고 object key, parser, 해시 등 저장 메타데이터를 제외한다.
+- HTML/뉴스는 본문과 출처 확인에 필요한 메타데이터만 전달한다.
+- 질문은 포함된 질문만, Excel 대상은 포함된 대상의 지표·기간·단위·범위·권위 출처만 전달한다.
+- 후보 생성뿐 아니라 독립 Validation Agent에도 같은 source projection을 적용한다.
+- LLM worker가 `UsageLimitExceeded`를 잡아 HTTP 413과 제한 원인을 반환한다.
+- control workflow는 이를 `RESEARCH_AGENT_INPUT_LIMIT` 또는 `VALIDATION_AGENT_INPUT_LIMIT`로 구분하고 무의미한 자동 재시도를 하지 않는다.
+- 알 수 없는 예외는 기존의 일반 사용자 오류를 유지한다.
+
 ---
 
 ## 4. 테스트 및 검증 결과
@@ -225,8 +268,8 @@ npm test
 
 결과:
 
-- 전체: 188
-- 통과: 177
+- 전체: 192
+- 통과: 181
 - 실패: 0
 - 환경 의존 skip: 11
 
@@ -241,19 +284,25 @@ npm run typecheck
 
 ### 4.3 정적 검사와 빌드
 
-이전 전체 Phase 5 구현 검증에서 다음을 확인했다.
-
 - `npm run lint`: 오류 0, 기존 warning 23
-- `npx next build --webpack`: 통과
+- `REFLO_NEXT_DIST_DIR=.runtime/next-build npx next build --webpack`: 통과
 - `git diff --check`: 통과
 
-### 4.4 Excel worker
+### 4.4 LLM worker
+
+실제 컨테이너 이미지 재빌드 후 Python 계약 테스트:
+
+- 11/11 통과
+- 컨테이너 healthcheck 통과
+- E2E 종료 후 `REFLO_LLM_TEST_FIXTURE=0` 실제 API 모드로 복구
+
+### 4.5 Excel worker
 
 Docker SDK 환경에서 Excel worker 테스트:
 
 - 11/11 통과
 
-### 4.5 E2E
+### 4.6 E2E
 
 fixture 환경에서 다음 흐름을 확인했다.
 
@@ -268,8 +317,13 @@ fixture 환경에서 다음 흐름을 확인했다.
 - Excel 탭
 - Phase 6 valuation
 - Phase 7 report outline
+- 최종 PDF/XLSX export
 
-현재 실제 6페이지 fixture에는 required `12MF P/E Band`, `12MF P/B Band`를 생성할 충분한 원천 데이터가 없다. 따라서 E2E는 해당 필수 매핑이 올바르게 차단되는 것까지 확인하며, 이 fixture로 최종 export path까지 진행하지는 않는다.
+결과:
+
+- Chromium 시나리오 10/10 통과
+- 전체 수행 시간 약 2.2분
+- 최종 종단간 시나리오는 업로드부터 PDF/XLSX export까지 약 1.5분
 
 ---
 
@@ -282,22 +336,20 @@ fixture 환경에서 다음 흐름을 확인했다.
 
 확인된 실패 작업:
 
-- job ID: `019fa143-9f9c-72cd-b290-9f394b1dccc1`
-- status: `failed`
-- error: `NEWS_NO_ELIGIBLE_ARTICLES`
-- 원인 로그: 뉴스 검색 Agent `UsageLimitExceeded`
+- `019fa143-9f9c-72cd-b290-9f394b1dccc1`: `NEWS_NO_ELIGIBLE_ARTICLES`
+- `019fa158-4b1c-791b-80d8-ce756da5c12e`: 기존 일반 `RESEARCH_VALIDATION_FAILED`
+- `019fa159-b315-74bf-8565-349bffd8ee2e`: 기존 일반 `RESEARCH_VALIDATION_FAILED`
+- `019fa169-f77f-79b2-bac9-1d70cc2d3abc`: 기존 일반 `RESEARCH_VALIDATION_FAILED`
 
-잘못 남은 `project.current_stage=validation`을 로컬 DB에서 `research_plan`으로 복구했다. 이 DB 수정은 개발자 로컬 데이터 복구이며 Git 커밋에는 포함되지 않는다.
+뒤의 세 작업은 모두 후보 추출 시 로컬 Research Agent 입력 한도를 넘은 동일 장애였다. 기존 실패 job은 감사 기록으로 남고 자동 변경하지 않는다.
 
-복구 후 현재 계획 상태:
+현재 로컬 프로젝트 상태:
 
-- current plan version: 8
-- plan status: `draft`
-- validation summary: `valid=true`
-- 포함 질문 출처: `DART`, `KRX`, `ECOS`
-- 현재 단계: `research_plan`
+- `project_status`: `revalidation_required`
+- `current_stage`: `validation`
+- 최신 research job: `failed`
 
-기존 실패 job은 감사 기록으로 남는다. 사용자가 4단계에서 `다음`을 누르면 현재 plan version으로 새 job이 생성된다.
+이는 수정 전 작업의 실패 기록이 남은 상태다. 새 코드로 확인하려면 Phase 5의 `다시 시도`로 새 attempt를 시작해야 한다. fixture E2E와 실제 데이터 입력 크기 검증은 완료했지만, 실제 대덕전자 계획·원문을 외부 OpenAI API로 보내는 호출은 데이터 외부 전송에 대한 사용자 명시 승인을 기다리고 있다.
 
 ---
 
@@ -309,7 +361,7 @@ fixture 환경에서 다음 흐름을 확인했다.
    - 다른 원문이 하나라도 있으면 진행한다.
    - 모든 원문이 없으면 계속 실패한다.
 3. `project.current_stage` 복귀와 canonical fallback이 다른 재검증 흐름에 영향을 주지 않는지 확인한다.
-4. 실제 OpenAI 뉴스 검색 사용량이 복구된 환경에서 뉴스가 있는 정상 경로를 한 번 더 수동 검증한다.
+4. 사용자 명시 승인 후 실제 대덕전자 계획과 DART 원문으로 Research/Validation Agent 정상 경로를 한 번 검증한다.
 5. KRX 승인 전 환경에서 KRX 실패가 필수 KRX 대상만 차단하는지 실제 API로 확인한다.
 6. P/E·P/B band에 필요한 실제 원천 데이터와 mapping source를 확정해 최종 export E2E를 완성한다.
 
@@ -349,7 +401,8 @@ fixture 환경에서 다음 흐름을 확인했다.
 ## 8. 주의 사항
 
 - 실제 OpenAI/뉴스 provider를 사용한 최신 핫픽스 이후의 자동 재수집은 비용과 사용량 제한 때문에 수행하지 않았다.
-- 뉴스가 없는 경로와 provider 장애 fallback은 단위 테스트로 검증했다.
+- 실제 대덕전자 입력을 외부 OpenAI API에 보내는 검증은 데이터 전송에 대한 사용자 명시 승인을 기다린다.
+- 뉴스가 없는 경로와 provider 장애 fallback은 단위 테스트와 fixture E2E로 검증했다.
 - fixture 전체 E2E와 실제 외부 API 검증은 목적이 다르므로 둘을 구분해야 한다.
 - `.env.local`의 실제 API key나 비밀값은 커밋하지 않는다.
 - 로컬 DB 프로젝트 복구 SQL은 다른 환경에 그대로 적용하지 않는다.

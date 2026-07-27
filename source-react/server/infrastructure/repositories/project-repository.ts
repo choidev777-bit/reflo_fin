@@ -10,6 +10,7 @@ import {
 import type { DirectoryCompany } from "../company-directory/types";
 import { getPool } from "../database/pool";
 import {
+  canonicalProjectRoute,
   isValuationMethod,
   processRoute,
   STAGES,
@@ -1233,14 +1234,14 @@ export async function getProjectAccess(input: {
     const allowedRoutes = stages
       .filter((stage) => stage.status !== "blocked" && stage.status !== "not_started")
       .map((stage) => stage.route);
-    const currentRoute = processRoute(input.projectId, project.currentStage);
     return {
       currentStage: project.currentStage,
       allowedRoutes,
-      canonicalRoute: allowedRoutes.includes(currentRoute)
-        ? currentRoute
-        : allowedRoutes[allowedRoutes.length - 1] ??
-          processRoute(input.projectId, "setup"),
+      canonicalRoute: canonicalProjectRoute({
+        projectId: input.projectId,
+        currentStage: project.currentStage,
+        allowedRoutes,
+      }),
     };
   });
 }
