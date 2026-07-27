@@ -23,5 +23,9 @@
       <Link>Fixtures\ISC_095340_4Q25_Valuation_하나증권_12.xlsx</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\..\..\fixtures\ISC_095340_4Q25_Valuation_하나증권_12_REFLO_BRIDGE.xlsx">
+      <Link>Fixtures\ISC_095340_4Q25_Valuation_하나증권_12_REFLO_BRIDGE.xlsx</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

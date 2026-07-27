@@ -3211,6 +3211,14 @@ export function validateOutline(input: {
   return issues;
 }
 
+export function hasUnconfirmedRequiredVisualSlots(
+  visualSlots: Array<{ required: boolean; bindingStatus: string }>,
+): boolean {
+  return visualSlots.some(
+    (slot) => slot.required && slot.bindingStatus !== "confirmed",
+  );
+}
+
 export function buildReportDocument(input: {
   outline: OutlineContent;
   rating: string;

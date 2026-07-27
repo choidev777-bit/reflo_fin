@@ -15,6 +15,7 @@ import type {
   ExcelTarget,
   QuestionAnswer,
   ResultDetail,
+  ValidationResult,
   ValidationWorkbookManifest,
   ValidationWorkspace,
   WorkbookApplicationAccepted,
@@ -24,23 +25,28 @@ import type {
 function evidenceSourceUrl(
   evidence: ResultDetail["evidence"][number],
 ): string | null {
-  if (!evidence.canonicalUrl) return null;
-  if (evidence.sourceType !== "NEWS") return evidence.canonicalUrl;
-  const fragment =
-    typeof evidence.locator.textFragment === "string"
-      ? evidence.locator.textFragment
-      : evidence.quoteExact;
+  const access = evidence.sourceAccess;
+  if (!access) return null;
+  if (access.kind !== "web" || !access.textFragment) return access.openUrl;
   try {
-    const url = new URL(evidence.canonicalUrl);
-    url.hash = `:~:text=${encodeURIComponent(fragment.slice(0, 300))}`;
+    const url = new URL(access.openUrl);
+    url.hash = `:~:text=${encodeURIComponent(access.textFragment.slice(0, 300))}`;
     return url.toString();
   } catch {
-    return evidence.canonicalUrl;
+    return access.openUrl;
   }
 }
 
+function isConfirmedResult(result: ValidationResult): boolean {
+  return (
+    result.machineStatus === "passed" &&
+    !result.exceptionStatus.includes("CONFLICT") &&
+    !["REJECTED", "REINVESTIGATING"].includes(result.exceptionStatus)
+  );
+}
+
 type Category = "hypothesis" | "excel";
-type Filter = "all" | "conflict" | "complete" | "rejected";
+type Filter = "all" | "conflict" | "complete" | "rejected" | "failed";
 type DecisionAction = "REJECT" | "RESTORE" | "REINVESTIGATE";
 
 function message(error: unknown): string {
@@ -107,7 +113,7 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
   const { session } = useSession();
   const [workspace, setWorkspace] = useState<ValidationWorkspace | null>(null);
   const [category, setCategory] = useState<Category>("hypothesis");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("complete");
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(
     null,
   );
@@ -141,7 +147,8 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
         next.results.find(
           (result) =>
             result.category === "hypothesis" &&
-            result.questionId === (next.questions[0]?.questionId ?? null),
+            result.questionId === (next.questions[0]?.questionId ?? null) &&
+            isConfirmedResult(result),
         )?.resultId ?? null
       );
     });
@@ -202,14 +209,17 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
     if (
       category !== "excel" ||
       workbook ||
+      !workspace ||
+      workspace.workspace.status === "FAILED" ||
+      workspace.results.length === 0 ||
       session.status !== "authenticated" ||
       !session.csrfToken
     ) {
       return;
     }
     const prepare =
-      workspace?.workspace.status === "REVIEW_READY" ||
-      workspace?.workspace.status === "APPROVED"
+      workspace.workspace.status === "REVIEW_READY" ||
+      workspace.workspace.status === "APPROVED"
         ? apiJson(
             `/api/projects/${projectId}/validation/workbook-write-proposals`,
             {
@@ -232,7 +242,7 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
         setWorkbook(next);
         setSelectedTarget(firstTarget);
         if (firstTarget) {
-          const result = workspace?.results.find(
+          const result = workspace.results.find(
             (item) => item.targetId === firstTarget.targetId,
           );
           setSelectedResultId(result?.resultId ?? null);
@@ -270,14 +280,43 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
       ).length;
     }
     if (target === "complete") {
-      return results.filter(
-        (result) =>
-          result.machineStatus === "passed" &&
-          result.exceptionStatus === "AVAILABLE",
-      ).length;
+      return results.filter(isConfirmedResult).length;
     }
-    return results.filter((result) => result.exceptionStatus === "REJECTED")
-      .length;
+    if (target === "rejected") {
+      return results.filter((result) => result.exceptionStatus === "REJECTED")
+        .length;
+    }
+    return results.filter(
+      (result) =>
+        result.machineStatus !== "passed" &&
+        result.exceptionStatus !== "REJECTED" &&
+        !result.exceptionStatus.includes("CONFLICT"),
+    ).length;
+  };
+
+  const retryFailedJob = async () => {
+    const failedJob = workspace?.workspace.jobs.find(
+      (job) => job.operationStatus === "failed" && job.retryable,
+    );
+    if (!failedJob || !session.csrfToken) return;
+    setMutationBusy(true);
+    try {
+      await apiJson(
+        `/api/projects/${projectId}/research-jobs/${failedJob.jobId}/retry`,
+        {
+          method: "POST",
+          headers: {
+            "X-CSRF-Token": session.csrfToken,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+        },
+      );
+      await load();
+    } catch (error) {
+      setPageError(message(error));
+    } finally {
+      setMutationBusy(false);
+    }
   };
 
   const submitDecision = async () => {
@@ -539,6 +578,18 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
   const processing = ["COLLECTING", "VALIDATING"].includes(
     workspace.workspace.status,
   );
+  const failedJob = workspace.workspace.jobs.find(
+    (job) => job.operationStatus === "failed",
+  );
+  const emptyResults =
+    !processing && workspace.workspace.status !== "FAILED" &&
+    workspace.results.length === 0;
+  const workbookLoading =
+    category === "excel" &&
+    !workbook &&
+    workspace.workspace.status !== "FAILED" &&
+    workspace.results.length > 0 &&
+    !pageError;
 
   return (
     <ProcessShell
@@ -609,6 +660,50 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
             <span>{pageError}</span>
             <button type="button" onClick={() => void load()}>
               최신 결과 불러오기
+            </button>
+          </section>
+        )}
+        {workspace.workspace.status === "FAILED" && (
+          <section className="phase4-alert error phase4-validation-failure" role="alert">
+            <span>
+              <strong>자료 수집과 원문 검증을 완료하지 못했습니다.</strong>
+              <small>
+                {failedJob?.error?.message ??
+                  "자료와 출처 설정을 확인한 뒤 다시 시도해주세요."}
+              </small>
+            </span>
+            <div>
+              <button
+                type="button"
+                onClick={() => router.push(workspace.navigation.previousRoute)}
+              >
+                자료 보완하기
+              </button>
+              {failedJob?.retryable && (
+                <button
+                  type="button"
+                  disabled={mutationBusy}
+                  onClick={() => void retryFailedJob()}
+                >
+                  다시 시도
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+        {emptyResults && (
+          <section className="phase4-alert phase4-validation-empty" role="status">
+            <span>
+              <strong>검증 가능한 근거를 찾지 못했습니다.</strong>
+              <small>
+                질문과 원문은 유지되며 자료를 보완한 뒤 다시 수집할 수 있습니다.
+              </small>
+            </span>
+            <button
+              type="button"
+              onClick={() => router.push(workspace.navigation.previousRoute)}
+            >
+              자료 보완하기
             </button>
           </section>
         )}
@@ -689,7 +784,13 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                 <header className="phase4-filter-bar">
                   <strong>검증된 근거</strong>
                   <div role="group" aria-label="검증 상태 필터">
-                    {(["all", "conflict", "complete", "rejected"] as Filter[]).map(
+                    {([
+                      "complete",
+                      "conflict",
+                      "rejected",
+                      "failed",
+                      "all",
+                    ] as Filter[]).map(
                       (item) => (
                         <button
                           type="button"
@@ -704,7 +805,11 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                               ? "출처 충돌"
                               : item === "complete"
                                 ? "확인 완료"
-                                : "반려"}{" "}
+                                : item === "rejected"
+                                  ? "반려"
+                                  : item === "failed"
+                                    ? "검증 실패"
+                                    : "전체"}{" "}
                           <b>{filterCount(item)}</b>
                         </button>
                       ),
@@ -725,10 +830,13 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                           (filter === "conflict" &&
                             result.exceptionStatus.includes("CONFLICT")) ||
                           (filter === "complete" &&
-                            result.machineStatus === "passed" &&
-                            result.exceptionStatus === "AVAILABLE") ||
+                            isConfirmedResult(result)) ||
                           (filter === "rejected" &&
-                            result.exceptionStatus === "REJECTED")),
+                            result.exceptionStatus === "REJECTED") ||
+                          (filter === "failed" &&
+                            result.machineStatus !== "passed" &&
+                            result.exceptionStatus !== "REJECTED" &&
+                            !result.exceptionStatus.includes("CONFLICT"))),
                     );
                     return (
                       <section
@@ -792,7 +900,11 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                               </button>
                             ))}
                             {results.length === 0 && (
-                              <p>해당 상태 결과가 없습니다.</p>
+                              <p>
+                                {filter === "complete"
+                                  ? "확인 완료된 근거가 없습니다."
+                                  : "해당 상태 결과가 없습니다."}
+                              </p>
                             )}
                             {answer?.sufficiency === "qualified" &&
                               !answer.qualifiedAccepted && (
@@ -944,7 +1056,15 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
                   }}
                 />
               ) : (
-                <div className="phase4-empty">workbook을 불러오고 있습니다.</div>
+                <div className="phase4-empty">
+                  {workspace.workspace.status === "FAILED"
+                    ? "자료 수집 실패로 검증용 workbook을 준비하지 못했습니다."
+                    : workspace.results.length === 0
+                      ? "검증 가능한 Excel 원문이 없습니다."
+                      : workbookLoading
+                        ? "workbook을 불러오고 있습니다."
+                        : "검증용 workbook을 준비하지 못했습니다."}
+                </div>
               )}
             </section>
             <div

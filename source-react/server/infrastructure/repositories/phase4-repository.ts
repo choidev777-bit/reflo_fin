@@ -50,6 +50,7 @@ import { withTransaction } from "../database/transaction";
 import {
   objectStoreBucket,
   putImmutableObject,
+  readObjectBytes,
 } from "../object-storage/s3";
 import { inspectResearchPdf } from "../security/research-material";
 import {
@@ -1538,6 +1539,14 @@ async function replacePlanSnapshot(
       markProjectRevalidation: true,
     });
     await client.query(
+      `UPDATE project
+       SET current_stage = 'research_plan', row_version = row_version + 1,
+           updated_at = now()
+       WHERE project_id = $1
+         AND current_stage <> 'research_plan'`,
+      [input.context.projectId],
+    );
+    await client.query(
       `UPDATE validation_workspace
        SET workspace_status = 'REVIEW_BLOCKED', updated_at = now()
        WHERE project_id = $1`,
@@ -1852,7 +1861,7 @@ async function createResearchJob(
     runKind: "initial" | "reinvestigation";
     supersedesRunId?: string | null;
   },
-): Promise<{ jobId: string; runId: string }> {
+): Promise<{ jobId: string; runId: string; requestedAt: string }> {
   const jobId = uuidv7();
   const runId = uuidv7();
   const referenceIds = (input.plan.snapshot.sourceReferences ?? []).map(
@@ -1902,7 +1911,7 @@ async function createResearchJob(
     attempt: 1,
     sourceReferences,
   });
-  await client.query(
+  const createdJob = await client.query<{ requested_at: Date }>(
     `INSERT INTO workflow_job (
        job_id, project_id, job_type, temporal_workflow_id, operation_status,
        validity_status, current_phase, progress_percent, progress_mode,
@@ -1910,7 +1919,8 @@ async function createResearchJob(
      ) VALUES (
        $1, $2, $3, $4, 'queued', 'current', 'preparing', 0,
        'determinate', 0, 1, $5, $6
-     )`,
+     )
+     RETURNING requested_at`,
     [
       jobId,
       input.context.projectId,
@@ -1960,7 +1970,11 @@ async function createResearchJob(
      ) VALUES ($1, $2, 'start_workflow', $3, $4::jsonb)`,
     [uuidv7(), jobId, uuidv7(), JSON.stringify(payload)],
   );
-  return { jobId, runId };
+  return {
+    jobId,
+    runId,
+    requestedAt: createdJob.rows[0].requested_at.toISOString(),
+  };
 }
 
 export async function approveResearchPlanAndStart(input: {
@@ -2088,6 +2102,9 @@ export async function approveResearchPlanAndStart(input: {
         phase: "preparing",
         progressPercent: 0,
         retryable: false,
+        error: null,
+        requestedAt: job.requestedAt,
+        updatedAt: job.requestedAt,
         validationRoute: processRoute(input.projectId, "validation"),
       },
     };
@@ -2431,7 +2448,7 @@ async function insertSourceVersion(
   return { resourceVersionId, created: true };
 }
 
-function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
+export function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
   if (
     !payload ||
     !Array.isArray(payload.sources) ||
@@ -2454,11 +2471,14 @@ function validateWorkerPayload(payload: PhaseFourWorkerPayload): void {
       "수집된 원문이 없어 작업을 완료할 수 없습니다.",
     );
   }
-  if (payload.candidates.length === 0 || payload.evidence.length === 0) {
+  if (
+    payload.candidates.length === 0 !==
+    (payload.evidence.length === 0)
+  ) {
     throw new ApiError(
       422,
-      "RESEARCH_EVIDENCE_EMPTY",
-      "검증 가능한 Evidence가 없어 작업을 완료할 수 없습니다.",
+      "RESEARCH_RESULT_INVALID",
+      "조사 후보와 Evidence 연결을 확인해주세요.",
     );
   }
   const sourceKeys = new Set(payload.sources.map((source) => source.sourceKey));
@@ -3188,6 +3208,20 @@ export async function getValidationWorkspace(
           },
         );
       }
+      const failed = job.operationStatus === "failed";
+      const blocker = failed
+        ? {
+            code: job.error?.code ?? "RESEARCH_VALIDATION_FAILED",
+            targetId: null,
+            message:
+              job.error?.message ??
+              "자료 수집과 원문 검증을 완료하지 못했습니다.",
+          }
+        : {
+            code: "RESEARCH_IN_PROGRESS",
+            targetId: null,
+            message: "자료 수집과 독립 검증이 진행 중입니다.",
+          };
       return {
         project: {
           projectId,
@@ -3206,19 +3240,12 @@ export async function getValidationWorkspace(
           collectionRunId: job.researchRunId,
           validationRunId: null,
           validationVersion: 0,
-          status:
-            job.operationStatus === "failed" ? "FAILED" : "COLLECTING",
+          status: failed ? "FAILED" : "COLLECTING",
           cutoffAt: null,
           jobs: [job],
           stageGate: {
             canProceed: false,
-            blockers: [
-              {
-                code: "RESEARCH_IN_PROGRESS",
-                targetId: null,
-                message: "자료 수집과 독립 검증이 진행 중입니다.",
-              },
-            ],
+            blockers: [blocker],
           },
         },
         questions: [],
@@ -3296,6 +3323,24 @@ export async function getValidationWorkspace(
         [projectId, JSON.stringify(gate)],
       );
     }
+    const failedJob = job?.operationStatus === "failed" ? job : null;
+    const effectiveGate = failedJob
+      ? {
+          ...gate,
+          canProceed: false,
+          blockers: [
+            {
+              code:
+                failedJob.error?.code ?? "RESEARCH_VALIDATION_FAILED",
+              targetId: null,
+              message:
+                failedJob.error?.message ??
+                "자료 수집과 원문 검증을 완료하지 못했습니다.",
+            },
+            ...gate.blockers,
+          ],
+        }
+      : gate;
     return {
       project: {
         projectId,
@@ -3315,20 +3360,22 @@ export async function getValidationWorkspace(
         validationRunId: workspace.validation_run_id,
         validationVersion: Number(workspace.validation_version),
         status:
-          workspace.workspace_status === "APPROVED"
+          failedJob
+            ? "FAILED"
+            : workspace.workspace_status === "APPROVED"
             ? "APPROVED"
-            : gate.canProceed
+            : effectiveGate.canProceed
               ? "REVIEW_READY"
               : "REVIEW_BLOCKED",
         cutoffAt: workspace.cutoff_at.toISOString(),
         jobs: job ? [job] : [],
-        stageGate: gate,
+        stageGate: effectiveGate,
         updatedAt: workspace.updated_at.toISOString(),
       },
       questions: (
         plan.rows[0]?.plan_snapshot_json.questions ?? []
       ).filter((question) => question.included),
-      questionAnswers: gate.questions,
+      questionAnswers: effectiveGate.questions,
       results: resultRows.rows.map((row) => ({
         resultId: row.result_id,
         resultVersion: Number(row.result_version),
@@ -3415,16 +3462,22 @@ export async function getValidationResult(input: {
       canonical_url: string | null;
       published_at: Date | null;
       source_type: string;
+      artifact_id: string | null;
     }>(
       `SELECT e.evidence_id, e.evidence_version, e.source_version_id,
          e.quote_exact, e.quote_normalized, e.locator_json, e.value_original,
          e.value_normalized, e.unit, e.currency, e.period, e.scope,
          e.value_kind, e.stance, e.machine_status, e.checks_json,
          e.provenance_json, rsv.title, rsv.publisher, rsv.canonical_url,
-         rsv.published_at, rsv.source_type
+         rsv.published_at, rsv.source_type, source_artifact.artifact_id
        FROM evidence e
        JOIN research_source_version rsv
          ON rsv.resource_version_id = e.source_version_id
+       LEFT JOIN artifact source_artifact
+         ON source_artifact.project_id = e.project_id
+        AND source_artifact.object_key = rsv.artifact_object_key
+        AND source_artifact.storage_status = 'accepted'
+        AND source_artifact.deleted_at IS NULL
        WHERE e.evidence_id = ANY($1::uuid[])`,
       [result.rows[0].evidence_ids],
     );
@@ -3436,7 +3489,39 @@ export async function getValidationResult(input: {
         machineStatus: result.rows[0].machine_status,
         exceptionStatus: result.rows[0].exception_status,
       },
-      evidence: evidenceRows.rows.map((row) => ({
+      evidence: evidenceRows.rows.map((row) => {
+        const pageNumber =
+          typeof row.locator_json.pageNumber === "number" &&
+          Number.isInteger(row.locator_json.pageNumber) &&
+          row.locator_json.pageNumber > 0
+            ? row.locator_json.pageNumber
+            : null;
+        const textFragment =
+          typeof row.locator_json.textFragment === "string"
+            ? row.locator_json.textFragment
+            : row.quote_exact;
+        const sourceAccess = row.artifact_id
+          ? {
+              kind: "uploaded_pdf" as const,
+              openUrl: `/projects/${input.projectId}/evidence/${row.evidence_id}`,
+              streamUrl: `/api/projects/${input.projectId}/evidence/${row.evidence_id}/source`,
+              pageNumber,
+              textFragment,
+            }
+          : row.canonical_url
+            ? {
+                kind:
+                  row.locator_json.kind === "html"
+                    ? ("web" as const)
+                    : ("structured_api" as const),
+                openUrl: row.canonical_url,
+                streamUrl: null,
+                pageNumber: null,
+                textFragment:
+                  row.locator_json.kind === "html" ? textFragment : null,
+              }
+            : null;
+        return {
         evidenceId: row.evidence_id,
         evidenceVersion: Number(row.evidence_version),
         sourceVersionId: row.source_version_id,
@@ -3459,9 +3544,57 @@ export async function getValidationResult(input: {
         machineStatus: row.machine_status,
         checks: row.checks_json,
         provenance: row.provenance_json,
-      })),
+        sourceAccess,
+      };
+      }),
     };
   });
+}
+
+export async function getEvidenceSourceArtifact(input: {
+  projectId: string;
+  userId: string;
+  evidenceId: string;
+}): Promise<{
+  bytes: Buffer;
+  mediaType: string;
+  filename: string;
+}> {
+  const artifact = await withTransaction(async (client) => {
+    await projectContext(client, input.projectId, input.userId);
+    const result = await client.query<{
+      object_key: string;
+      media_type: string;
+      original_filename: string | null;
+    }>(
+      `SELECT artifact.object_key, artifact.media_type,
+         artifact.original_filename
+       FROM evidence
+       JOIN research_source_version source
+         ON source.resource_version_id = evidence.source_version_id
+       JOIN artifact
+         ON artifact.project_id = evidence.project_id
+        AND artifact.object_key = source.artifact_object_key
+        AND artifact.storage_status = 'accepted'
+        AND artifact.deleted_at IS NULL
+       WHERE evidence.project_id = $1 AND evidence.evidence_id = $2`,
+      [input.projectId, input.evidenceId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new ApiError(
+        404,
+        "EVIDENCE_SOURCE_NOT_FOUND",
+        "연결된 원문 파일을 찾을 수 없습니다.",
+      );
+    }
+    return row;
+  });
+  return {
+    bytes: await readObjectBytes(artifact.object_key),
+    mediaType: artifact.media_type,
+    filename: artifact.original_filename ?? "reflo-evidence.pdf",
+  };
 }
 
 export async function getEvidenceViewer(input: {
@@ -3484,14 +3617,21 @@ export async function getEvidenceViewer(input: {
       collected_at: Date;
       response_hash: string;
       collector_version: string;
+      artifact_id: string | null;
     }>(
       `SELECT e.evidence_id, e.source_version_id, e.quote_exact,
          e.locator_json, rsv.source_type, rsv.title, rsv.publisher,
          rsv.canonical_url, rsv.published_at, rsv.collected_at,
-         rsv.response_hash, rsv.collector_version
+         rsv.response_hash, rsv.collector_version,
+         source_artifact.artifact_id
        FROM evidence e
        JOIN research_source_version rsv
          ON rsv.resource_version_id = e.source_version_id
+       LEFT JOIN artifact source_artifact
+         ON source_artifact.project_id = e.project_id
+        AND source_artifact.object_key = rsv.artifact_object_key
+        AND source_artifact.storage_status = 'accepted'
+        AND source_artifact.deleted_at IS NULL
        WHERE e.project_id = $1 AND e.evidence_id = $2`,
       [input.projectId, input.evidenceId],
     );
@@ -3502,8 +3642,9 @@ export async function getEvidenceViewer(input: {
     return {
       evidenceId: row.evidence_id,
       sourceVersionId: row.source_version_id,
-      kind:
-        row.source_type === "NEWS" || row.source_type === "USER_MATERIAL"
+      kind: row.artifact_id
+        ? "uploaded_pdf"
+        : row.locator_json.kind === "html"
           ? "web"
           : "structured_api",
       title: row.title,
@@ -3513,6 +3654,33 @@ export async function getEvidenceViewer(input: {
       collectedAt: row.collected_at.toISOString(),
       quoteExact: row.quote_exact,
       locator: row.locator_json,
+      sourceAccess: row.artifact_id
+        ? {
+            kind: "uploaded_pdf",
+            openUrl: `/projects/${input.projectId}/evidence/${row.evidence_id}`,
+            streamUrl: `/api/projects/${input.projectId}/evidence/${row.evidence_id}/source`,
+            pageNumber:
+              typeof row.locator_json.pageNumber === "number"
+                ? row.locator_json.pageNumber
+                : null,
+            textFragment:
+              typeof row.locator_json.textFragment === "string"
+                ? row.locator_json.textFragment
+                : row.quote_exact,
+          }
+        : row.canonical_url
+          ? {
+              kind:
+                row.locator_json.kind === "html" ? "web" : "structured_api",
+              openUrl: row.canonical_url,
+              streamUrl: null,
+              pageNumber: null,
+              textFragment:
+                row.locator_json.kind === "html"
+                  ? row.quote_exact
+                  : null,
+            }
+          : null,
       audit: {
         responseHash: row.response_hash,
         collectorVersion: row.collector_version,

@@ -1140,30 +1140,85 @@ async function collectEcos(
   };
 }
 
-function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
+async function fixtureBundle(
+  context: ResearchCollectionContext,
+): Promise<CollectionBundle> {
   const sources: ResearchSourceSnapshot[] = [];
   const candidates: ResearchCandidate[] = [];
   const collectedAt = nowIso();
   for (const question of context.questions.filter((item) => item.included)) {
-    const quote = `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${question.metrics[0]} 관련 공식 자료가 확인되었습니다.`;
-    const source: ResearchSourceSnapshot = {
-      sourceKey: `fixture:question:${question.questionId}`,
-      sourceType: question.sourceBindingIds[0] ?? "DART",
-      title: `${context.companyName} ${question.metrics[0]} 공식 자료`,
-      publisher: question.sourceBindingIds[0] === "NEWS" ? "공개 뉴스 원문" : "공식 자료 제공기관",
-      canonicalUrl: "https://example.com/reflo-fixture-source",
-      publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
-      collectedAt,
-      responseHash: hash({ questionId: question.questionId, quote }),
-      locator: {
-        kind: "html",
+    const sourceType = question.sourceBindingIds[0] ?? "DART";
+    const uploadedReference = context.sourceReferences.find(
+      (reference) =>
+        reference.sourceType === sourceType &&
+        reference.ingestionMethod === "user_upload" &&
+        reference.objectKey,
+    );
+    let quote = `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${question.metrics[0]} 관련 공식 자료가 확인되었습니다.`;
+    let source: ResearchSourceSnapshot;
+    if (uploadedReference?.objectKey) {
+      const extracted = await extractPdfText(uploadedReference.objectKey);
+      const quotePage =
+        extracted.pages.find(
+          (page) => page.text.replace(/\s+/g, " ").trim().length >= 20,
+        ) ??
+        extracted.pages[0];
+      const quoteLine =
+        (quotePage?.text ?? "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length >= 20) ??
+        (quotePage?.text ?? "").trim();
+      quote = quoteLine.slice(0, 300) || quote;
+      source = {
+        sourceKey: `upload:${uploadedReference.referenceId}`,
+        sourceType,
+        title: uploadedReference.title,
+        publisher: uploadedReference.publisher,
+        canonicalUrl: null,
+        publishedAt: uploadedReference.publishedAt,
+        collectedAt,
+        responseHash: hash({
+          referenceId: uploadedReference.referenceId,
+          pages: extracted.pages,
+        }),
+        locator: {
+          kind: "pdf",
+          referenceId: uploadedReference.referenceId,
+          objectKey: uploadedReference.objectKey,
+          pageCount: extracted.pages.length,
+          questionIds: [question.questionId],
+        },
+        content: {
+          pages: extracted.pages,
+          parser: extracted.parser,
+          originalFilename: uploadedReference.originalFilename,
+        },
+        artifactObjectKey: uploadedReference.objectKey,
+        parserVersion: extracted.parser.version,
+        collectorVersion: "research-fixture-upload-v1",
+      };
+    } else {
+      source = {
+        sourceKey: `fixture:question:${question.questionId}`,
+        sourceType,
+        title: `${context.companyName} ${question.metrics[0]} 공식 자료`,
+        publisher:
+          sourceType === "NEWS" ? "공개 뉴스 원문" : "공식 자료 제공기관",
         canonicalUrl: "https://example.com/reflo-fixture-source",
-        textFragment: quote,
-        questionIds: [question.questionId],
-      },
-      content: { body: quote },
-      collectorVersion: "research-fixture-v1",
-    };
+        publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+        collectedAt,
+        responseHash: hash({ questionId: question.questionId, quote }),
+        locator: {
+          kind: "html",
+          canonicalUrl: "https://example.com/reflo-fixture-source",
+          textFragment: quote,
+          questionIds: [question.questionId],
+        },
+        content: { body: quote },
+        collectorVersion: "research-fixture-v1",
+      };
+    }
     sources.push(source);
     candidates.push({
       candidateKey: `candidate:${question.questionId}`,
@@ -1432,38 +1487,28 @@ export async function collectResearchSources(
     );
   }
   const collectedTypes = new Set(sources.map((source) => source.sourceType));
-  for (const sourceType of [
-    "COMPANY_IR",
-    "NEWS",
-    "USER_MATERIAL",
-  ] as const) {
+  for (const sourceType of ["COMPANY_IR", "USER_MATERIAL"] as const) {
     if (selected.has(sourceType) && !collectedTypes.has(sourceType)) {
-      throw new Error(
-        sourceType === "NEWS"
-          ? "NEWS_NO_ELIGIBLE_ARTICLES"
-          : `REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`,
-      );
+      throw new Error(`REQUIRED_SOURCE_UNAVAILABLE:${sourceType}`);
     }
   }
+  if (selected.has("NEWS") && !collectedTypes.has("NEWS")) {
+    warnings.push({
+      code: "NEWS_NO_ELIGIBLE_ARTICLES",
+      message:
+        "설정된 기간에 검증 가능한 뉴스 원문을 찾지 못해 다른 출처로 계속 진행합니다.",
+    });
+  }
   for (const question of context.questions.filter((item) => item.included)) {
-    if (
-      question.sourceBindingIds.includes("NEWS") &&
-      !sources.some(
-        (source) =>
-          source.sourceType === "NEWS" &&
-          (
-            (source.locator.questionIds as string[] | undefined) ?? []
-          ).includes(question.questionId),
-      )
-    ) {
-      throw new Error(`NEWS_NO_ELIGIBLE_ARTICLES:${question.questionId}`);
-    }
     if (
       !question.sourceBindingIds.some((sourceType) =>
         collectedTypes.has(sourceType),
       )
     ) {
-      throw new Error(`QUESTION_SOURCE_UNAVAILABLE:${question.questionId}`);
+      warnings.push({
+        code: "QUESTION_SOURCE_UNAVAILABLE",
+        message: `질문 ${question.questionId}에 사용할 원문을 수집하지 못했습니다.`,
+      });
     }
   }
   for (const target of context.excelTargets.filter(

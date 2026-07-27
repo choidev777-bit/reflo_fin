@@ -10392,6 +10392,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   cursor: pointer;
 }
 
+.phase4-validation-failure > span,
+.phase4-validation-empty > span {
+  display: grid;
+  gap: 3px;
+}
+
+.phase4-validation-failure small,
+.phase4-validation-empty small {
+  color: inherit;
+  font-size: 11px;
+}
+
+.phase4-validation-failure > div {
+  display: flex;
+  gap: 8px;
+}
+
 .phase4-purpose-tabs,
 .phase4-validation-tabs {
   border: 1px solid var(--p4-line);
@@ -11579,6 +11596,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .phase4-filter-bar button.active.rejected {
   background: var(--p4-soft);
   color: var(--p4-ink);
+}
+
+.phase4-filter-bar button.active.failed {
+  border-color: #f0c8c4;
+  background: #ffebe9;
+  color: #b53731;
 }
 
 .phase4-question-groups {

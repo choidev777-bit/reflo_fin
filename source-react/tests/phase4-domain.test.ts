@@ -256,6 +256,63 @@ test("Evidence는 원문 exact quote·기준일·기간·범위·숫자 정규�
   );
 });
 
+test("PDF Evidence는 exact quote가 있는 페이지와 text fragment를 locator에 고정한다", () => {
+  const quoteExact = "매출액은 1,200억원입니다.";
+  const source: ResearchSourceSnapshot = {
+    sourceKey: "upload:source-1",
+    sourceType: "COMPANY_IR",
+    title: "기업 IR 원문",
+    publisher: "테스트 기업",
+    canonicalUrl: null,
+    publishedAt: "2026-07-20T00:00:00Z",
+    collectedAt: "2026-07-25T00:00:00Z",
+    responseHash: "b".repeat(64),
+    locator: {
+      kind: "pdf",
+      referenceId: "reference-1",
+      objectKey: "immutable/project/research-materials/source.pdf",
+      pageCount: 2,
+    },
+    content: {
+      pages: [
+        { pageNumber: 1, text: "표지" },
+        { pageNumber: 2, text: `실적 요약\n${quoteExact}` },
+      ],
+    },
+    collectorVersion: "test-pdf-v1",
+  };
+  const candidate: ResearchCandidate = {
+    candidateKey: "candidate-pdf-1",
+    category: "hypothesis",
+    questionId: "question-1",
+    targetId: null,
+    sourceKey: source.sourceKey,
+    title: "매출액",
+    quoteExact,
+    oneLineValue: "1,200억원",
+    valueOriginal: null,
+    valueNormalized: null,
+    unit: null,
+    currency: null,
+    period: "2026년 2분기",
+    scope: "연결",
+    valueKind: null,
+    stance: "supporting",
+    required: true,
+    criticalNumeric: false,
+  };
+
+  const evidence = validateEvidenceCandidate(
+    candidate,
+    source,
+    "2026-07-25T00:00:00Z",
+  );
+
+  assert.equal(evidence.machineStatus, "passed");
+  assert.equal(evidence.locator.pageNumber, 2);
+  assert.equal(evidence.locator.textFragment, quoteExact);
+});
+
 test("뉴스 원문은 실제 기사 메타데이터와 보수적 이용 가능 시점을 추출한다", () => {
   const articleBody =
     "ISC는 신규 수주와 생산능력 확대 계획을 발표했다. ".repeat(12);
@@ -348,13 +405,16 @@ test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사�
           metrics: ["원/미국달러"],
           period: "2026년 1분기",
           comparison: "전년 동기",
-          suggestedSourceTypes: ["ECOS"],
+          suggestedSourceTypes: ["ECOS", "NEWS"],
           included: true,
           collectionTargets: [
             { label: "원/미국달러", resultTypes: ["number"] },
           ],
-          sourceBindingIds: ["ECOS"],
-          collectionMethods: { ECOS: "code_then_agent" },
+          sourceBindingIds: ["ECOS", "NEWS"],
+          collectionMethods: {
+            ECOS: "code_then_agent",
+            NEWS: "research_agent",
+          },
           validationErrors: [],
         },
       ],
@@ -372,6 +432,12 @@ test("ECOS 환율 수집은 일별 주기와 기준일 이전 최신값을 사�
       (result.sources[0]?.content.latest as { DATA_VALUE?: string })
         .DATA_VALUE,
       "1375.2",
+    );
+    assert.equal(
+      result.warnings.some(
+        (warning) => warning.code === "NEWS_NO_ELIGIBLE_ARTICLES",
+      ),
+      true,
     );
   } finally {
     mock.restoreAll();

@@ -1233,10 +1233,14 @@ export async function getProjectAccess(input: {
     const allowedRoutes = stages
       .filter((stage) => stage.status !== "blocked" && stage.status !== "not_started")
       .map((stage) => stage.route);
+    const currentRoute = processRoute(input.projectId, project.currentStage);
     return {
       currentStage: project.currentStage,
       allowedRoutes,
-      canonicalRoute: processRoute(input.projectId, project.currentStage),
+      canonicalRoute: allowedRoutes.includes(currentRoute)
+        ? currentRoute
+        : allowedRoutes[allowedRoutes.length - 1] ??
+          processRoute(input.projectId, "setup"),
     };
   });
 }

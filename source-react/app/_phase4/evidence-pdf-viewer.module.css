@@ -1,0 +1,215 @@
+.screen {
+  min-height: 100vh;
+  padding: 24px;
+  background: #f5f7f3;
+  color: #111410;
+}
+
+.header,
+.quote,
+.pagination,
+.document,
+.error {
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 24px;
+  border: 1px solid #e4e8e1;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.header small {
+  color: #75a900;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.header h1 {
+  margin: 6px 0 4px;
+  font-size: clamp(24px, 3vw, 36px);
+  line-height: 1.2;
+}
+
+.header p {
+  margin: 0;
+  color: #697066;
+  font-size: 13px;
+}
+
+.header button,
+.pagination button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid #e4e8e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #111410;
+  font: inherit;
+  font-weight: 650;
+}
+
+.header button:focus-visible,
+.pagination button:focus-visible {
+  outline: 2px solid #75a900;
+  outline-offset: 2px;
+}
+
+.quote {
+  margin-top: 16px;
+  padding: 16px 20px;
+  border: 1px solid #e4e8e1;
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  gap: 8px;
+}
+
+.quote strong {
+  color: #697066;
+  font-size: 11px;
+}
+
+.quote mark {
+  padding: 2px 4px;
+  background: #efffc5;
+  color: #111410;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pagination {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.pagination strong {
+  min-width: 96px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination button:disabled {
+  color: #8b9387;
+  cursor: not-allowed;
+}
+
+.document {
+  margin-top: 16px;
+}
+
+.page {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #e4e8e1;
+  background: #fff;
+}
+
+.page canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.textLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: clip;
+  color: transparent;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  user-select: text;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :global(span),
+.textLayer :global(br) {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  white-space: pre;
+  transform-origin: 0 0;
+  user-select: text;
+}
+
+.textLayer > :global(span),
+.textLayer :global(.markedContent) span {
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform:
+    rotate(var(--rotate))
+    scaleX(var(--scale-x))
+    scale(var(--min-font-size-inv));
+  --font-height: 0;
+  --rotate: 0deg;
+  --scale-x: 1;
+}
+
+.textLayer :global(.markedContent) {
+  display: contents;
+}
+
+.textLayer :global(span[data-evidence-highlight="true"]) {
+  border-radius: 2px;
+  background: rgba(200, 255, 61, .62);
+  box-shadow: 0 0 0 1px rgba(117, 169, 0, .3);
+}
+
+.textLayer ::selection {
+  background: rgba(200, 255, 61, .7);
+  color: transparent;
+}
+
+.loading,
+.error {
+  padding: 32px;
+  border: 1px solid #e4e8e1;
+  border-radius: 12px;
+  background: #fff;
+  color: #697066;
+  text-align: center;
+}
+
+.error {
+  display: grid;
+  gap: 8px;
+  color: #b53731;
+}
+
+@media (max-width: 640px) {
+  .screen {
+    padding: 12px;
+  }
+
+  .header {
+    padding: 16px;
+  }
+
+  .pagination {
+    gap: 8px;
+  }
+
+  .pagination button {
+    flex: 1;
+    padding-inline: 8px;
+  }
+}

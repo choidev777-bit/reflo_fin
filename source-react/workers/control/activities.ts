@@ -951,7 +951,18 @@ export async function planNewsSearch(
     30,
     "설정된 기간 안에서 실제 뉴스 원문을 검색하고 있습니다.",
   );
-  return callNewsSearchAgent(input);
+  try {
+    return await callNewsSearchAgent(input);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (
+      detail.includes("NEWS_SEARCH_PROVIDER_UNAVAILABLE") ||
+      detail.includes("NEWS_SEARCH_RATE_LIMITED")
+    ) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function collectResearchBundle(
@@ -1008,9 +1019,6 @@ export async function extractResearchCandidates(
     bundle.candidates.length > 0
       ? bundle.candidates
       : await callResearchAgent(input, bundle.sources);
-  if (researchCandidates.length === 0) {
-    throw new Error("RESEARCH_CANDIDATES_EMPTY");
-  }
   return researchCandidates;
 }
 
@@ -1030,6 +1038,7 @@ export async function validateAndPublishResearch(
     "Validation Agent와 결정적 코드가 원문을 독립 검증하고 있습니다.",
   );
   const agentValidated =
+    researchCandidates.length === 0 ||
     process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
     process.env.REFLO_LLM_TEST_FIXTURE === "1"
       ? researchCandidates
@@ -1042,9 +1051,6 @@ export async function validateAndPublishResearch(
     if (!source) throw new Error("VALIDATION_SOURCE_MISSING");
     return validateEvidenceCandidate(candidate, source, input.cutoffAt);
   });
-  if (evidence.length === 0) {
-    throw new Error("RESEARCH_EVIDENCE_EMPTY");
-  }
   await recordJobProgress(
     input.jobId,
     input.jobAttempt,

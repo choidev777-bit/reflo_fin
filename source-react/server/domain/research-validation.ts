@@ -623,7 +623,37 @@ export function validateEvidenceCandidate(
   source: ResearchSourceSnapshot,
   cutoffAt: string,
 ): ValidatedEvidence {
-  const sourceText = JSON.stringify(source.content);
+  const pages =
+    source.locator.kind === "pdf" &&
+    typeof source.content === "object" &&
+    source.content !== null &&
+    "pages" in source.content &&
+    Array.isArray(source.content.pages)
+      ? source.content.pages
+      : [];
+  const sourceText =
+    pages.length > 0
+      ? pages
+          .map((page) =>
+            typeof page === "object" &&
+            page !== null &&
+            "text" in page &&
+            typeof page.text === "string"
+              ? page.text
+              : "",
+          )
+          .join("\n")
+      : JSON.stringify(source.content);
+  const quotePage = pages.find(
+    (page): page is { pageNumber: number; text: string } =>
+      typeof page === "object" &&
+      page !== null &&
+      "pageNumber" in page &&
+      typeof page.pageNumber === "number" &&
+      "text" in page &&
+      typeof page.text === "string" &&
+      page.text.includes(candidate.quoteExact),
+  );
   const checks: ValidationCheck[] = [
     {
       code: "exact_quote",
@@ -676,9 +706,17 @@ export function validateEvidenceCandidate(
       ? "passed"
       : "failed",
     checks,
-    locator:
-      source.sourceType === "NEWS"
-        ? { ...source.locator, textFragment: candidate.quoteExact }
-        : source.locator,
+    locator: {
+      ...source.locator,
+      ...(source.locator.kind === "html" || source.sourceType === "NEWS"
+        ? { textFragment: candidate.quoteExact }
+        : {}),
+      ...(quotePage
+        ? {
+            pageNumber: quotePage.pageNumber,
+            textFragment: candidate.quoteExact,
+          }
+        : {}),
+    },
   };
 }

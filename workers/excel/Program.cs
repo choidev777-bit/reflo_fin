@@ -541,6 +541,8 @@ app.MapPost("/valuation/prepare", async (
     }
     catch (Exception error)
     {
+        Console.Error.WriteLine(
+            $"REFLO valuation prepare failed: {error}");
         var code = error is ValuationContractException contract
             ? contract.Code
             : error.Message == "REPORT_PERIOD_PLAN_INVALID"
@@ -566,8 +568,15 @@ app.MapPost("/valuation/calculate", async (
     {
         var bytes = await DownloadWorkbook(request.DownloadUrl, cancellationToken);
         var zip = ReadZipInsights(bytes);
-        using var stream = new MemoryStream(bytes);
+        var compatibleBytes =
+            WorkbookApplicationEngine.RemoveNonDataDrawingRelationships(bytes);
+        using var stream = new MemoryStream(compatibleBytes);
         using var workbook = new XLWorkbook(stream);
+        workbook.RecalculateAllFormulas();
+        var baselineFormulaErrors = ValuationFormulaErrors(workbook, zip)
+            .Select(issue =>
+                $"{issue.SheetId}:{issue.Address}:{issue.Code}")
+            .ToHashSet(StringComparer.Ordinal);
         var before = new List<ValuationAppliedCell>();
         var allowedCells = (request.AllowedCells ?? [])
             .ToDictionary(
@@ -633,16 +642,9 @@ app.MapPost("/valuation/calculate", async (
         }
 
         workbook.RecalculateAllFormulas();
-        var formulaErrors = workbook.Worksheets
-            .SelectMany(sheet => sheet.CellsUsed(XLCellsUsedOptions.All)
-                .Where(IsCalculationError)
-                .Select(cell => new
-                {
-                    sheetId = StableSheetId(zip, sheet),
-                    sheetName = sheet.Name,
-                    address = cell.Address.ToString(),
-                    code = SafeFormattedText(cell),
-                }))
+        var formulaErrors = ValuationFormulaErrors(workbook, zip)
+            .Where(issue => !baselineFormulaErrors.Contains(
+                $"{issue.SheetId}:{issue.Address}:{issue.Code}"))
             .Take(100)
             .ToArray();
         if (formulaErrors.Length > 0)
@@ -660,7 +662,10 @@ app.MapPost("/valuation/calculate", async (
 
         await using var output = new MemoryStream();
         workbook.SaveAs(output);
-        var outputBytes = output.ToArray();
+        var outputBytes =
+            WorkbookApplicationEngine.RestoreProtectedPartsFromSource(
+                output.ToArray(),
+                bytes);
         var readModel = BuildValuationReadModel(
             workbook,
             Sha(outputBytes),
@@ -1066,6 +1071,19 @@ static ValuationReadModel BuildValuationReadModel(
         outputs,
         dependencyAnalysis.Analysis);
 }
+
+static IReadOnlyList<WorkbookCalculationIssue> ValuationFormulaErrors(
+    XLWorkbook workbook,
+    ZipInsights zip) =>
+    workbook.Worksheets
+        .SelectMany(sheet => sheet.CellsUsed(XLCellsUsedOptions.All)
+            .Where(IsCalculationError)
+            .Select(cell => new WorkbookCalculationIssue(
+                StableSheetId(zip, sheet),
+                sheet.Name,
+                cell.Address.ToString() ?? "",
+                SafeFormattedText(cell))))
+        .ToArray();
 
 static string WorksheetVisibility(IXLWorksheet worksheet)
 {

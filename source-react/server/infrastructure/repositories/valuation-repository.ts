@@ -310,17 +310,24 @@ function missingRequiredCells(readModel: ReadModel) {
   );
 }
 
+export function financialStatementKind(sheetName: string): string | null {
+  const legacy = /^(12|13|14|15)_p4_/i.exec(sheetName)?.[1];
+  if (legacy) return String(Number(legacy) - 11);
+  const current = /^(15|16|17|18)_p5_/i.exec(sheetName)?.[1];
+  return current ? String(Number(current) - 14) : null;
+}
+
 function workbookPeriodHeadersCurrent(
   readModel: ReadModel,
   plan: ReportPeriodPlan,
 ): boolean {
-  const financialSheets = readModel.sheets.filter((sheet) =>
-    /^(?:12|13|14|15)_p4_/i.test(sheet.name),
+  const financialSheets = readModel.sheets.filter(
+    (sheet) => financialStatementKind(sheet.name) !== null,
   );
   const statementKinds = new Set(
     financialSheets.flatMap((sheet) => {
-      const match = /^(12|13|14|15)_p4_/i.exec(sheet.name);
-      return match?.[1] ? [match[1]] : [];
+      const kind = financialStatementKind(sheet.name);
+      return kind ? [kind] : [];
     }),
   );
   if (
@@ -375,6 +382,15 @@ function previousRowAddress(address: string): string | null {
   const match = /^([A-Z]{1,3})([1-9]\d{0,6})$/.exec(address);
   if (!match || Number(match[2]) <= 1) return null;
   return `${match[1]}${Number(match[2]) - 1}`;
+}
+
+export function targetPerModeAddress(formula: string | null): string | null {
+  const match = formula
+    ? /IF\(\s*\$?([A-Z]{1,3})\$?([1-9]\d{0,6})\s*=/i.exec(formula)
+    : null;
+  return match?.[1] && match[2]
+    ? `${match[1].toUpperCase()}${match[2]}`
+    : null;
 }
 
 function columnNumber(value: string): number {
@@ -2233,11 +2249,9 @@ export async function updateValuationDraft(input: {
         cell.address === targetInputAddress &&
         (cell.valueType === "decimal" || cell.valueType === "integer"),
     );
-    const modeAddress = targetPerOutput?.formula
-      ? /IF\(\s*([A-Z]{1,3}[1-9]\d{0,6})\s*=/i.exec(
-          targetPerOutput.formula,
-        )?.[1]?.toUpperCase()
-      : null;
+    const modeAddress = targetPerModeAddress(
+      targetPerOutput?.formula ?? null,
+    );
     const modeCell = state.readModel.editableCells.find(
       (cell) =>
         cell.sheetId === targetPerBinding?.sheetId &&

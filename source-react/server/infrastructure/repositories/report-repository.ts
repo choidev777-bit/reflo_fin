@@ -15,6 +15,7 @@ import {
   buildReportDocument,
   compactReportMaterializations,
   generatedBandBindingsFromBridge,
+  hasUnconfirmedRequiredVisualSlots,
   hydrateReportMaterializations,
   materializeReportBindings,
   normalizeOutlineContent,
@@ -2042,7 +2043,7 @@ export async function reviewReportOutlinePage(input: {
         "필수 작성 방향을 모두 입력해주세요.",
       );
     }
-    if (page.visualSlots.some((slot) => slot.bindingStatus !== "confirmed")) {
+    if (hasUnconfirmedRequiredVisualSlots(page.visualSlots)) {
       throw new ApiError(
         422,
         "PAGE_OUTLINE_INVALID",

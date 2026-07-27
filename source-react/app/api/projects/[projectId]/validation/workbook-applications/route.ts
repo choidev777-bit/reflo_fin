@@ -6,6 +6,7 @@ import {
 } from "@/server/http/request";
 import { jsonResponse, withApiErrors } from "@/server/http/response";
 import { createValidationWorkbookApplication } from "@/server/infrastructure/repositories/workbook-application-repository";
+import { kickOutboxDispatcher } from "@/server/infrastructure/temporal/client";
 
 type Context = { params: Promise<{ projectId: string }> };
 
@@ -33,6 +34,7 @@ export async function POST(
       sourceSnapshotId: body.sourceSnapshotId,
       sourceFingerprint: body.sourceFingerprint,
     });
+    kickOutboxDispatcher();
     return jsonResponse(result.body, { status: result.status }, requestId);
   });
 }
