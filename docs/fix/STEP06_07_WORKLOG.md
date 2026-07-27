@@ -444,3 +444,41 @@ IF($C$30="Peer 평균 P/E",$C$41,IF($C$30="보고서 원문 P/E",$C$32,$C$31))
 - `takeoverReportEditSession`이 잘못된 sessionId로도 유효한 lease를 만료시킴
 - STEP 04 `출처 일괄 설정`이 개별 설정을 확인 없이 덮어씀
 - `PdfPreview`의 렌더 task 취소 누락(빠른 zoom 시 미리보기 고착)
+
+## 6.1 origin/workspace-dev 병합 안내 (2026-07-28)
+
+이 작업은 `origin/main`(`eeec669`)에 정렬된 상태에서 진행했다. 그런데
+`origin/workspace-dev`는 **main의 마지막 두 커밋(`ef6b711`, `eeec669`)을 아직
+갖고 있지 않다**(`3f817ff`에서 그 이전 main을 병합함). 그래서 그대로 병합하면
+STEP 01–04 연구 파이프라인에서 충돌이 난다.
+
+병합을 시도해 본 결과 충돌은 11개 파일 / 30 hunk였고, 그중 **STEP 06–07 영역
+8 hunk는 아래처럼 확정했다**. 남은 STEP 01–04 영역 17 hunk는 해당 코드를 실제로
+돌려 확인할 수 없어 밀어 넣지 않고 이 브랜치를 따로 올렸다.
+
+브랜치: `fix/step06-07-e2e-20260728`
+
+### 확정한 해소 (참고용)
+
+| 파일 | 결정 |
+|---|---|
+| `project-repository.ts` | 팀원의 `canonicalProjectRoute` 채택(같은 결함을 같은 방식으로 고침). 내 인라인 버전 제거 |
+| `report-repository.ts` `reviewReportOutlinePage` | 팀원의 `hasUnconfirmedRequiredVisualSlots` 호출 유지 + 헬퍼 본문에 `invalid`·지연 매핑 조건 추가 |
+| `valuation-repository.ts` | 내 `targetPerFormulaCells`(절대 참조·문자열 리터럴 처리 + 직접 입력 셀까지) 유지, 팀원의 `targetPerModeAddress`는 얇은 래퍼로 남겨 기존 테스트 유지 |
+| `worker-result-contract.ts` | 팀원 것 채택(진단 메시지가 더 낫고 전용 테스트 있음) |
+| `adapters.ts` | main 것 채택(필수 원문 미확보를 예외 대신 경고로 처리하는 최신 동작) |
+| `workbook-applications/route.ts` | 주석만 차이. 내 주석 유지 |
+| `research-validation.ts` | 팀원 것 채택(evidence locator 재작성) |
+| `WorkbookRollForwardEngineTests.cs` | 양쪽 테스트 모두 유지(추가 충돌) |
+
+### 남은 STEP 01–04 충돌 (팀원 확인 필요)
+
+`activities.ts`(4) · `phase4-repository.ts`(7) · `ValidationScreen.tsx`(6).
+
+세 파일 모두 **main 쪽 변경량이 압도적으로 크다**
+(예: `phase4-repository.ts`는 main 1,585줄 추가 vs 이 브랜치 195줄 추가).
+즉 실제로 필요한 작업은 "내 변경을 얹기"가 아니라
+**`origin/main`을 `workspace-dev`에 먼저 병합**하는 것이고, 그때
+`buildResearchAgentInput`·뉴스 provider 예외 허용 같은 팀원 신규 코드를
+main의 새 기반 위에 올리면 된다. 그 뒤 이 브랜치를 병합하면 STEP 06–07 쪽
+충돌은 위 표대로만 처리하면 된다.
