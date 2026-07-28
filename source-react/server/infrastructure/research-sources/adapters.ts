@@ -32,6 +32,22 @@ import {
   demoModeEnabled,
   scriptedResearchEnabled,
 } from "../../domain/demo-mode";
+import {
+  DEMO_COMPANY,
+  DEMO_FILINGS,
+  DEMO_IR_URL,
+  Q1_2026_NET_INCOME,
+  Q1_2026_OPERATING_INCOME,
+  Q1_2026_REVENUE,
+  dartFilingUrl,
+  demoAmountForAccount,
+  demoDartAccount,
+  demoDartStatementHtml,
+  demoDartSummary,
+  demoFilingForPeriod,
+  demoIrQuote,
+  demoIrSummary,
+} from "../../domain/demo-research-fixture";
 
 export type ResearchMaterialInput = ResearchSourceReference & {
   objectKey: string | null;
@@ -1657,6 +1673,160 @@ async function collectEcos(
   };
 }
 
+type DemoQuestionSource = {
+  source: ResearchSourceSnapshot;
+  quote: string;
+  title: string;
+  oneLineValue: string;
+  valueOriginal: string | null;
+  valueNormalized: string | null;
+  unit: string | null;
+  currency: string | null;
+  valueKind: string | null;
+};
+
+/**
+ * 시연용 DART 공시 근거.
+ *
+ * 실제 2026년 1분기 분기보고서(접수번호 20260514001471)의 연결 손익계산서
+ * 값을 그대로 쓴다. `rows`가 있어야 STEP 05가 계정·기간·정규화 값을 붙일 수
+ * 있고, `originalStatements`가 있어야 공시 원문 표가 렌더된다. 둘 중 하나라도
+ * 없으면 "원문 표가 보관되어 있지 않습니다" 경고만 남는다.
+ */
+function demoDartQuestionSource(
+  context: ResearchCollectionContext,
+  question: ResearchPlanQuestion,
+  collectedAt: string,
+): DemoQuestionSource {
+  const filing = DEMO_FILINGS.quarter1_2026;
+  const account = demoDartAccount(question.role);
+  const accounts = [
+    Q1_2026_REVENUE,
+    Q1_2026_OPERATING_INCOME,
+    Q1_2026_NET_INCOME,
+  ];
+  const currentLabel = `제 7 기 1분기`;
+  const priorLabel = `제 6 기 1분기`;
+  const rows = accounts.map((item) => ({
+    rcept_no: filing.receiptNumber,
+    reprt_code: filing.reportCode,
+    bsns_year: String(filing.businessYear),
+    corp_name: DEMO_COMPANY.corpName,
+    account_id: item.accountId,
+    account_nm: item.accountName,
+    fs_div: "CFS",
+    fs_nm: "연결재무제표",
+    sj_div: "CIS",
+    sj_nm: "포괄손익계산서",
+    thstrm_nm: currentLabel,
+    thstrm_amount: item.amount,
+    frmtrm_nm: priorLabel,
+    frmtrm_amount: item.priorAmount,
+    currency: "KRW",
+  }));
+  const canonicalUrl = dartFilingUrl(filing.receiptNumber);
+  return {
+    quote: account.amount,
+    title: account.accountName,
+    oneLineValue: demoDartSummary(question.role),
+    valueOriginal: account.amount,
+    valueNormalized: account.amount,
+    unit: "원",
+    currency: "KRW",
+    valueKind: "actual",
+    source: {
+      sourceKey: "",
+      sourceType: "DART",
+      title: `${DEMO_COMPANY.corpName} ${filing.filingName} 연결 포괄손익계산서`,
+      publisher: "금융감독원 전자공시시스템",
+      canonicalUrl,
+      publishedAt: filing.publishedAt,
+      collectedAt,
+      responseHash: hash({ receiptNumber: filing.receiptNumber, rows }),
+      locator: {
+        kind: "structured_api",
+        endpoint: "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json",
+        rceptNo: filing.receiptNumber,
+        canonicalUrl,
+        questionIds: [question.questionId],
+      },
+      content: {
+        report: {
+          corpCode: context.corpCode ?? DEMO_COMPANY.corpCode,
+          businessYear: filing.businessYear,
+          quarter: filing.quarter,
+          reportCode: filing.reportCode,
+          receiptNumber: filing.receiptNumber,
+          publishedAt: filing.publishedAt,
+        },
+        rows,
+        originalStatements: [
+          {
+            scopeCode: "CFS",
+            statementCode: "CIS",
+            title: "연결 포괄손익계산서",
+            viewerUrl: canonicalUrl,
+            parameters: {
+              receiptNumber: filing.receiptNumber,
+              documentNumber: "",
+              elementId: "",
+              offset: "",
+              length: "",
+              dtd: "",
+              tocNumber: "",
+            },
+            html: demoDartStatementHtml({
+              periodLabel: `${filing.periodLabel} (2026.01.01 ~ 2026.03.31)`,
+              currentLabel,
+              priorLabel,
+              accounts,
+            }),
+            responseHash: hash({ statement: "CIS", year: filing.businessYear }),
+          },
+        ],
+      },
+      collectorVersion: "research-demo-v1",
+    },
+  };
+}
+
+/** 시연용 기업 IR 근거. 업로드하는 IR 자료의 실제 서술을 인용한다. */
+function demoIrQuestionSource(
+  context: ResearchCollectionContext,
+  question: ResearchPlanQuestion,
+  collectedAt: string,
+): DemoQuestionSource {
+  const quote = demoIrQuote(question.role);
+  return {
+    quote,
+    title: `${DEMO_COMPANY.corpName} 2026년 1분기 경영실적`,
+    oneLineValue: demoIrSummary(question.role),
+    valueOriginal: null,
+    valueNormalized: null,
+    unit: null,
+    currency: null,
+    valueKind: null,
+    source: {
+      sourceKey: "",
+      sourceType: "COMPANY_IR",
+      title: `${DEMO_COMPANY.corpName} 2026년 1분기 경영실적 발표자료`,
+      publisher: `${DEMO_COMPANY.corpName} IR`,
+      canonicalUrl: DEMO_IR_URL,
+      publishedAt: "2026-04-30T09:00:00+09:00",
+      collectedAt,
+      responseHash: hash({ questionId: question.questionId, quote }),
+      locator: {
+        kind: "html",
+        canonicalUrl: DEMO_IR_URL,
+        textFragment: quote,
+        questionIds: [question.questionId],
+      },
+      content: { body: quote },
+      collectorVersion: "research-demo-v1",
+    },
+  };
+}
+
 /**
  * 고정 응답 원문에 붙일 출처 표기.
  *
@@ -1738,36 +1908,50 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       : [question.sourceBindingIds[0] ?? "DART"];
     for (const sourceType of questionSourceTypes) {
       const label = fixtureSourceLabel(sourceType);
-      const quote = `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${metric} 관련 내용이 ${label.evidencePhrase}에서 확인되었습니다.`;
+      // 시연에서는 실제 DART 공시 값과 IR 서술을 그대로 쓴다. 자리표시 문장만
+      // 보여주면 근거를 눌렀을 때 값이 비어 있어 제품이 동작하지 않는 것처럼
+      // 보인다. 테스트 fixture는 기업·분기가 달라 이 데이터를 쓸 수 없으므로
+      // 기존 문구를 유지한다.
+      const demo =
+        demoModeEnabled() && sourceType === "DART"
+          ? demoDartQuestionSource(context, question, collectedAt)
+          : demoModeEnabled() && sourceType === "COMPANY_IR"
+            ? demoIrQuestionSource(context, question, collectedAt)
+            : null;
+      const quote =
+        demo?.quote ??
+        `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${metric} 관련 내용이 ${label.evidencePhrase}에서 확인되었습니다.`;
       const sourceKey = `fixture:question:${question.questionId}:${sourceType}`;
-      const source: ResearchSourceSnapshot = {
-        sourceKey,
-        sourceType,
-        title: `${context.companyName} ${metric} ${label.titleSuffix}`,
-        publisher: label.publisher,
-        canonicalUrl: label.canonicalUrl,
-        publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
-        collectedAt,
-        responseHash: hash({
-          questionId: question.questionId,
-          sourceType,
-          quote,
-        }),
-        locator: {
-          kind: "html",
-          canonicalUrl: label.canonicalUrl,
-          textFragment: quote,
-          questionIds: [question.questionId],
-        },
-        // DART 원문은 검증에서 content.report.corpCode가 프로젝트 기업코드와
-        // 같은지 본다(sourceMatchesResearchIdentity). 이 필드가 없으면 인용문이
-        // 원문에 그대로 있어도 company 검사에서 걸러져 근거가 0건이 된다.
-        content:
-          sourceType === "DART" && context.corpCode
-            ? { body: quote, report: { corpCode: context.corpCode } }
-            : { body: quote },
-        collectorVersion: "research-fixture-v1",
-      };
+      const source: ResearchSourceSnapshot = demo
+        ? { ...demo.source, sourceKey }
+        : {
+            sourceKey,
+            sourceType,
+            title: `${context.companyName} ${metric} ${label.titleSuffix}`,
+            publisher: label.publisher,
+            canonicalUrl: label.canonicalUrl,
+            publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+            collectedAt,
+            responseHash: hash({
+              questionId: question.questionId,
+              sourceType,
+              quote,
+            }),
+            locator: {
+              kind: "html",
+              canonicalUrl: label.canonicalUrl,
+              textFragment: quote,
+              questionIds: [question.questionId],
+            },
+            // DART 원문은 검증에서 content.report.corpCode가 프로젝트 기업코드와
+            // 같은지 본다(sourceMatchesResearchIdentity). 이 필드가 없으면 인용문이
+            // 원문에 그대로 있어도 company 검사에서 걸러져 근거가 0건이 된다.
+            content:
+              sourceType === "DART" && context.corpCode
+                ? { body: quote, report: { corpCode: context.corpCode } }
+                : { body: quote },
+            collectorVersion: "research-fixture-v1",
+          };
       sources.push(source);
       candidates.push({
         candidateKey: `candidate:${question.questionId}:${sourceType}`,
@@ -1776,16 +1960,18 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
         targetId: null,
         metricId: metric,
         sourceKey,
-        title: metric,
+        title: demo?.title ?? metric,
         quoteExact: quote,
-        oneLineValue: `${metric} 관련 근거를 ${label.evidencePhrase}에서 확인했습니다.`,
-        valueOriginal: null,
-        valueNormalized: null,
-        unit: null,
-        currency: null,
+        oneLineValue:
+          demo?.oneLineValue ??
+          `${metric} 관련 근거를 ${label.evidencePhrase}에서 확인했습니다.`,
+        valueOriginal: demo?.valueOriginal ?? null,
+        valueNormalized: demo?.valueNormalized ?? null,
+        unit: demo?.unit ?? null,
+        currency: demo?.currency ?? null,
         period: question.period,
         scope: "연결",
-        valueKind: null,
+        valueKind: demo?.valueKind ?? null,
         stance: "supporting",
         required: true,
         criticalNumeric: false,
@@ -1829,36 +2015,51 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
   }
   for (const period of dartPeriods.values()) {
     const code = reportCode(period.quarter);
+    // 합성 접수번호(YYYYQQ15000001)는 형식이 실제 DART 접수번호와 같아 뷰어가
+    // 다른 회사의 공시를 열어버린다. 시연에서는 대덕전자의 실제 접수번호를 쓴다.
+    const demoFiling = demoModeEnabled()
+      ? demoFilingForPeriod(period.year, period.quarter)
+      : null;
     const receiptNumber =
+      demoFiling?.receiptNumber ??
       `${period.year}${String(period.quarter).padStart(2, "0")}15000001`;
+    const publishedAt =
+      demoFiling?.publishedAt ?? `${context.cutoffDate}T09:00:00+09:00`;
     const rows = period.targets.flatMap((target, index) => {
       const rule = resolveDartAccountRule(
         target.dartRuleId ?? target.metricId ?? target.metric,
       );
       if (!rule) return [];
+      const accountName = rule.allowedAccountNames[0] ?? "";
+      const demoAmount = demoFiling
+        ? demoAmountForAccount(rule.allowedAccountIds[0], accountName)
+        : null;
       return [{
         rcept_no: receiptNumber,
         reprt_code: code,
         bsns_year: String(period.year),
         corp_name: context.companyName,
         account_id: rule.allowedAccountIds[0],
-        account_nm: rule.allowedAccountNames[0],
+        account_nm: accountName,
         fs_div: target.scopeCode ?? "CFS",
         fs_nm: "연결재무제표",
         sj_div: rule.allowedStatements[0],
         sj_nm: "재무제표",
         thstrm_nm: `${period.year}년 ${period.quarter}분기`,
-        thstrm_amount: String(100_000_000_000 + index * 10_000_000_000),
+        thstrm_amount:
+          demoAmount ?? String(100_000_000_000 + index * 10_000_000_000),
         currency: "KRW",
       }];
     });
     sources.push({
       sourceKey: `fixture:dart:${period.year}:${code}`,
       sourceType: "DART",
-      title: `${context.companyName} ${period.year}년 ${period.quarter}분기 재무제표`,
+      title: demoFiling
+        ? `${context.companyName} ${demoFiling.filingName} 연결재무제표`
+        : `${context.companyName} ${period.year}년 ${period.quarter}분기 재무제표`,
       publisher: "금융감독원 전자공시시스템",
       canonicalUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`,
-      publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+      publishedAt,
       collectedAt,
       responseHash: hash(rows),
       locator: {
@@ -1868,14 +2069,48 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       },
       content: {
         report: {
-          corpCode: context.corpCode ?? "fixture",
+          corpCode: context.corpCode ?? (demoFiling ? DEMO_COMPANY.corpCode : "fixture"),
           businessYear: period.year,
           quarter: period.quarter,
           reportCode: code,
           receiptNumber,
-          publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+          publishedAt,
         },
         rows,
+        // 원문 표가 없으면 STEP 05가 "원문 표가 보관되어 있지 않습니다"만 띄운다.
+        ...(demoFiling
+          ? {
+              originalStatements: [
+                {
+                  scopeCode: "CFS",
+                  statementCode: "CIS",
+                  title: "연결 포괄손익계산서",
+                  viewerUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`,
+                  parameters: {
+                    receiptNumber,
+                    documentNumber: "",
+                    elementId: "",
+                    offset: "",
+                    length: "",
+                    dtd: "",
+                    tocNumber: "",
+                  },
+                  html: demoDartStatementHtml({
+                    periodLabel: demoFiling.periodLabel,
+                    currentLabel: `${period.year}년 ${period.quarter}분기`,
+                    priorLabel: `${period.year - 1}년 ${period.quarter}분기`,
+                    accounts: rows.map((row) => ({
+                      accountId: String(row.account_id ?? ""),
+                      accountName: String(row.account_nm ?? ""),
+                      amount: String(row.thstrm_amount ?? ""),
+                      priorAmount: "",
+                    })),
+                  }),
+                  responseHash: hash({ receiptNumber, statement: "CIS" }),
+                },
+              ],
+            }
+          : {}),
       },
       collectorVersion: "research-fixture-v2",
     });

@@ -96,7 +96,70 @@ test("시연 모드는 질문마다 DART 공시와 기업 IR 원문을 함께 �
   // STEP 05가 근거마다 발행기관을 보여주므로 두 축이 구분돼야 한다.
   const publishers = new Set(bundle.sources.map((source) => source.publisher));
   assert.ok(publishers.has("금융감독원 전자공시시스템"));
-  assert.ok(publishers.has("기업 IR 자료"));
+  assert.ok(publishers.has("대덕전자 IR"));
+});
+
+test("시연 근거는 실제 값과 열리는 원문 링크를 갖는다", async () => {
+  const bundle = await collectInDemoMode();
+  const dart = bundle.sources.filter((source) => source.sourceType === "DART");
+  const ir = bundle.sources.filter(
+    (source) => source.sourceType === "COMPANY_IR",
+  );
+
+  for (const source of [...dart, ...ir]) {
+    // example.com 링크는 시연에서 "Example Domain" 안내 페이지로 열린다.
+    assert.ok(
+      source.canonicalUrl && !source.canonicalUrl.includes("example.com"),
+      `원문 링크가 자리표시입니다: ${source.canonicalUrl}`,
+    );
+  }
+
+  for (const source of dart) {
+    // 합성 접수번호는 형식이 실제와 같아 다른 회사 공시가 열린다.
+    assert.ok(
+      source.canonicalUrl?.includes("20260514001471"),
+      `DART 링크가 실제 대덕전자 접수번호가 아닙니다: ${source.canonicalUrl}`,
+    );
+    const content = source.content as Record<string, unknown>;
+    assert.ok(
+      Array.isArray(content.rows) && content.rows.length > 0,
+      "DART 근거에 계정 행이 없으면 값·기간이 비어 보입니다.",
+    );
+    assert.ok(
+      Array.isArray(content.originalStatements) &&
+        content.originalStatements.length > 0,
+      "원문 표가 없으면 STEP 05가 '원문 표가 보관되어 있지 않습니다'만 띄웁니다.",
+    );
+  }
+
+  // 근거 한 줄 요약에 실제 숫자가 보여야 조사 결과처럼 읽힌다.
+  const dartCandidates = bundle.candidates.filter((candidate) =>
+    candidate.sourceKey.endsWith(":DART"),
+  );
+  assert.ok(dartCandidates.length > 0);
+  for (const candidate of dartCandidates) {
+    assert.match(
+      candidate.oneLineValue,
+      /\d/,
+      `근거 요약에 숫자가 없습니다: ${candidate.oneLineValue}`,
+    );
+    assert.ok(
+      candidate.valueOriginal && /^\-?\d+$/.test(candidate.valueOriginal),
+      `근거에 원본 값이 없습니다: ${candidate.valueOriginal}`,
+    );
+  }
+
+  // IR 근거는 업로드 자료의 실제 서술이어야 한다.
+  const irCandidates = bundle.candidates.filter((candidate) =>
+    candidate.sourceKey.endsWith(":COMPANY_IR"),
+  );
+  for (const candidate of irCandidates) {
+    assert.ok(
+      candidate.quoteExact.length > 30 &&
+        !candidate.quoteExact.includes("확인되었습니다"),
+      `IR 인용이 자리표시 문장입니다: ${candidate.quoteExact}`,
+    );
+  }
 });
 
 test("시연 모드 근거는 원문 검증을 통과해 STEP 05에 남는다", async () => {
