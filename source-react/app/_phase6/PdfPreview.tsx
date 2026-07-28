@@ -2,6 +2,7 @@
 
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { useEffect, useRef, useState } from "react";
+import { loadPdfjs } from "./pdfjs";
 import styles from "./phase6.module.css";
 
 function PdfPage({
@@ -72,12 +73,8 @@ export function PdfPreview({
       typeof import("pdfjs-dist")["getDocument"]
     > | null = null;
 
-    void import("pdfjs-dist")
+    void loadPdfjs()
       .then(async (pdfjs) => {
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/build/pdf.worker.min.mjs",
-          import.meta.url,
-        ).toString();
         loadingTask = pdfjs.getDocument({ url, withCredentials: true });
         activeDocument = await loadingTask.promise;
         if (cancelled) {
@@ -86,8 +83,15 @@ export function PdfPreview({
         }
         setDocument(activeDocument);
       })
-      .catch(() => {
-        if (!cancelled) setError("PDF 미리보기를 불러오지 못했습니다.");
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        const detail =
+          reason instanceof Error && reason.message ? reason.message : "";
+        setError(
+          `PDF 미리보기를 불러오지 못했습니다.${
+            detail ? ` (${detail.slice(0, 200)})` : ""
+          }`,
+        );
       });
 
     return () => {

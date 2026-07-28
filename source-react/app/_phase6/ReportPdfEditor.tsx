@@ -8,6 +8,7 @@ import {
   ReportChartPreview,
 } from "./ReportChartPreview";
 import { ReportTablePreview } from "./ReportTablePreview";
+import { loadPdfjs } from "./pdfjs";
 import styles from "./phase6.module.css";
 import type { ReportBlock, ReportPage } from "./types";
 
@@ -78,10 +79,7 @@ function PdfEditorPage({
     let renderTask: ReturnType<PDFPageProxy["render"]> | null = null;
     let textLayer: import("pdfjs-dist").TextLayer | null = null;
 
-    void Promise.all([
-      document.getPage(page.pageNumber),
-      import("pdfjs-dist"),
-    ])
+    void Promise.all([document.getPage(page.pageNumber), loadPdfjs()])
       .then(async ([pdfPage, pdfjs]) => {
         loadedPage = pdfPage;
         if (cancelled || !canvasRef.current) return;
@@ -318,12 +316,8 @@ export function ReportPdfEditor({
       typeof import("pdfjs-dist")["getDocument"]
     > | null = null;
 
-    void import("pdfjs-dist")
+    void loadPdfjs()
       .then(async (pdfjs) => {
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/build/pdf.worker.min.mjs",
-          import.meta.url,
-        ).toString();
         loadingTask = pdfjs.getDocument({ url, withCredentials: true });
         activeDocument = await loadingTask.promise;
         if (cancelled) {
@@ -332,10 +326,19 @@ export function ReportPdfEditor({
         }
         setDocument(activeDocument);
       })
-      .catch(() => {
-        if (!cancelled) {
-          setError("보고서 초안의 기본 레이아웃을 불러오지 못했습니다.");
-        }
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        // 원인을 삼키면 브라우저·네트워크·워커 중 무엇이 막혔는지 알 수 없어
+        // 같은 화면에서 다시 진단할 방법이 없다.
+        const detail =
+          reason instanceof Error && reason.message
+            ? reason.message
+            : String(reason ?? "");
+        setError(
+          `보고서 초안의 기본 레이아웃을 불러오지 못했습니다.${
+            detail ? ` (${detail.slice(0, 200)})` : ""
+          }`,
+        );
       });
 
     return () => {
