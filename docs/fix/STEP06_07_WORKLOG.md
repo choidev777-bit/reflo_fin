@@ -445,40 +445,61 @@ IF($C$30="Peer 평균 P/E",$C$41,IF($C$30="보고서 원문 P/E",$C$32,$C$31))
 - STEP 04 `출처 일괄 설정`이 개별 설정을 확인 없이 덮어씀
 - `PdfPreview`의 렌더 task 취소 누락(빠른 zoom 시 미리보기 고착)
 
-## 6.1 origin/workspace-dev 병합 안내 (2026-07-28)
+## 6.1 origin/workspace-dev 병합 결과 (2026-07-28)
 
-이 작업은 `origin/main`(`eeec669`)에 정렬된 상태에서 진행했다. 그런데
-`origin/workspace-dev`는 **main의 마지막 두 커밋(`ef6b711`, `eeec669`)을 아직
-갖고 있지 않다**(`3f817ff`에서 그 이전 main을 병합함). 그래서 그대로 병합하면
-STEP 01–04 연구 파이프라인에서 충돌이 난다.
+이 작업은 `origin/main`(`eeec669`)에 정렬된 상태에서 진행했는데,
+`origin/workspace-dev`는 **main의 마지막 두 커밋(`ef6b711`, `eeec669`)을 갖고 있지
+않았다**(`3f817ff`에서 그 이전 main을 병합함). 그래서 병합은 사실상
+`main` + STEP 06–07 수정을 팀원 브랜치에 얹는 작업이었고, 충돌은 11개 파일 30 hunk였다.
 
-병합을 시도해 본 결과 충돌은 11개 파일 / 30 hunk였고, 그중 **STEP 06–07 영역
-8 hunk는 아래처럼 확정했다**. 남은 STEP 01–04 영역 17 hunk는 해당 코드를 실제로
-돌려 확인할 수 없어 밀어 넣지 않고 이 브랜치를 따로 올렸다.
+### hunk 해소 기준
 
-브랜치: `fix/step06-07-e2e-20260728`
-
-### 확정한 해소 (참고용)
+**main 쪽 변경량이 압도적으로 크다**(예: `phase4-repository.ts` main 1,585줄 추가 vs
+팀원 195줄). 그래서 기본은 **main의 최신 동작을 유지**하고, 팀원 브랜치의 신규 코드만
+그 위에 얹었다.
 
 | 파일 | 결정 |
 |---|---|
-| `project-repository.ts` | 팀원의 `canonicalProjectRoute` 채택(같은 결함을 같은 방식으로 고침). 내 인라인 버전 제거 |
-| `report-repository.ts` `reviewReportOutlinePage` | 팀원의 `hasUnconfirmedRequiredVisualSlots` 호출 유지 + 헬퍼 본문에 `invalid`·지연 매핑 조건 추가 |
-| `valuation-repository.ts` | 내 `targetPerFormulaCells`(절대 참조·문자열 리터럴 처리 + 직접 입력 셀까지) 유지, 팀원의 `targetPerModeAddress`는 얇은 래퍼로 남겨 기존 테스트 유지 |
+| `project-repository.ts` | 팀원의 `canonicalProjectRoute` 채택(같은 무한 redirect 결함을 같은 방식으로 고침) |
+| `report-repository.ts` | 팀원의 `hasUnconfirmedRequiredVisualSlots` 호출 유지 + 헬퍼 본문에 `invalid`·지연 매핑 조건 추가 |
+| `valuation-repository.ts` | 내 `targetPerFormulaCells`(절대 참조·문자열 리터럴 처리 + 직접 입력 셀) 유지. 팀원의 `targetPerModeAddress`는 얇은 래퍼로 남겨 기존 테스트 유지 |
 | `worker-result-contract.ts` | 팀원 것 채택(진단 메시지가 더 낫고 전용 테스트 있음) |
-| `adapters.ts` | main 것 채택(필수 원문 미확보를 예외 대신 경고로 처리하는 최신 동작) |
-| `workbook-applications/route.ts` | 주석만 차이. 내 주석 유지 |
-| `research-validation.ts` | 팀원 것 채택(evidence locator 재작성) |
-| `WorkbookRollForwardEngineTests.cs` | 양쪽 테스트 모두 유지(추가 충돌) |
+| `adapters.ts` | main 채택(필수 원문 미확보를 예외 대신 경고로 처리하는 최신 동작) |
+| `research-validation.ts` | main 채택 + 팀원의 페이지 텍스트 결합 방식(`sourceText`) 흡수 |
+| `activities.ts` | main의 질문 배치·공식 Excel 축 유지 + 팀원의 `buildResearchAgentInput`·뉴스 provider 예외 허용(`searchNewsTolerantly`) 흡수 |
+| `phase4-repository.ts` | evidence viewer는 main 형태(`EvidenceViewer` 타입 기준). 목록 쿼리는 팀원의 artifact JOIN + main의 접근 제한(`machine_status`·validation_run 범위) 결합 |
+| `ValidationScreen.tsx` | main의 workbook 로딩 effect 유지 + 팀원의 `rejected`/`failed` 필터 분리와 `retryFailedJob` 흡수 |
+| `WorkbookRollForwardEngineTests.cs` | 양쪽 테스트 모두 유지 |
 
-### 남은 STEP 01–04 충돌 (팀원 확인 필요)
+### 병합하며 추가로 고친 것
 
-`activities.ts`(4) · `phase4-repository.ts`(7) · `ValidationScreen.tsx`(6).
+- **팀원 테스트 fixture 3건**을 main의 새 필수 필드에 맞춰 갱신
+  (`ResearchCandidate.metricId`, `ResearchPlanQuestion.role`,
+  `PhaseFourWorkerPayload.questionAnswers/excelResults`,
+  hypothesis question `role`).
+- **`validateWorkerPayload`**: 원문은 모았는데 결과가 0건인 경우를 정상 종료로
+  허용(팀원의 recovery 의도). 후보·Evidence 중 한쪽만 비는 "반쪽 게시"만 거부.
+- **`buildResearchAgentInput`의 `excelTargets`를 선택 인자로**. 가설 축 호출이 Excel
+  대상을 넘기면 main의 파이프라인 분리 계약(`phase4-pipeline-separation.test.mjs`)을
+  깬다.
+- **회귀 1건 수정 — `financialStatementKind`**: 팀원이 새로 만든 이 함수가 시트
+  **번호만** 보고 재무제표를 판정해서, 이 워크북의 `16_p5_투자의견변동_괴리율`·
+  `17_p5_투자등급_비율공시`를 재무제표로 세었다. 그 결과 기간 헤더 검사가 실패해
+  **STEP 06 승인이 `REPORT_PERIOD_HEADER_MISMATCH`로 막혔다**(라이브 확인).
+  접두사는 후보를 좁히는 데만 쓰고 종류는 시트 이름(손익계산서·대차대조표·
+  투자지표·현금흐름표)으로 확정하도록 고치고 회귀 테스트를 추가했다.
+- **`calculateAndSave`가 read model을 그대로 저장**하던 문제. `/valuation/calculate`
+  응답에는 `ensureWorkbook`만 붙이는 `reportPeriodPlan`·`inputManifest`·`rollForward`가
+  없어서, 셀을 한 번 고칠 때마다 워크스페이스를 열 때
+  `VALUATION_PREREQUISITE_CHANGED`가 떴고 워크북을 매번 다시 준비했다. 세 필드를
+  보존하도록 고쳤다.
 
-세 파일 모두 **main 쪽 변경량이 압도적으로 크다**
-(예: `phase4-repository.ts`는 main 1,585줄 추가 vs 이 브랜치 195줄 추가).
-즉 실제로 필요한 작업은 "내 변경을 얹기"가 아니라
-**`origin/main`을 `workspace-dev`에 먼저 병합**하는 것이고, 그때
-`buildResearchAgentInput`·뉴스 provider 예외 허용 같은 팀원 신규 코드를
-main의 새 기반 위에 올리면 된다. 그 뒤 이 브랜치를 병합하면 STEP 06–07 쪽
-충돌은 위 표대로만 처리하면 된다.
+### 병합 후 재검증 (실제 DB·워커)
+
+`npm test` 253건(242 pass / 11 skip / **0 fail**) — 양쪽 브랜치 테스트 합집합.
+`npm run typecheck`·`npm run lint`(0 error), `dotnet test` 15건 통과.
+
+STEP 06 → 07 전 구간을 병합본으로 **처음부터 다시 실행**해 첫 시도에 통과:
+STEP 06 blockers 0 (EPS `3,033` · PER `26.6` · 목표주가 `81,000`, 입력 85셀 보존) →
+outline v4 재생성 → 5페이지 확인 → 승인 → 초안 생성 succeeded(14 block, 0 blocker) →
+검증 passed(이슈 0) → 승인 → 미리보기 ready → 내보내기 succeeded(PDF 52.6MB · XLSX 273KB).
