@@ -145,6 +145,9 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const [undoStack, setUndoStack] = useState<HistoryEntry[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryEntry[]>([]);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  // 편집 canvas가 원본으로 되돌아가 보이지 않도록, 버전별로 한 번씩만 자동 렌더한다.
+  const autoRenderedVersion = useRef<string | null>(null);
+  const [draftRendering, setDraftRendering] = useState(false);
 
   const updateWorkspace = useCallback(
     (updater: (current: ReportWorkspaceData) => ReportWorkspaceData) => {
@@ -539,6 +542,37 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
     }
   };
 
+  // 초안 생성 직후에는 렌더된 preview가 없고, 저장할 때마다 기존 preview는 stale이 된다.
+  // 그동안 canvas는 원본 PDF로 대체돼 화면에는 원본이, 블록 본문과 내보내기 결과에는
+  // 변경본이 남아 서로 어긋났다. 활성 버전에 ready preview가 없으면 여기서 렌더해
+  // canvas가 항상 지금 버전의 초안을 보여주게 한다.
+  useEffect(() => {
+    if (!workspace || session.status !== "authenticated") return;
+    const versionId = workspace.report.activeVersionId;
+    const preview = workspace.jobs.preview;
+    if (preview?.status === "ready" && preview.contentUrl) return;
+    // 실패해도 같은 버전을 무한히 재시도하지 않도록 버전당 한 번만 시도한다.
+    if (autoRenderedVersion.current === versionId) return;
+    autoRenderedVersion.current = versionId;
+    const csrfToken = session.csrfToken;
+    let cancelled = false;
+    setDraftRendering(true);
+    void renderPreview(versionId, csrfToken)
+      .then(() => (cancelled ? undefined : loadWorkspace()))
+      .catch((caught: unknown) => {
+        if (!cancelled) setError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (!cancelled) setDraftRendering(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // renderPreview는 매 렌더마다 재생성되지만 동작이 같고, 위 버전 guard가
+    // 중복 실행을 막는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace, session, loadWorkspace]);
+
   const openProvenance = async (blockId: string) => {
     setActiveBlockId(blockId);
     setPanel("provenance");
@@ -899,6 +933,11 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
   const selectedBlock = activeBlockId
     ? findBlock(workspace, activeBlockId)
     : null;
+  // stale·queued·failed preview는 지금 버전의 초안이 아니므로 canvas에 쓰지 않는다.
+  const draftPdfUrl =
+    workspace.jobs.preview?.status === "ready"
+      ? workspace.jobs.preview.contentUrl ?? null
+      : null;
   const saveLabel =
     saveState === "saving"
       ? "저장 중…"
@@ -1032,16 +1071,22 @@ export function ReportWorkspace({ projectId }: { projectId: string }) {
         <section className={styles.reportCanvas} aria-label="보고서 초안 편집">
           <div className={styles.pdfEditorGuide} data-editable={editable}>
             <span className={styles.pdfEditorGuideDot} />
-            {editable
-              ? "텍스트는 문장 편집, 그래프는 형태 변경, 표는 연결 출처 확인 패널을 엽니다."
-              : "보고서 초안의 텍스트를 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 텍스트와 데이터 블록이 표시됩니다."}
+            {/* 무엇이 그려져 있는지 밝히지 않으면 원본과 변경본을 구별할 수 없다. */}
+            {draftRendering
+              ? "변경본을 렌더링하는 중입니다. 지금은 원본이 표시됩니다."
+              : showOriginal
+                ? "원본을 보고 있습니다. 변경본 보기로 돌아갈 수 있습니다."
+                : !draftPdfUrl
+                  ? "변경본을 만들지 못해 원본을 표시하고 있습니다. PDF 미리보기로 다시 시도할 수 있습니다."
+                  : editable
+                    ? "텍스트는 문장 편집, 그래프는 형태 변경, 표는 연결 출처 확인 패널을 엽니다."
+                    : "보고서 초안의 텍스트를 선택·복사할 수 있습니다. 편집을 누르면 변경 가능한 텍스트와 데이터 블록이 표시됩니다."}
           </div>
           <ReportPdfEditor
             url={
-              showOriginal
+              showOriginal || !draftPdfUrl
                 ? workspace.sourcePdf.contentUrl
-                : workspace.jobs.preview?.contentUrl ??
-                  workspace.sourcePdf.contentUrl
+                : draftPdfUrl
             }
             pages={workspace.pages}
             editable={editable}

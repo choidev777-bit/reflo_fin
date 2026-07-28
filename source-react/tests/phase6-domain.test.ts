@@ -469,6 +469,107 @@ test("Phase 06 detects a main-column title and narrative sections without traili
   assert.deepEqual(generatedHeading.bbox, [198, 194, 416, 206]);
 });
 
+test("Phase 06 keeps compliance sections free of evidence and varies repeated evidence", () => {
+  const complianceLayout: ReportTemplatePage[] = [
+    {
+      pageId: "compliance-page-1",
+      pageNumber: 1,
+      boxes: { mediaBox: [0, 0, 595.32, 841.92] },
+      objects: [
+        {
+          objectId: "review-heading",
+          type: "text_run",
+          bbox: [198, 194, 416, 206],
+          textRun: {
+            text: "1Q26 Review: 실적이 추정치를 상회",
+            fontSize: 10.8,
+          },
+        },
+        {
+          objectId: "review-body",
+          type: "text_run",
+          bbox: [198, 218, 553, 229],
+          textRun: {
+            text: "1분기 매출과 영업이익이 추정치를 상회한 배경을 설명합니다.",
+            fontSize: 9.7,
+          },
+        },
+        {
+          objectId: "margin-heading",
+          type: "text_run",
+          bbox: [198, 408, 416, 420],
+          textRun: { text: "수익성 개선 배경", fontSize: 10.8 },
+        },
+        {
+          objectId: "margin-body",
+          type: "text_run",
+          bbox: [198, 432, 553, 443],
+          textRun: {
+            text: "제품 믹스 개선이 마진에 기여한 경로를 설명합니다.",
+            fontSize: 9.7,
+          },
+        },
+        {
+          objectId: "compliance-heading",
+          type: "text_run",
+          bbox: [198, 700, 416, 712],
+          textRun: { text: "투자등급 비율공시", fontSize: 10.8 },
+        },
+        {
+          objectId: "compliance-body",
+          type: "text_run",
+          bbox: [198, 724, 553, 735],
+          textRun: {
+            text: "당사의 투자등급 부여 기준과 비율은 다음과 같습니다.",
+            fontSize: 9.7,
+          },
+        },
+      ],
+      slots: [],
+    },
+  ];
+
+  // 같은 한 줄 요약을 가진 근거가 둘이면, 문단마다 순서대로 집어 오던 이전
+  // 방식은 첫 두 문단에 같은 문장을 남겼다.
+  const repeatedEvidenceSeed = {
+    ...seed,
+    evidence: [
+      {
+        evidenceId: "evidence-1",
+        title: "Quarterly filing",
+        oneLineValue: "매출액 3,463억원",
+        stance: "supporting",
+        machineStatus: "passed",
+      },
+      {
+        evidenceId: "evidence-2",
+        title: "Quarterly filing",
+        oneLineValue: "매출액 3,463억원",
+        stance: "supporting",
+        machineStatus: "passed",
+      },
+      {
+        evidenceId: "evidence-3",
+        title: "Company IR",
+        oneLineValue: "영업이익 513억원",
+        stance: "supporting",
+        machineStatus: "passed",
+      },
+    ],
+  };
+
+  const outline = buildInitialOutline(complianceLayout, repeatedEvidenceSeed);
+  const summaries = outline.pages[0].narrativeBlocks.map(
+    (block) => block.summary,
+  );
+  assert.equal(summaries.length, 3);
+  assert.notEqual(summaries[0], summaries[1]);
+  assert.equal(summaries[2], "원문 규정 문구를 유지합니다.");
+  for (const evidence of repeatedEvidenceSeed.evidence) {
+    assert.doesNotMatch(summaries[2], new RegExp(evidence.oneLineValue));
+  }
+});
+
 test("Phase 06 outline patches dynamic title and body blocks", () => {
   const outline = buildInitialOutline(templatePages, seed);
   const page = outline.pages[0];

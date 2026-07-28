@@ -519,6 +519,26 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
     currentDraft?.formattedTargetPrice ??
     workspace.calculation.targetPrice?.formattedText ??
     "—";
+  // 어느 시트를 봐야 하는지까지 알려준다. "85칸"만으로는 272개 편집셀 중
+  // 어디를 찾아야 할지 알 수 없다.
+  const missingBySheet = new Map<string, number>();
+  for (const cell of workspace.permissions.missingRequiredCells) {
+    missingBySheet.set(
+      cell.sheetName,
+      (missingBySheet.get(cell.sheetName) ?? 0) + 1,
+    );
+  }
+  const missingRequiredSummary = [
+    `${workspace.permissions.missingRequiredCells.length}칸`,
+    ...[...missingBySheet.entries()].map(
+      ([sheetName, count]) => `${sheetName} ${count}`,
+    ),
+  ].join(" · ");
+  const missingRequiredKeys = new Set(
+    workspace.permissions.missingRequiredCells.map(
+      (cell) => `${cell.sheetId}:${cell.address}`,
+    ),
+  );
 
   return (
     <ProcessShell
@@ -697,6 +717,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                   model={model}
                   disabled={status === "saving"}
                   selected={selected}
+                  missingRequired={missingRequiredKeys}
                   onSelected={(cell, sheetId, sheetName) =>
                     setSelected({
                       sheetId,
@@ -862,17 +883,6 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                       권위 결과 {currentDraft.formattedTargetPrice}
                     </p>
                   )}
-                {workspace.completion.blockers.length > 0 && (
-                  <ul className="phase5-blockers" aria-label="완료 전 확인">
-                    {[...new Set(workspace.completion.blockers)].map(
-                      (blocker) => (
-                        <li key={blocker}>
-                          {blockerLabels[blocker] ?? blocker}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                )}
                 <button
                   type="button"
                   className="phase5-approve"
@@ -928,6 +938,21 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
                 <dd>{workspace.approval?.status === "approved" ? `승인 v${workspace.approval.approvalVersion}` : "승인 전"}</dd>
               </div>
             </dl>
+            {workspace.completion.blockers.length > 0 && (
+              <ul className="phase5-blockers" aria-label="완료 전 확인">
+                {[...new Set(workspace.completion.blockers)].map((blocker) => (
+                  <li key={blocker}>
+                    {blockerLabels[blocker] ?? blocker}
+                    {blocker === "REQUIRED_INPUT_MISSING" && (
+                      <small>
+                        {missingRequiredSummary} · 01 탭에서 노란 테두리 칸을
+                        채워주세요.
+                      </small>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
             <button
               ref={sensitivityTrigger}
               type="button"

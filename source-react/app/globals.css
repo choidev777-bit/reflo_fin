@@ -14605,6 +14605,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   pointer-events: none;
 }
 
+/* 비어 있어서 완료를 막고 있는 칸. 편집 가능 칸(실선 lime 모서리)과 구분되게
+   점선 테두리를 쓴다 — 색만으로 구분하지 않는다. */
+.phase5-grid-cell.is-required-missing {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px #a63a33;
+}
+
+.phase5-grid-cell.is-required-missing::after {
+  border-left-color: #a63a33;
+  border-bottom-color: #a63a33;
+  background: #a63a33;
+}
+
+.phase5-grid-cell.is-required-missing.is-selected {
+  box-shadow:
+    inset 0 0 0 2px #a63a33,
+    inset 0 0 0 4px #75a900;
+}
+
 .phase5-grid-cell > button,
 .phase5-grid-input {
   overflow: hidden;
@@ -14658,6 +14677,48 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-bottom-color: #111410;
   background: #efffc5;
   box-shadow: inset 0 2px 0 #75a900;
+}
+
+/* 필수 입력이 남은 시트는 lime 대신 주의 색으로 표시해 먼저 찾게 한다. */
+.phase5-sheet-tabs button.has-required-missing {
+  border-top-color: #a63a33;
+  background: #fff5f3;
+  color: #7d2921;
+}
+
+.phase5-sheet-tabs button.has-required-missing small {
+  background: #a63a33;
+  color: #fff;
+}
+
+.phase5-sheet-tabs button[aria-pressed="true"].has-required-missing {
+  background: #fff0ee;
+  box-shadow: inset 0 2px 0 #a63a33;
+}
+
+/* 완료 전 확인 목록. 어두운 요약 패널 안에 있으므로 밝은 기본 스타일을 뒤집는다.
+   두 탭 어디에 있어도 `다음`이 왜 비활성인지 보이게 하려고 여기에 둔다. */
+.phase5-summary .phase5-blockers {
+  margin-top: 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #292f27;
+  padding: 12px 12px 12px 28px;
+  color: #d3d8d0;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.phase5-summary .phase5-blockers li + li {
+  margin-top: 6px;
+}
+
+.phase5-summary .phase5-blockers small {
+  display: block;
+  margin-top: 3px;
+  color: #9aa197;
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .phase5-impact-filters {
