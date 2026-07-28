@@ -2143,6 +2143,16 @@ export async function getValuationWorkspace(
         requiredEditableCells: state.readModel.editableCells.filter(
           (cell) => cell.required,
         ),
+        // 완료 게이트가 실제로 요구하는 칸. `requiredEditableCells`는 워커가
+        // 편집 가능한 셀의 `required`를 무조건 true로 넣어 전체 편집셀과 같아
+        // 화면에서 쓸 수 없다. `REQUIRED_INPUT_MISSING`을 만드는 목록을 그대로
+        // 내려보내 사용자가 어느 칸을 채워야 하는지 찾을 수 있게 한다.
+        missingRequiredCells: requiredMissing.map((cell) => ({
+          sheetId: cell.sheetId,
+          sheetName: cell.sheetName,
+          address: cell.address,
+          label: cell.label,
+        })),
       },
       calculation: {
         calculationRunId: latestRun.rows[0]?.calculation_run_id ?? null,
