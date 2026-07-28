@@ -40,6 +40,17 @@ export const DEMO_FILINGS = {
     reportCode: "11011",
     periodLabel: "제 6 기",
   },
+  // 4Q25 단일 분기 값은 연간에서 3분기 누적을 빼서 만든다. 이 공시가 없으면
+  // 합성 접수번호가 쓰여 근거 링크가 엉뚱한 공시를 열고 뺄셈 값도 무의미해진다.
+  quarter3_2025: {
+    receiptNumber: "20251113000641",
+    filingName: "분기보고서 (2025.09)",
+    publishedAt: "2025-11-13T09:00:00+09:00",
+    businessYear: 2025,
+    quarter: 3 as const,
+    reportCode: "11014",
+    periodLabel: "제 6 기 3분기",
+  },
 } as const;
 
 export function dartFilingUrl(receiptNumber: string): string {
@@ -108,6 +119,57 @@ export const ANNUAL_2025_ACCOUNTS: Record<string, DemoAccount> = {
   },
 };
 
+/**
+ * Excel 축이 요구하는 기간별 실제 DART 연결 금액 (OpenDART 단일회사 전체
+ * 재무제표 API, fs_div=CFS).
+ *
+ * 계정 ID를 키로 쓴다. 계정명으로 맞추면 "당기순이익"이 "지배기업의 소유주에게
+ * 귀속되는 당기순이익(손실)"에 부분 일치해 서로 다른 계정이 같은 금액을
+ * 가져간다.
+ *
+ * 분기 보고서 값은 **누적** 금액이다. 단일 분기 대상은 연간에서 직전 누적을
+ * 빼서 계산하므로(`calculateDartValue`) 3분기 행에 3개월 값을 넣으면 4Q25가
+ * 실제와 크게 달라진다.
+ */
+const DEMO_PERIOD_ACCOUNTS: Record<string, Record<string, string>> = {
+  // 사업보고서 (2025.12) · 접수번호 20260318001514
+  "2025:4": {
+    "ifrs-full_Revenue": "1065294559811",
+    dart_OperatingIncomeLoss: "49061483387",
+    "ifrs-full_ProfitLossBeforeTax": "53426182434",
+    "ifrs-full_ProfitLoss": "47605327690",
+    "ifrs-full_ProfitLossAttributableToOwnersOfParent": "47605327690",
+    "ifrs-full_Assets": "1178006544303",
+    "ifrs-full_Liabilities": "280701384139",
+    "ifrs-full_Equity": "897305160164",
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities": "71551720318",
+  },
+  // 분기보고서 (2025.09) · 접수번호 20251113000641 · 손익·현금흐름은 3분기 누적
+  "2025:3": {
+    "ifrs-full_Revenue": "747406822312",
+    dart_OperatingIncomeLoss: "20112430393",
+    "ifrs-full_ProfitLossBeforeTax": "20687578041",
+    "ifrs-full_ProfitLoss": "21987249906",
+    "ifrs-full_ProfitLossAttributableToOwnersOfParent": "21987249906",
+    "ifrs-full_Assets": "1135732421139",
+    "ifrs-full_Liabilities": "260785098757",
+    "ifrs-full_Equity": "874947322382",
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities": "56093654461",
+  },
+  // 분기보고서 (2026.03) · 접수번호 20260514001471
+  "2026:1": {
+    "ifrs-full_Revenue": "346314163690",
+    dart_OperatingIncomeLoss: "51298108850",
+    "ifrs-full_ProfitLossBeforeTax": "59613397867",
+    "ifrs-full_ProfitLoss": "45502474083",
+    "ifrs-full_ProfitLossAttributableToOwnersOfParent": "45502474083",
+    "ifrs-full_Assets": "1195142176676",
+    "ifrs-full_Liabilities": "276491647295",
+    "ifrs-full_Equity": "918650529381",
+    "ifrs-full_CashFlowsFromUsedInOperatingActivities": "55598916788",
+  },
+};
+
 type QuestionRole = ResearchPlanQuestion["role"];
 
 /**
@@ -173,9 +235,9 @@ export function demoIrSummary(role: QuestionRole): string {
 /**
  * Excel 축이 요구하는 기간에 맞는 실제 공시를 고른다.
  *
- * 시연은 4Q25 보고서를 기준으로 1Q26을 작성하므로 두 공시만 있으면 된다.
- * 그 밖의 기간은 실제 접수번호가 없으므로 null을 돌려주고 기존 합성 경로를
- * 쓴다(대신 링크는 열리지 않는다).
+ * 시연은 4Q25 보고서를 기준으로 1Q26을 작성하고, 4Q25 단일 분기 값을 위해
+ * 3Q25 누적 공시까지 쓴다. 그 밖의 기간은 실제 접수번호가 없으므로 null을
+ * 돌려주고 기존 합성 경로를 쓴다(대신 링크는 열리지 않는다).
  */
 export function demoFilingForPeriod(
   year: number,
@@ -183,28 +245,20 @@ export function demoFilingForPeriod(
 ): (typeof DEMO_FILINGS)[keyof typeof DEMO_FILINGS] | null {
   if (year === 2026 && quarter === 1) return DEMO_FILINGS.quarter1_2026;
   if (year === 2025 && quarter === 4) return DEMO_FILINGS.annual2025;
+  if (year === 2025 && quarter === 3) return DEMO_FILINGS.quarter3_2025;
   return null;
 }
 
 /**
- * 계정에 대응하는 실제 금액. Excel 축은 2025년 연간 확정치를 기준연도로 쓴다.
- * 매핑되지 않는 계정은 null을 돌려 기존 합성 금액을 유지한다.
+ * 해당 기간 공시의 실제 계정 금액. 매핑되지 않는 계정·기간은 null을 돌려
+ * 기존 합성 금액을 유지한다.
  */
 export function demoAmountForAccount(
+  year: number,
+  quarter: number,
   accountId: string | undefined,
-  accountName: string,
 ): string | null {
-  const candidates = [
-    ANNUAL_2025_ACCOUNTS.revenue!,
-    ANNUAL_2025_ACCOUNTS.operatingIncome!,
-    ANNUAL_2025_ACCOUNTS.netIncome!,
-  ];
-  const matched = candidates.find(
-    (item) =>
-      (accountId && item.accountId === accountId) ||
-      (accountName && item.accountName.includes(accountName)) ||
-      (accountName && accountName.includes(item.accountName)),
-  );
-  return matched?.amount ?? null;
+  if (!accountId) return null;
+  return DEMO_PERIOD_ACCOUNTS[`${year}:${quarter}`]?.[accountId] ?? null;
 }
 

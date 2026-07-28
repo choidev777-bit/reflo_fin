@@ -2038,43 +2038,57 @@ async function fixtureBundle(
       `${period.year}${String(period.quarter).padStart(2, "0")}15000001`;
     const publishedAt =
       demoFiling?.publishedAt ?? `${context.cutoffDate}T09:00:00+09:00`;
-    // 같은 원문 안에서 금액이 겹치면 근거 매칭이 "정확히 1건" 규칙을 어겨
-    // (selectedRecordField) 해당 대상이 전부 검증 실패한다. 실제 금액은
-    // 계정마다 하나씩만 쓰고, 이미 쓴 금액은 합성 값으로 비켜 준다.
+    // 한 보고서 안에 같은 계정 행이 두 번 들어가면 resolveDartRow가 ambiguous로
+    // 판정해 그 계정을 쓰는 Excel 대상이 전부 검증 실패한다
+    // (REQUIRED_NUMERIC_UNAVAILABLE → STEP 05 stage gate 차단). 서로 다른
+    // 시트·셀이 같은 DART 계정을 가리키는 것은 정상이므로 행은 (범위, 재무제표,
+    // 계정) 단위로 한 번만 만들고 대상들이 그 행을 공유한다.
     const usedAmounts = new Set<string>();
-    const rows = period.targets.flatMap((target, index) => {
+    const rowByAccount = new Map<string, Record<string, string>>();
+    for (const target of period.targets) {
       const rule = resolveDartAccountRule(
         target.dartRuleId ?? target.metricId ?? target.metric,
       );
-      if (!rule) return [];
-      const accountName = rule.allowedAccountNames[0] ?? "";
+      if (!rule) continue;
+      const scopeCode = target.scopeCode ?? "CFS";
+      const accountId = rule.allowedAccountIds[0] ?? "";
+      const statementCode = rule.allowedStatements[0] ?? "IS";
+      const rowKey = `${scopeCode}:${statementCode}:${accountId}`;
+      if (rowByAccount.has(rowKey)) continue;
       const demoAmount = demoFiling
-        ? demoAmountForAccount(rule.allowedAccountIds[0], accountName)
+        ? demoAmountForAccount(period.year, period.quarter, accountId)
         : null;
+      // 실제 공시에서는 계정끼리 금액이 같을 수 있다(대덕전자 당기순이익 =
+      // 지배주주순이익). 실제 금액은 그대로 두고 합성 금액만 서로 비켜 준다.
       let amount =
-        demoAmount && !usedAmounts.has(demoAmount)
-          ? demoAmount
-          : String(100_000_000_000 + index * 10_000_000_000);
-      while (usedAmounts.has(amount)) {
-        amount = String(Number(amount) + 1_000_000_000);
+        demoAmount ??
+        String(100_000_000_000 + rowByAccount.size * 10_000_000_000);
+      if (!demoAmount) {
+        while (usedAmounts.has(amount)) {
+          amount = String(Number(amount) + 1_000_000_000);
+        }
       }
       usedAmounts.add(amount);
-      return [{
+      rowByAccount.set(rowKey, {
         rcept_no: receiptNumber,
         reprt_code: code,
         bsns_year: String(period.year),
         corp_name: context.companyName,
-        account_id: rule.allowedAccountIds[0],
-        account_nm: accountName,
-        fs_div: target.scopeCode ?? "CFS",
+        account_id: accountId,
+        account_nm: rule.allowedAccountNames[0] ?? "",
+        fs_div: scopeCode,
         fs_nm: "연결재무제표",
-        sj_div: rule.allowedStatements[0],
+        sj_div: statementCode,
         sj_nm: "재무제표",
-        thstrm_nm: `${period.year}년 ${period.quarter}분기`,
+        // 근거 locator가 이 값을 "선택한 열"로 보여준다. 사업보고서를 "4분기"로
+        // 적으면 연간 확정치가 분기 값처럼 읽힌다.
+        thstrm_nm:
+          demoFiling?.periodLabel ?? `${period.year}년 ${period.quarter}분기`,
         thstrm_amount: amount,
         currency: "KRW",
-      }];
-    });
+      });
+    }
+    const rows = [...rowByAccount.values()];
     sources.push({
       sourceKey: `fixture:dart:${period.year}:${code}`,
       sourceType: "DART",

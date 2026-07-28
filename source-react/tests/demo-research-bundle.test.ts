@@ -20,13 +20,83 @@ const DEMO_QUESTIONS = [
 
 const CUTOFF_DATE = "2026-05-15";
 const CUTOFF_AT = `${CUTOFF_DATE}T23:59:59+09:00`;
+const DEMO_CORP_CODE = "01478712";
 
-function demoContext() {
+/**
+ * 시연 Excel(대덕전자 리서치 보고서)이 실제로 요구하는 DART 입력 대상.
+ *
+ * 여러 시트·셀이 같은 계정을 가리키는 구성이 핵심이다. 2025 기준연도 묶음에는
+ * 매출액·영업이익·당기순이익이 각각 두 번 들어 있고, 2026년 1분기 묶음에는
+ * 매출액·영업이익이 각각 세 번 들어 있다.
+ */
+const DEMO_EXCEL_TARGETS: Array<
+  [string, string, string, string, string, string, string, "annual" | "quarter", number, 1 | 2 | 3 | 4 | null, string]
+> = [
+  ["actual:sheet_17:D13:2025", "sheet_17", "12_p4_손익계산서", "D13", "profit_before_tax", "세전이익", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_17:D17:2025", "sheet_17", "12_p4_손익계산서", "D17", "net_income", "당기순이익", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_17:D19:2025", "sheet_17", "12_p4_손익계산서", "D19", "controlling_net_income", "지배주주순이익", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_17:D5:2025", "sheet_17", "12_p4_손익계산서", "D5", "revenue", "매출액", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_17:D9:2025", "sheet_17", "12_p4_손익계산서", "D9", "operating_profit", "영업이익", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_18:D17:2025", "sheet_18", "13_p4_대차대조표", "D17", "total_assets", "자산총계", "2025년 연간", "annual", 2025, null, "point_in_time"],
+  ["actual:sheet_18:D25:2025", "sheet_18", "13_p4_대차대조표", "D25", "total_liabilities", "부채총계", "2025년 연간", "annual", 2025, null, "point_in_time"],
+  ["actual:sheet_18:D33:2025", "sheet_18", "13_p4_대차대조표", "D33", "total_equity", "자본총계", "2025년 연간", "annual", 2025, null, "point_in_time"],
+  ["actual:sheet_20:D5:2025", "sheet_20", "15_p4_현금흐름표", "D5", "operating_cash_flow", "영업활동 현금흐름", "2025년 연간", "annual", 2025, null, "annual"],
+  ["actual:sheet_20:D6:2025", "sheet_20", "15_p4_현금흐름표", "D6", "net_income", "당기순이익", "2025년 연간", "annual", 2025, null, "annual"],
+  ["quarterly:sheet_13:V5:2026Q1", "sheet_13", "08_도표4_분기실적추이", "V5", "revenue", "매출액", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+  ["quarterly:sheet_13:V6:2026Q1", "sheet_13", "08_도표4_분기실적추이", "V6", "operating_profit", "영업이익", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+  ["quarterly:sheet_15:F19:2026Q1", "sheet_15", "10_도표6_분기실적전망_수정후", "F19", "operating_profit", "영업이익", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+  ["quarterly:sheet_15:F5:2026Q1", "sheet_15", "10_도표6_분기실적전망_수정후", "F5", "revenue", "매출액", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+  ["quarterly:sheet_16:E19:2025Q4", "sheet_16", "11_도표7_분기실적전망_수정전", "E19", "operating_profit", "영업이익", "2025년 4분기", "quarter", 2025, 4, "single_quarter"],
+  ["quarterly:sheet_16:E5:2025Q4", "sheet_16", "11_도표7_분기실적전망_수정전", "E5", "revenue", "매출액", "2025년 4분기", "quarter", 2025, 4, "single_quarter"],
+  ["quarterly:sheet_16:F19:2026Q1", "sheet_16", "11_도표7_분기실적전망_수정전", "F19", "operating_profit", "영업이익", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+  ["quarterly:sheet_16:F5:2026Q1", "sheet_16", "11_도표7_분기실적전망_수정전", "F5", "revenue", "매출액", "2026년 1분기", "quarter", 2026, 1, "year_to_date"],
+];
+
+function demoExcelTargets() {
+  return DEMO_EXCEL_TARGETS.map(
+    ([
+      targetId,
+      sheetId,
+      sheetName,
+      address,
+      metricId,
+      metric,
+      period,
+      type,
+      year,
+      quarter,
+      basis,
+    ]) => ({
+      targetId,
+      sheetId,
+      sheetName,
+      address,
+      metricId,
+      metric,
+      period,
+      periodSpec: { type, year, quarter, basis },
+      unit: "십억원",
+      targetUnit: "KRW_BILLION" as const,
+      scope: "연결",
+      scopeCode: "CFS" as const,
+      valueKind: "actual" as const,
+      dartRuleId: `${metricId.replaceAll("_", "-")}-rule-v1`,
+      writeAuthority: "system" as const,
+      required: true,
+      included: true,
+      sourcePolicy: [{ sourceType: "DART" as const, role: "authority" as const }],
+      mappingSlotIds: [`slot_${targetId}`],
+      excludedReason: null,
+    }),
+  );
+}
+
+function demoContext(excelTargets: ReturnType<typeof demoExcelTargets> = []) {
   return {
     projectId: "019fa61f-5949-7354-b798-38aca3cc607f",
     companyMasterId: "019fa61f-5949-7354-b798-38aca3cc6070",
     companyName: "대덕전자",
-    corpCode: "00164779",
+    corpCode: DEMO_CORP_CODE,
     ticker: "353200",
     exchange: "KOSPI" as const,
     targetYear: 2026,
@@ -49,7 +119,7 @@ function demoContext() {
       sourceBindingIds: ["DART", "COMPANY_IR"] as const,
       collectionMethods: {},
     })),
-    excelTargets: [],
+    excelTargets,
     userUrls: [],
     sourceReferences: [],
     newsDiscoveryResults: [],
@@ -57,7 +127,9 @@ function demoContext() {
   };
 }
 
-async function collectInDemoMode() {
+async function collectInDemoMode(
+  excelTargets: ReturnType<typeof demoExcelTargets> = [],
+) {
   const previous = {
     demo: process.env.REFLO_DEMO_MODE,
     llm: process.env.REFLO_LLM_TEST_FIXTURE,
@@ -71,7 +143,9 @@ async function collectInDemoMode() {
       "../server/infrastructure/research-sources/adapters"
     );
     return await collectResearchSources(
-      demoContext() as unknown as Parameters<typeof collectResearchSources>[0],
+      demoContext(excelTargets) as unknown as Parameters<
+        typeof collectResearchSources
+      >[0],
     );
   } finally {
     if (previous.demo === undefined) delete process.env.REFLO_DEMO_MODE;
@@ -209,6 +283,75 @@ test("시연 모드 근거는 원문 검증을 통과해 STEP 05에 남는다", 
     `후보 ${bundle.candidates.length}건 중 ${passed.length}건만 통과했습니다. ` +
       "STEP 04가 완료돼도 STEP 05가 비게 됩니다.",
   );
+});
+
+/**
+ * STEP 05 `다음`은 stage gate가 열려야 활성화되고, gate는 필수 Excel 대상이
+ * 하나라도 검증되지 않으면 REQUIRED_NUMERIC_UNAVAILABLE·EXCEL_EVIDENCE_MISSING로
+ * 닫힌다. 같은 DART 계정을 가리키는 대상이 여러 개일 때 고정 원문이 계정 행을
+ * 중복 생성하면 resolveDartRow가 ambiguous로 판정해 그 계정이 전부 실패했다.
+ */
+test("시연 원문은 Excel 대상이 겹쳐도 계정 행을 하나만 만든다", async () => {
+  const targets = demoExcelTargets();
+  const bundle = await collectInDemoMode(targets);
+  const dartFixtures = bundle.sources.filter((source) =>
+    source.sourceKey.startsWith("fixture:dart:"),
+  );
+  assert.ok(dartFixtures.length > 0, "Excel 대상용 DART 원문이 없습니다.");
+
+  for (const source of dartFixtures) {
+    const rows = (source.content as { rows?: Array<Record<string, string>> })
+      .rows;
+    assert.ok(Array.isArray(rows) && rows.length > 0);
+    const keys = rows.map(
+      (row) => `${row.fs_div}:${row.sj_div}:${row.account_id}`,
+    );
+    assert.equal(
+      new Set(keys).size,
+      keys.length,
+      `${source.sourceKey}에 같은 계정 행이 두 번 있습니다. ` +
+        "resolveDartRow가 ambiguous로 판정해 해당 대상이 모두 검증 실패합니다.",
+    );
+  }
+});
+
+test("시연 Excel 대상은 전부 검증을 통과해 STEP 05 gate를 연다", async () => {
+  const targets = demoExcelTargets();
+  const bundle = await collectInDemoMode(targets);
+  const { validateDartExcelTarget } = await import(
+    "../server/domain/dart-value-validator"
+  );
+
+  const failures: string[] = [];
+  const values = new Map<string, string | null>();
+  for (const target of targets) {
+    const result = validateDartExcelTarget({
+      target: target as never,
+      sources: bundle.sources as never,
+      cutoffAt: CUTOFF_AT,
+      corpCode: DEMO_CORP_CODE,
+    });
+    values.set(target.targetId, result.valueNormalized);
+    if (result.machineStatus !== "passed") {
+      failures.push(`${target.targetId}: ${result.oneLineValue}`);
+    }
+  }
+  assert.deepEqual(
+    failures,
+    [],
+    `필수 Excel 대상이 검증되지 않아 STEP 05 \`다음\`이 막힙니다:\n${failures.join("\n")}`,
+  );
+
+  // 시연 화면에 실제 공시 금액이 보여야 한다. 합성 값이 섞이면 4Q25 매출이
+  // 연간 매출을 넘는 숫자로 표시된다.
+  assert.equal(values.get("actual:sheet_17:D5:2025"), "1065.294559811");
+  assert.equal(values.get("actual:sheet_17:D17:2025"), "47.60532769");
+  assert.equal(values.get("actual:sheet_17:D19:2025"), "47.60532769");
+  assert.equal(values.get("quarterly:sheet_13:V5:2026Q1"), "346.31416369");
+  assert.equal(values.get("quarterly:sheet_13:V6:2026Q1"), "51.29810885");
+  // 4Q25 = 2025 연간 − 3Q25 누적
+  assert.equal(values.get("quarterly:sheet_16:E5:2025Q4"), "317.887737499");
+  assert.equal(values.get("quarterly:sheet_16:E19:2025Q4"), "28.949052994");
 });
 
 test("후보 키가 겹치지 않아 답변 합성이 실패하지 않는다", async () => {
