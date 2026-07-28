@@ -2797,6 +2797,16 @@ function suggestedSummary(
   seed: OutlineSeed,
 ): string {
   const normalized = heading.toLowerCase();
+  // 준수 공시·투자등급 문단은 규정 문구다. 검증된 실적 숫자를 요약으로 붙이면
+  // 면책 문구가 실적 근거를 인용한 것처럼 읽힌다.
+  if (
+    heading.includes("투자등급") ||
+    heading.includes("비율공시") ||
+    heading.includes("괴리율") ||
+    normalized.includes("compliance")
+  ) {
+    return "원문 규정 문구를 유지합니다.";
+  }
   if (
     normalized.includes("목표주가") ||
     normalized.includes("valuation") ||
@@ -2807,17 +2817,27 @@ function suggestedSummary(
     ).toLocaleString("ko-KR")}원의 산출 근거를 설명합니다.`;
   }
   if (
+    normalized.includes("preview") ||
     normalized.includes("전망") ||
     normalized.includes("가시성") ||
     normalized.includes("outlook")
   ) {
     return cleanThesis(seed.thesis);
   }
+  // 같은 근거가 여러 문단의 요약으로 반복되면 페이지마다 같은 한 줄이 남는다.
+  // 문단 순서에 따라 서로 다른 근거를 배정한다.
   const passedEvidence = seed.evidence.filter(
     (item) => item.machineStatus === "passed",
   );
+  const distinctValues = [
+    ...new Set(
+      passedEvidence
+        .map((item) => item.oneLineValue.trim())
+        .filter((value) => value.length > 0),
+    ),
+  ];
   return (
-    passedEvidence[index % Math.max(1, passedEvidence.length)]?.oneLineValue ||
+    distinctValues[index % Math.max(1, distinctValues.length)] ||
     cleanThesis(seed.thesis) ||
     `${seed.companyName}의 검증된 핵심 내용을 정리합니다.`
   );

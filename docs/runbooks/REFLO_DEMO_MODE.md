@@ -60,6 +60,49 @@ STEP 04는 control worker가 이 엔드포인트들을 아예 호출하지 않�
 AI를 쓰지 않는 구간은 손대지 않았다. STEP 01 기업 조회, STEP 02 PDF·Excel
 검사, STEP 06 Excel 계산, STEP 07 미리보기·내보내기는 실제로 동작한다.
 
+### 예외: STEP 06 입력값
+
+STEP 06은 AI를 쓰지 않지만 **입력값은 시연 모드에서 미리 채운다.** 전망 연도
+85칸과 Target PER 두 가지다. 화면에는 `입력값 승인` 한 번만 남는다.
+
+Excel roll-forward가 모델을 한 해 밀기 때문에(`2023~2027F` → `2024~2028F`)
+마지막 전망 열은 빈 채로 STEP 06에 도착한다. 그 85칸은 애널리스트가 직접
+입력하는 자기 추정치라 어떤 자료에서도 가져올 수 없고, 다 채우기 전에는 승인
+게이트(`REQUIRED_INPUT_MISSING`)가 STEP 07로 넘어가는 것을 막는다. 촬영 중에
+손으로 칠 수 없으므로 시연 모드에서는 워크북이 처음 열릴 때 값을 넣어 둔다.
+
+- 값: `source-react/server/domain/demo-valuation-forecast.ts`
+- 적용: `getValuationWorkspace`가 STEP 06 첫 진입에서 한 번만 실행한다.
+  사용자가 이미 입력한 칸은 덮어쓰지 않고, 시트 이름이 안 맞는 다른 기업
+  모델에는 아무것도 쓰지 않는다.
+- 발표 멘트: 이 칸들은 원래 애널리스트가 직접 입력하는 자리라고 설명하고
+  넘어간다. 01 탭에서 노란 배경 칸이 사용자 입력 칸이다.
+
+**Target PER은 41.9배로 확정해 둔다** (`DEMO_TARGET_PER`). Forward EPS 3,033원
+기준 목표주가 127,000원, 현재주가 109,400원 대비 상승여력 +16.1%다.
+
+Excel의 `적정 P/E`(27.82배 = Peer 평균)를 그대로 쓰지 않는 이유가 있다. 그
+모델은 주가 52,500원 시점에 만들어져서, 현재주가에 대면 목표주가가 84,000원으로
+내려가고 상승여력이 **-23%**가 된다. STEP 03에서 입력하는 강세 투자의견과
+STEP 07 보고서가 정면으로 어긋난다. 이 회귀는 테스트가 막는다.
+
+사용자가 화면에서 다른 값을 반영했으면 draft 행이 이미 있으므로 시드가 건드리지
+않는다. 촬영 중에 값을 바꿔 보여줘도 된다.
+
+시연 모드를 켜기 **전에** 만든 프로젝트는 자동으로 채워지지 않는다. 그때는
+한 번만 실행한다.
+
+```bash
+cd source-react
+npx tsx scripts/demo-fill-forecast-column.ts <projectId>            # 계획만
+npx tsx scripts/demo-fill-forecast-column.ts <projectId> --apply    # 반영
+```
+
+`fixtures/`의 Valuation 모델이 아닌 다른 기업·분기로 촬영하려면
+`DEMO_FORECAST_CELLS`를 그 모델에 맞게 새로 만들어야 한다. 값이 하나도 안 맞으면
+시드가 0건이 되고 STEP 06에서 다시 막힌다. 이 회귀는
+`source-react/tests/demo-valuation-forecast.test.ts`가 막는다.
+
 ## 시연 시나리오 (대덕전자 1Q26)
 
 STEP 02에 넣는 파일은 `fixtures/`에 있다.

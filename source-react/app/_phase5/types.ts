@@ -200,7 +200,18 @@ export type ValuationWorkspace = {
   permissions: {
     editableCellSetVersion: number;
     editableCells: WorkbookReadModel["editableCells"];
+    /**
+     * 워커가 편집 가능한 셀의 `required`를 무조건 true로 넣으므로 전체 편집셀과
+     * 같다. 완료 게이트 판정에는 쓰지 말 것 — `missingRequiredCells`를 쓴다.
+     */
     requiredEditableCells: WorkbookReadModel["editableCells"];
+    /** 비어 있어서 `REQUIRED_INPUT_MISSING`을 만들고 있는 칸. */
+    missingRequiredCells: Array<{
+      sheetId: string;
+      sheetName: string;
+      address: string;
+      label: string;
+    }>;
   };
   calculation: {
     calculationRunId: string | null;

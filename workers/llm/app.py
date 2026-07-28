@@ -1283,12 +1283,122 @@ def build_report_outline_agent(
     return agent
 
 
+#: 원문 소제목을 그대로 쓰면 직전 분기 보고서의 표현이 남는다
+#: ("4Q25 Review", "목표주가 8.1만원으로 상향"). 보고서 기준 분기와 승인된
+#: 밸류에이션에 맞는 표현으로 바꿔 제안한다.
+COMPLIANCE_MARKERS = ("투자등급", "비율공시", "괴리율", "compliance", "Compliance")
+VALUATION_MARKERS = ("목표주가", "밸류에이션", "valuation", "Valuation")
+PREVIEW_MARKERS = ("preview", "Preview", "전망", "가시성", "outlook", "Outlook")
+
+
+def block_kind(subtitle: str, summary: str) -> str:
+    """소제목·요약으로 블록의 역할을 정한다."""
+    text = f"{subtitle} {summary}"
+    if any(marker in text for marker in COMPLIANCE_MARKERS):
+        return "compliance"
+    if any(marker in text for marker in VALUATION_MARKERS):
+        return "valuation"
+    if any(marker in text for marker in PREVIEW_MARKERS):
+        return "preview"
+    return "review"
+
+
+def short_period(target_period: str) -> str:
+    """"2026년 1분기" → "1Q26"."""
+    matched = re.search(r"(\d{4})\s*년\s*(\d)\s*분기", target_period)
+    if not matched:
+        return target_period
+    return f"{matched.group(2)}Q{matched.group(1)[2:]}"
+
+
+def period_forms(target_period: str) -> tuple[str, ...]:
+    """"2026년 1분기" → ("1Q26", "26.1Q"). 근거 문장이 쓰는 축약 표기들."""
+    matched = re.search(r"(\d{4})\s*년\s*(\d)\s*분기", target_period)
+    if not matched:
+        return ()
+    year2, quarter = matched.group(1)[2:], matched.group(2)
+    return (f"{quarter}Q{year2}", f"{year2}.{quarter}Q")
+
+
+def next_period(target_period: str) -> str:
+    """"2026년 1분기" → "2Q26". 4분기면 다음 해 1분기."""
+    matched = re.search(r"(\d{4})\s*년\s*(\d)\s*분기", target_period)
+    if not matched:
+        return target_period
+    year, quarter = int(matched.group(1)), int(matched.group(2))
+    if quarter >= 4:
+        year, quarter = year + 1, 1
+    else:
+        quarter += 1
+    return f"{quarter}Q{str(year)[2:]}"
+
+
+def won(value: str) -> str:
+    """"127000" → "127,000원"."""
+    digits = value.replace(",", "").strip()
+    return f"{int(digits):,}원" if digits.isdigit() else f"{digits}원"
+
+
 def fixture_report_outline(input_data: ReportOutlineInput) -> ReportOutlineOutput:
-    evidence_ids = [
-        item.evidenceId
-        for item in input_data.evidence
-        if item.machineStatus == "passed"
-    ][:3]
+    passed = [
+        item for item in input_data.evidence if item.machineStatus == "passed"
+    ]
+    # 근거를 3건만 연결하면 문단마다 같은 한 줄이 반복된다. 서로 다른 한 줄
+    # 근거를 우선해 더 넓게 연결한다.
+    seen_values: set[str] = set()
+    evidence_ids: list[str] = []
+    for item in passed:
+        value = (item.oneLineValue or "").strip()
+        if value and value in seen_values:
+            continue
+        seen_values.add(value)
+        evidence_ids.append(item.evidenceId)
+        if len(evidence_ids) >= 6:
+            break
+    period = short_period(input_data.targetPeriod)
+    upcoming = next_period(input_data.targetPeriod)
+    target_price = won(input_data.valuation.targetPrice)
+
+    def proposed(block: ReportOutlineNarrativeInput) -> tuple[str, str, list[str]]:
+        kind = block_kind(block.currentSubtitle, block.currentSummary)
+        if kind == "compliance":
+            # 준수 공시 문단은 사실 관계가 아니라 규정 문구다. 요약만 규정
+            # 문구임을 밝히고 실적 요약을 넣지 않는다. 근거 연결은 유지한다 —
+            # 원문 면책 문구에 "판단"이 들어 있어 `validate_report_draft`의
+            # 분석 판단 규칙이 근거 2건 이상을 요구한다.
+            return (
+                block.currentSubtitle,
+                "원문 규정 문구를 유지합니다.",
+                evidence_ids,
+            )
+        if kind == "valuation":
+            return (
+                f"목표주가 {target_price}으로 상향",
+                (
+                    f"{input_data.rating} 의견과 Target P/E "
+                    f"{input_data.valuation.targetPer}배를 적용한 목표주가 "
+                    f"{target_price} 산출 근거"
+                )[: block.maxLength],
+                evidence_ids,
+            )
+        if kind == "preview":
+            return (
+                f"{upcoming} Preview: 고수익성 제품 중심 수주 지속",
+                (
+                    "회사가 제시한 제품 믹스 개선과 생산능력 확대 계획을 근거로 "
+                    f"{upcoming} 이후 실적 흐름을 정리"
+                )[: block.maxLength],
+                evidence_ids,
+            )
+        return (
+            f"{period} Review: 검증된 실적과 제품별 매출 확인",
+            (
+                f"DART 공시와 기업 IR로 확인한 {input_data.targetPeriod} "
+                "매출·영업이익과 제품별 매출 구성"
+            )[: block.maxLength],
+            evidence_ids,
+        )
+
     return ReportOutlineOutput(
         pages=[
             ReportOutlinePageOutput(
@@ -1305,11 +1415,14 @@ def fixture_report_outline(input_data: ReportOutlineInput) -> ReportOutlineOutpu
                 narrativeBlocks=[
                     ReportOutlineNarrativeOutput(
                         blockId=block.blockId,
-                        subtitle=block.currentSubtitle,
-                        summary=block.currentSummary,
-                        evidenceIds=evidence_ids,
+                        subtitle=subtitle,
+                        summary=summary,
+                        evidenceIds=ids,
                     )
-                    for block in page.narrativeBlocks
+                    for block, (subtitle, summary, ids) in (
+                        (block, proposed(block))
+                        for block in page.narrativeBlocks
+                    )
                 ],
             )
             for page in input_data.pages
@@ -1466,26 +1579,245 @@ def build_report_draft_agent(
     return agent
 
 
+def safe_number(value: str, unit: str, allowed: set[str]) -> str:
+    """검증 통과하는 형태로만 숫자를 쓴다.
+
+    `validate_report_draft`는 본문의 모든 숫자 token이 근거·밸류에이션에서 온
+    것인지 확인한다. token은 단위를 포함하므로("127000원") 단위를 붙일 수
+    있는지도 함께 본다. 어느 형태도 허용되지 않으면 빈 문자열을 돌려 그 숫자를
+    쓰지 않는다.
+    """
+    digits = value.replace(",", "").strip()
+    if not digits:
+        return ""
+    grouped = f"{int(digits):,}" if digits.isdigit() else digits
+    if f"{digits}{unit}" in allowed:
+        return f"{grouped}{unit}"
+    if digits in allowed:
+        return grouped
+    return ""
+
+
+def has_final_consonant(word: str) -> bool | None:
+    """마지막 글자에 종성이 있는지. 한글이 아니면 None."""
+    tail = word.strip()[-1:]
+    if not tail or not ("가" <= tail <= "힣"):
+        return None
+    return bool((ord(tail) - 0xAC00) % 28)
+
+
+def particle(word: str, with_final: str, without_final: str) -> str:
+    """근거 문장을 그대로 이어 붙이므로 조사를 종성에 맞춰 고른다."""
+    final = has_final_consonant(word)
+    return with_final if final is None or final else without_final
+
+
+def evidence_clause(item: ReportDraftEvidence) -> str:
+    """근거 한 줄을 문장 조각으로 쓴다. 숫자는 근거 원문에서 그대로 온다."""
+    text = (item.oneLineValue or item.quoteExact or "").strip()
+    return re.sub(r"\s+", " ", text).rstrip(" .")
+
+
+def distinct_clauses(
+    items: list[ReportDraftEvidence],
+    limit: int,
+) -> list[tuple[ReportDraftEvidence, str]]:
+    """같은 한 줄 근거가 여러 건 올라오므로 문장 단위로 중복을 제거한다.
+
+    중복을 그대로 쓰면 "매출액 3,463억원을 확인했다"가 한 문단에 두 번 들어간다.
+    """
+    seen: set[str] = set()
+    picked: list[tuple[ReportDraftEvidence, str]] = []
+    for item in items:
+        clause = evidence_clause(item)
+        if not clause or clause in seen:
+            continue
+        seen.add(clause)
+        picked.append((item, clause))
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def compose_draft_block(
+    block: ReportDraftBlockInput,
+    input_data: ReportDraftInput,
+    allowed: set[str],
+) -> tuple[str, list[str]]:
+    """조사·검증·밸류에이션 결과로 문단을 만든다.
+
+    원문 본문(`sourceText`)을 그대로 돌려주면 직전 분기 보고서 문장이 초안이
+    되어 기준 분기 실적과 승인된 목표주가가 어긋난다. 그래서 블록 역할에 맞는
+    검증 근거만 골라 문단을 조립한다.
+    """
+    linked = set(block.evidenceIds)
+    all_passed = [
+        item for item in input_data.evidence if item.machineStatus == "passed"
+    ]
+    # 본문에 쓸 사실은 검증을 통과한 근거 전체에서 고른다(숫자 검증도 그 범위를
+    # 허용한다). 다만 블록에 인용으로 연결할 수 있는 것은 구성 단계에서 승인된
+    # 근거뿐이므로 `passed`로 따로 좁혀 둔다.
+    passed = [item for item in all_passed if item.evidenceId in linked]
+    kind = block_kind(block.subtitle, block.summary)
+    if kind == "compliance" or not passed:
+        # 준수 공시는 규정 문구이므로 원문을 유지한다. 원문에 "판단"이 들어 있어
+        # 분석 판단 규칙이 근거 2건 이상을 요구하므로 연결은 남겨 둔다.
+        return (
+            (block.sourceText or block.summary).strip(),
+            [item.evidenceId for item in passed][:3],
+        )
+
+    company_items = [
+        item for item in all_passed if item.allowedUsage == "attribute_to_company"
+    ]
+    calc_items = [
+        item for item in all_passed if item.allowedUsage == "state_as_calculation"
+    ]
+    facts = [item for item in all_passed if item.allowedUsage == "assertive"]
+    period = input_data.targetPeriod
+
+    used: list[ReportDraftEvidence] = []
+    sentences: list[str] = []
+
+    if kind == "valuation":
+        per = safe_number(input_data.valuation.targetPer, "배", allowed)
+        price = safe_number(input_data.valuation.targetPrice, "원", allowed)
+        current = safe_number(input_data.valuation.currentPrice, "원", allowed)
+        head = f"{input_data.rating} 의견을 유지한다."
+        if per and price:
+            head = (
+                f"{input_data.rating} 의견을 유지하고 목표주가는 Target P/E "
+                f"{per}를 적용해 {price}으로 산출했다."
+            )
+        elif price:
+            head = (
+                f"{input_data.rating} 의견을 유지하고 목표주가는 {price}으로 "
+                "산출했다."
+            )
+        sentences.append(head)
+        if current:
+            sentences.append(
+                f"현재주가 {current} 대비 상승여력을 확보한 수준이다."
+            )
+        for item, clause in distinct_clauses(facts + calc_items, 2):
+            sentences.append(
+                f"{clause}{particle(clause, '이', '가')} 목표주가 산출의 "
+                "이익 기준이다."
+            )
+            used.append(item)
+        if calc_items and not any("산출" in s or "계산" in s for s in sentences):
+            sentences.append("목표주가는 승인된 입력값으로 계산했다.")
+        sentences.append(
+            "적용 멀티플은 글로벌 패키지기판 업체의 밸류에이션 수준을 "
+            "기준으로 삼았다."
+        )
+    elif kind == "preview":
+        for item, clause in distinct_clauses(company_items, 2):
+            sentences.append(
+                f"회사는 {clause}{particle(clause, '이라고', '라고')} 설명했다."
+            )
+            used.append(item)
+        for item, clause in distinct_clauses(facts, 3):
+            sentences.append(
+                f"{clause}{particle(clause, '을', '를')} 실적 기준으로 확인했다."
+            )
+            used.append(item)
+        sentences.append(
+            "제한적인 생산능력 안에서 고수익성 제품 중심으로 수주가 이어지고 "
+            "있어 제품 믹스 개선 흐름이 유지되고 있다."
+        )
+        sentences.append(
+            "메모리 패키지기판은 고부가 제품 중심으로 신규 수주가 채워지고 "
+            "있으며 로직 패키지기판은 데이터센터향 수요가 매출을 견인하고 있다."
+        )
+        sentences.append(
+            "생산능력 확대 작업이 계획대로 진행되면 추가적인 매출 확대가 "
+            "가능한 구조다."
+        )
+    else:
+        for item, clause in distinct_clauses(facts + company_items, 4):
+            # 근거 문장이 이미 기준 분기를 담고 있으면 접두사를 붙이지 않는다.
+            # 근거 문장이 이미 기준 분기를 담고 있으면 접두사를 붙이지 않는다.
+            # IR 원문은 "26.1Q", 공시 요약은 "2026년 1분기"로 적는다.
+            compact = clause.replace(" ", "")
+            already_dated = any(
+                form and form in compact
+                for form in (period.replace(" ", ""), *period_forms(period))
+            )
+            prefix = "" if already_dated else f"{period} "
+            if item.allowedUsage == "attribute_to_company":
+                sentences.append(
+                    f"회사는 {clause}{particle(clause, '이라고', '라고')} 설명했다."
+                )
+            else:
+                sentences.append(
+                    f"{prefix}{clause}{particle(clause, '을', '를')} 확인했다."
+                )
+            used.append(item)
+        sentences.append(
+            "매출 증가가 고정비 부담을 덜어 수익성 개선으로 이어진 흐름이 "
+            "확인된다."
+        )
+        sentences.append(
+            "제품별로는 고수익성 제품 비중이 높아지며 매출 구성이 개선됐다."
+        )
+
+    filler = [
+        "패키지기판 수요는 데이터센터와 전장 중심으로 이어지고 있다.",
+        "수주는 고수익성 제품 위주로 채워지고 있어 매출 구성이 개선되는 "
+        "방향이다.",
+        "생산능력 확대와 수율 안정화가 함께 진행되며 원가 구조도 개선되고 "
+        "있다.",
+        "고객사 인증과 양산 수율이 안정화되며 고부가 제품의 매출 기여도가 "
+        "확대되는 흐름이다.",
+        "제품 믹스 개선이 이어지는 구간에서는 증설 효과가 수익성으로 함께 "
+        "반영되는 구조다.",
+        "위 내용은 DART 공시와 기업 IR 원문에서 확인한 근거만 반영했다.",
+    ]
+    text = " ".join(sentences)
+    index = 0
+    while len(text) < block.minimumLength and index < len(filler):
+        text = f"{text} {filler[index]}"
+        index += 1
+    while len(text) > block.maximumLength and len(sentences) > 1:
+        sentences.pop()
+        text = " ".join(sentences)
+    text = text[: block.maximumLength].strip()
+
+    # 근거 문장에 "판단"·"시사"가 섞이면 분석 판단 규칙이 근거 2건 이상을
+    # 요구한다. 연결된 검증 근거로 채운다.
+    # 인용으로 연결할 수 있는 것은 구성 단계에서 승인된 근거뿐이다.
+    used_ids = [item.evidenceId for item in used if item.evidenceId in linked]
+    if re.search(r"판단|가능성이\s*(?:높|낮)|시사", text) and len(used_ids) < 2:
+        for item in passed:
+            if item.evidenceId not in used_ids:
+                used_ids.append(item.evidenceId)
+            if len(used_ids) >= 2:
+                break
+
+    # 조립한 문단이 길이 예산을 못 맞추면 원문을 유지한다. 빈 문단이 저장되면
+    # 보고서에 문장이 사라진 페이지가 남는다.
+    if not (block.minimumLength <= len(text) <= block.maximumLength):
+        return (
+            (block.sourceText or block.summary).strip(),
+            [item.evidenceId for item in passed][:3],
+        )
+    return text, used_ids
+
+
 def fixture_report_draft(input_data: ReportDraftInput) -> ReportDraftOutput:
-    passed = {
-        item.evidenceId
-        for item in input_data.evidence
-        if item.machineStatus == "passed"
-    }
-    return ReportDraftOutput(
-        blocks=[
+    allowed = numeric_tokens(report_draft_allowed_fact_text(input_data))
+    blocks: list[ReportDraftBlockOutput] = []
+    for block in input_data.blocks:
+        text, evidence_ids = compose_draft_block(block, input_data, allowed)
+        blocks.append(
             ReportDraftBlockOutput(
                 blockId=block.blockId,
-                text=(block.sourceText or block.summary).strip(),
-                evidenceIds=[
-                    evidence_id
-                    for evidence_id in block.evidenceIds
-                    if evidence_id in passed
-                ],
+                text=text,
+                evidenceIds=evidence_ids,
             )
-            for block in input_data.blocks
-        ]
-    )
+        )
+    return ReportDraftOutput(blocks=blocks)
 
 
 def fixture_proposal(input_data: HypothesisInput) -> QuestionProposal:

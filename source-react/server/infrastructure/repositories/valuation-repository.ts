@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
+import { demoModeEnabled } from "../../domain/demo-mode";
+import {
+  DEMO_TARGET_PER,
+  demoForecastSeedChanges,
+} from "../../domain/demo-valuation-forecast";
 import { contentHash } from "../../domain/hash";
 import { uuidv7 } from "../../domain/ids";
 import { processRoute, type StageKey } from "../../domain/project";
@@ -1959,11 +1964,111 @@ async function workflowState(client: TransactionClient, projectId: string) {
   }));
 }
 
+/**
+ * 시연 모드에서만: roll-forward가 비워 둔 전망 연도 열을 미리 채운다.
+ *
+ * 그 열은 원래 애널리스트가 STEP 06에서 직접 입력하는 자기 추정치라 비어 있는
+ * 게 정상이다. 다만 촬영 중에 85칸을 손으로 칠 수는 없으므로, 시연 모드에서는
+ * 워크북이 처음 열릴 때 값을 넣어 두고 발표자가 "원래 이 칸은 직접 입력한다"고
+ * 설명만 하고 넘어가게 한다.
+ *
+ * 사용자가 화면에서 입력한 것과 **같은 경로**(`patchValuationCells`)를 쓴다.
+ * 따로 DB를 건드리면 Excel 재계산·워크북 버전·감사 기록이 어긋난다.
+ *
+ * 채울 게 없으면(시연 모드가 꺼졌거나, 다른 기업 모델이거나, 이미 채워졌거나)
+ * 아무 일도 하지 않는다.
+ */
+async function seedDemoValuation(
+  projectId: string,
+  userId: string,
+  state: WorkbookState,
+): Promise<boolean> {
+  if (!demoModeEnabled()) return false;
+  try {
+    // 화면이 GET을 두 번 보내면(재마운트·프리페치) 두 요청이 같은 시드를
+    // 동시에 시도한다. 두 결과 workbook은 내용이 같아 object key까지 같으므로,
+    // 직렬화하지 않으면 뒤쪽 put이 412(PreconditionFailed)로 죽고 시드가 통째로
+    // 날아간다. 앞선 요청이 채우고 나면 뒤쪽은 채울 게 없어 그냥 빠져나온다.
+    return await withTransaction(async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`valuation.demo-seed:${projectId}`],
+      );
+      let current = await readWorkbookState(client, projectId);
+      if (!current) return false;
+      // 앞선 요청이 이미 시드했다면 이 요청이 들고 있는 상태는 시드 이전
+      // 스냅샷이다. 그대로 응답하면 채워지지 않은 화면이 보인다.
+      let changed = current.workbookVersion !== state.workbookVersion;
+
+      const changes = demoForecastSeedChanges(current.readModel);
+      if (changes.length > 0) {
+        await patchValuationCells({
+          projectId,
+          userId,
+          workbookVersion: current.workbookVersion,
+          editableCellSetVersion: current.editableCellSetVersion,
+          requestId: seedRequestId(projectId, ["forecast", current.workbookVersion]),
+          changes,
+        });
+        current = await readWorkbookState(client, projectId);
+        if (!current) return true;
+        changed = true;
+      }
+
+      // Target PER도 촬영 중에 타이핑할 수 없으므로 미리 확정해 둔다. 사용자가
+      // 화면에서 다른 값을 반영했으면 draft 행이 이미 있으므로 건드리지 않는다.
+      const draft = await client.query(
+        "SELECT 1 FROM valuation_draft WHERE project_id = $1",
+        [projectId],
+      );
+      if (draft.rowCount === 0) {
+        await updateValuationDraft({
+          projectId,
+          userId,
+          workbookVersion: current.workbookVersion,
+          draftVersion: 0,
+          requestId: seedRequestId(projectId, ["draft", current.workbookVersion]),
+          inputMode: "target_per",
+          targetPer: DEMO_TARGET_PER,
+        });
+        changed = true;
+      }
+      return changed;
+    });
+  } catch (error) {
+    // 시드는 촬영 편의일 뿐이므로 실패해도 화면은 떠야 한다. 채우지 못하면
+    // 남은 blocker가 화면에 그대로 보인다.
+    console.error("demo valuation seed failed", error);
+    return false;
+  }
+}
+
+/** 같은 프로젝트·같은 단계·같은 workbook 버전이면 항상 같은 UUID. */
+function seedRequestId(projectId: string, scope: unknown): string {
+  const hex = contentHash({
+    purpose: "demo.valuation.seed",
+    projectId,
+    scope,
+  }).slice(0, 32);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
+}
+
 export async function getValuationWorkspace(
   projectId: string,
   userId: string,
 ) {
-  const { context, state } = await ensureWorkbook(projectId, userId);
+  const prepared = await ensureWorkbook(projectId, userId);
+  // 값을 넣으면 workbook 버전이 오르므로 상태를 다시 읽어야 한다.
+  const seeded = await seedDemoValuation(projectId, userId, prepared.state);
+  const { context, state } = seeded
+    ? await ensureWorkbook(projectId, userId)
+    : prepared;
   return withTransaction(async (client) => {
     const draft = await client.query<{
       draft_version: string;
@@ -2143,6 +2248,16 @@ export async function getValuationWorkspace(
         requiredEditableCells: state.readModel.editableCells.filter(
           (cell) => cell.required,
         ),
+        // 완료 게이트가 실제로 요구하는 칸. `requiredEditableCells`는 워커가
+        // 편집 가능한 셀의 `required`를 무조건 true로 넣어 전체 편집셀과 같아
+        // 화면에서 쓸 수 없다. `REQUIRED_INPUT_MISSING`을 만드는 목록을 그대로
+        // 내려보내 사용자가 어느 칸을 채워야 하는지 찾을 수 있게 한다.
+        missingRequiredCells: requiredMissing.map((cell) => ({
+          sheetId: cell.sheetId,
+          sheetName: cell.sheetName,
+          address: cell.address,
+          label: cell.label,
+        })),
       },
       calculation: {
         calculationRunId: latestRun.rows[0]?.calculation_run_id ?? null,

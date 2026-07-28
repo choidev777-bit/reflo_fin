@@ -266,6 +266,7 @@ export default function ValuationWorkbook({
   model,
   disabled,
   selected,
+  missingRequired,
   onSelected,
   onCommit,
   onLocalError,
@@ -273,6 +274,8 @@ export default function ValuationWorkbook({
   model: WorkbookReadModel;
   disabled: boolean;
   selected: { sheetId: string; address: string } | null;
+  /** 비어 있어서 완료를 막고 있는 칸의 `sheetId:address`. */
+  missingRequired: ReadonlySet<string>;
   onSelected: (cell: WorkbookCell, sheetId: string, sheetName: string) => void;
   onCommit: (changes: Change[]) => Promise<boolean>;
   onLocalError: (message: string) => void;
@@ -305,6 +308,14 @@ export default function ValuationWorkbook({
     () => model.sheets.filter((item) => item.visibility === "visible"),
     [model.sheets],
   );
+  const missingRequiredBySheet = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const key of missingRequired) {
+      const sheetId = key.slice(0, key.lastIndexOf(":"));
+      counts.set(sheetId, (counts.get(sheetId) ?? 0) + 1);
+    }
+    return counts;
+  }, [missingRequired]);
   const sheet =
     visibleSheets.find((item) => item.sheetId === activeSheetId) ??
     visibleSheets[0];
@@ -737,6 +748,9 @@ export default function ValuationWorkbook({
                       merged ? "is-merged" : "",
                       isImpactMuted ? "is-impact-muted" : "",
                       isSelected ? "is-selected" : "",
+                      missingRequired.has(`${sheet.sheetId}:${cell.address}`)
+                        ? "is-required-missing"
+                        : "",
                     ].join(" ")}
                     style={style}
                     onClick={() =>
@@ -815,6 +829,7 @@ export default function ValuationWorkbook({
             editableCountBySheet.get(item.sheetId) ?? 0;
           const filteredCount =
             filteredEditableCountBySheet.get(item.sheetId) ?? 0;
+          const missingCount = missingRequiredBySheet.get(item.sheetId) ?? 0;
           return (
             <button
               key={item.sheetId}
@@ -822,15 +837,18 @@ export default function ValuationWorkbook({
               className={
                 [
                   editableCount > 0 ? "has-editable-cells" : "",
+                  missingCount > 0 ? "has-required-missing" : "",
                   impactFilter !== "all" && filteredCount === 0
                     ? "is-impact-muted"
                     : "",
                 ].filter(Boolean).join(" ") || undefined
               }
               aria-label={
-                editableCount > 0
-                  ? `${item.name}, 사용자 입력 셀 ${editableCount}개`
-                  : `${item.name}, 읽기 전용`
+                missingCount > 0
+                  ? `${item.name}, 필수 입력 ${missingCount}개 남음`
+                  : editableCount > 0
+                    ? `${item.name}, 사용자 입력 셀 ${editableCount}개`
+                    : `${item.name}, 읽기 전용`
               }
               aria-pressed={item.sheetId === sheet.sheetId}
               onClick={() => {
@@ -840,10 +858,14 @@ export default function ValuationWorkbook({
               }}
             >
               <span>{item.name}</span>
-              {editableCount > 0 && (
-                <small>
-                  입력 {impactFilter === "all" ? editableCount : filteredCount}
-                </small>
+              {missingCount > 0 ? (
+                <small>필수 {missingCount}</small>
+              ) : (
+                editableCount > 0 && (
+                  <small>
+                    입력 {impactFilter === "all" ? editableCount : filteredCount}
+                  </small>
+                )
               )}
             </button>
           );
