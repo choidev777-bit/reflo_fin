@@ -41,6 +41,19 @@ const child = spawn(
       REFLO_LOCAL_OPENAI_API_KEY: openAiApiKey || "not-used-for-stop-command",
       REFLO_WORKER_TOKEN:
         workerToken || "not-used-for-non-worker-stop-command",
+      // 시연 모드는 .env.local 한 곳에서 켜고 끈다. 여기서 넘기지 않으면
+      // Next.js와 control worker만 시연 모드가 되고 컨테이너 워커는 실제
+      // AI를 호출해 STEP 03에서 모드가 어긋난다.
+      ...Object.fromEntries(
+        [
+          "REFLO_DEMO_MODE",
+          "REFLO_DEMO_HYPOTHESIS_SECONDS",
+          "REFLO_DEMO_OUTLINE_SECONDS",
+          "REFLO_DEMO_DRAFT_SECONDS",
+        ]
+          .filter((name) => localEnvironment[name]?.trim())
+          .map((name) => [name, localEnvironment[name].trim()]),
+      ),
     },
     stdio: "inherit",
     windowsHide: true,

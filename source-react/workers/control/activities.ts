@@ -27,6 +27,11 @@ import {
 } from "../../server/domain/research-question-answers";
 import { createWorkerResultEnvelope } from "../../server/domain/worker-result-contract";
 import {
+  demoPause,
+  demoResearchPhaseSeconds,
+  scriptedResearchEnabled,
+} from "../../server/domain/demo-mode";
+import {
   collectResearchSources,
   type CollectionBundle,
 } from "../../server/infrastructure/research-sources/adapters";
@@ -1442,10 +1447,7 @@ async function synthesizeQuestionAnswers(
   const ready = decisions.filter((decision) => decision.readyForSynthesis);
   let generated: ResearchQuestionAnswer[] = [];
   if (ready.length > 0) {
-    if (
-      process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
-      process.env.REFLO_LLM_TEST_FIXTURE === "1"
-    ) {
+    if (scriptedResearchEnabled()) {
       generated = ready.map((decision) => ({
         questionId: decision.question.questionId,
         verdict: decision.verdict,
@@ -1612,7 +1614,7 @@ export async function collectResearchBundle(
       ? "기사 원문과 발행일을 확인하고 공식 자료를 함께 수집하고 있습니다."
       : "공식 API와 공개 원문을 수집하고 있습니다.",
   );
-  return runWithPeriodicActivityHeartbeat(
+  const bundle = await runWithPeriodicActivityHeartbeat(
     "collecting_research_sources",
     () => collectResearchSources({
       projectId: input.projectId,
@@ -1636,6 +1638,11 @@ export async function collectResearchBundle(
     }),
     15_000,
   );
+  await demoPause(
+    demoResearchPhaseSeconds("collecting"),
+    Context.current().cancellationSignal,
+  );
+  return bundle;
 }
 
 export async function collectHypothesisBundle(
@@ -1733,6 +1740,10 @@ export async function extractResearchCandidates(
     bundle.candidates.length > 0
       ? bundle.candidates
       : await callResearchAgent(input, bundle.sources);
+  await demoPause(
+    demoResearchPhaseSeconds("extracting"),
+    Context.current().cancellationSignal,
+  );
   return researchCandidates;
 }
 
@@ -1811,15 +1822,13 @@ export async function validateHypothesisPipeline(
       finishedAt: new Date().toISOString(),
     };
   }
-  const agentValidated =
-    process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
-    process.env.REFLO_LLM_TEST_FIXTURE === "1"
-      ? codeValidatedCandidates
-      : await callValidationAgent(
-          input,
-          bundle.sources,
-          codeValidatedCandidates,
-        );
+  const agentValidated = scriptedResearchEnabled()
+    ? codeValidatedCandidates
+    : await callValidationAgent(input, bundle.sources, codeValidatedCandidates);
+  await demoPause(
+    demoResearchPhaseSeconds("validating"),
+    Context.current().cancellationSignal,
+  );
   const evidence = agentValidated
     .map((candidate) => {
       const source = sourceByKey.get(candidate.sourceKey);
@@ -1906,6 +1915,10 @@ export async function publishSeparatedResearchValidation(
     "publishing_projection",
     95,
     "분리 검증 결과를 하나의 검토 작업공간에 게시하고 있습니다.",
+  );
+  await demoPause(
+    demoResearchPhaseSeconds("publishing"),
+    Context.current().cancellationSignal,
   );
   const payload = {
     sources: mergeSources(hypothesis.sources, excel.sources),

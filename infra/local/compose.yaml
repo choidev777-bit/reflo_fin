@@ -115,6 +115,12 @@ services:
       PORT: 8093
       OPENAI_API_KEY: ${REFLO_LOCAL_OPENAI_API_KEY:?Run the local Compose launcher from source-react so it can load .env.local}
       REFLO_LLM_TEST_FIXTURE: ${REFLO_LLM_TEST_FIXTURE:-0}
+      # 시연 영상용 고정 응답 모드. STEP 03 질문을 AI 대신 고정 시나리오로
+      # 돌려주고, 결과가 즉시 나타나지 않도록 잠시 기다린다.
+      REFLO_DEMO_MODE: ${REFLO_DEMO_MODE:-0}
+      REFLO_DEMO_HYPOTHESIS_SECONDS: ${REFLO_DEMO_HYPOTHESIS_SECONDS:-5}
+      REFLO_DEMO_OUTLINE_SECONDS: ${REFLO_DEMO_OUTLINE_SECONDS:-6}
+      REFLO_DEMO_DRAFT_SECONDS: ${REFLO_DEMO_DRAFT_SECONDS:-10}
     ports:
       - "127.0.0.1:8093:8093"
     healthcheck:

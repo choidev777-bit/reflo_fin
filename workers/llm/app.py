@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -31,6 +32,45 @@ OUTPUT_SCHEMA_ID = "https://schemas.reflo.dev/worker/v1/agent-output.schema.json
 SOURCE_TYPES = {"filing", "company", "news", "industry", "market_data"}
 FIXTURE_FAIL_TWICE_MARKER = "[fixture:fail-twice]"
 fixture_failure_attempts: dict[str, int] = {}
+
+
+def fixture_mode() -> bool:
+    return os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1"
+
+
+def demo_mode() -> bool:
+    """시연 영상 촬영용 고정 응답 모드.
+
+    켜면 STEP 03 질문을 AI 대신 고정 시나리오로 돌려주고, 결과가 즉시
+    나타나지 않도록 잠시 기다린다.
+
+    테스트 fixture가 켜져 있으면 시연 모드를 양보한다. 둘은 같은 컨테이너를
+    쓰는데 E2E는 다른 기업·다른 분기를 쓰고 [fixture:fail-twice] 재시도 경로도
+    검사한다. 시연 질문은 대덕전자 1Q26 전용이라 E2E 입력에서는 검증을
+    통과하지 못하고, 시연 지연이 걸리면 E2E도 느려진다.
+    """
+    return os.environ.get("REFLO_DEMO_MODE") == "1" and not fixture_mode()
+
+
+def demo_delay_seconds(name: str, fallback: float) -> float:
+    raw = os.environ.get(name)
+    try:
+        value = float(raw) if raw is not None else fallback
+    except ValueError:
+        return fallback
+    return value if value >= 0 else fallback
+
+
+async def demo_sleep(name: str, fallback: float) -> None:
+    """시연 모드에서만 기다린다.
+
+    고정 응답은 즉시 만들어지므로 그대로 돌려주면 화면이 깜빡이고 끝나
+    작업이 실행된 것처럼 보이지 않는다. 테스트 fixture 경로에서는 이 함수가
+    곧바로 반환하므로 E2E 시간에는 영향이 없다.
+    """
+    if not demo_mode():
+        return
+    await asyncio.sleep(demo_delay_seconds(name, fallback))
 
 # TD-023 "Research·Validation 보조 추론" profile. reasoning=medium 실행에서는
 # reasoning token이 output token에 함께 계상되므로 이전 6,000~8,000 상한은
@@ -1513,6 +1553,102 @@ def fixture_proposal(input_data: HypothesisInput) -> QuestionProposal:
     )
 
 
+def demo_proposal(input_data: HypothesisInput) -> QuestionProposal:
+    """시연용 고정 질문 5개 (대덕전자 1Q26 실적 리뷰).
+
+    질문 본문은 시연 대본 그대로 두고, 검증 규칙(`validate_proposal`)이 요구하는
+    비교 기준은 metrics·period·comparison으로 채운다. 예를 들어 1번 질문 본문의
+    "시장 기대치"는 컨센서스 marker 목록에 없으므로 comparison에 "컨센서스"를
+    명시하고, 4번 질문 본문에는 다음 분기 표현이 없으므로 period·comparison에
+    "2026년 2분기"를 넣는다. 본문을 고쳐 규칙을 맞추면 대본이 바뀌므로
+    metadata 쪽에서 맞춘다.
+
+    targetPeriod가 2026년 1분기라는 전제로 작성했다. 다른 분기로 시연하려면
+    질문 본문의 1Q26·2Q26 표기와 아래 period·comparison을 함께 바꿔야 한다.
+    """
+    period = input_data.targetPeriod
+    return QuestionProposal(
+        questions=[
+            ResearchQuestionProposal(
+                questionKey="q_01",
+                role="PERFORMANCE",
+                text=(
+                    "1Q26 매출액과 영업이익률은 전분기·전년동기 및 시장 기대치 "
+                    "대비 얼마나 개선됐으며, 실적 상승 사이클의 시작을 확인할 수 "
+                    "있을까?"
+                ),
+                purpose="1Q26 실적의 개선폭과 실적 상승 사이클 진입 여부 확인",
+                metrics=["매출액", "영업이익", "영업이익률", "컨센서스"],
+                period=period,
+                comparison="전분기·전년 동기·컨센서스",
+                sourceTypes=["filing", "company"],
+                priority=1,
+            ),
+            ResearchQuestionProposal(
+                questionKey="q_02",
+                role="DRIVER",
+                text=(
+                    "데이터센터용 FCCSP·FCBGA 수요 확대와 고수익성 제품 중심의 "
+                    "믹스 개선은 2Q26 이후 PKG 부문의 외형 성장과 수익성 상승을 "
+                    "지속시킬 수 있을까?"
+                ),
+                purpose="데이터센터향 패키지 기판 수요와 제품 믹스가 PKG 부문 실적에 미치는 영향 확인",
+                metrics=["FCCSP 수요", "FCBGA 수요", "제품 믹스", "PKG 부문 수익성"],
+                period="2026년 2분기 이후",
+                comparison="전분기·전년 동기",
+                sourceTypes=["filing", "company"],
+                priority=2,
+            ),
+            ResearchQuestionProposal(
+                questionKey="q_03",
+                role="SEGMENT",
+                text=(
+                    "위성통신 신규 고객 확보와 항공우주·데이터센터용 High-End MLB "
+                    "수요 증가는 중장기 실적을 견인할 새로운 성장축으로 자리 잡을 "
+                    "수 있을까?"
+                ),
+                purpose="위성통신과 High-End MLB가 새로운 성장축으로 자리 잡는지 확인",
+                metrics=["위성통신 수요", "High-End MLB 수요", "신규 고객 확보"],
+                period="2026년 이후 중장기",
+                comparison="전년 동기·회사 중장기 계획",
+                sourceTypes=["filing", "company"],
+                priority=3,
+            ),
+            ResearchQuestionProposal(
+                questionKey="q_04",
+                role="OUTLOOK",
+                text=(
+                    "판가 인상, 생산능력 확대, 양산 수율 안정화 및 신제품 출시 "
+                    "효과를 고려할 때 1Q26이 연중 실적 저점이고 하반기로 갈수록 "
+                    "이익이 증가할 가능성이 높은가?"
+                ),
+                purpose="1Q26 저점 여부와 하반기·연간 이익 증가 가능성 확인",
+                metrics=["판가", "생산능력", "양산 수율", "분기별 이익 추이"],
+                period="2026년 2분기 이후 · 연간",
+                comparison="2026년 2분기·하반기·연간 회사 계획",
+                sourceTypes=["filing", "company"],
+                priority=4,
+            ),
+            ResearchQuestionProposal(
+                questionKey="q_05",
+                role="VALUATION",
+                text=(
+                    "AI·데이터센터와 위성통신 사업의 성장성 및 추가 실적 상향 "
+                    "가능성을 감안할 때, 현재 주가에는 1Q26 이후의 이익 성장과 "
+                    "신규 사업 가치가 충분히 반영되어 있는가?"
+                ),
+                purpose="이익 추정치와 목표 PER을 반영한 목표주가 및 상승 여력 확인",
+                metrics=["이익 추정치", "목표 PER", "목표주가", "상승 여력"],
+                period=period,
+                comparison="현재 주가·목표주가",
+                sourceTypes=["filing", "company"],
+                priority=5,
+            ),
+        ],
+        missingContext=[],
+    )
+
+
 def usage_value(usage: object, name: str) -> int:
     value = getattr(usage, name, 0)
     return int(value or 0)
@@ -1536,7 +1672,17 @@ async def health() -> dict[str, str]:
 @app.post("/hypothesis/questions")
 async def generate_questions(body: RequestBody) -> dict[str, object]:
     started_at = datetime.now(UTC)
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode():
+        await demo_sleep("REFLO_DEMO_HYPOTHESIS_SECONDS", 5)
+        proposal = validate_proposal(demo_proposal(body.input), body.input)
+        input_tokens = 0
+        output_tokens = 0
+        provider_model = "demo:hypothesis-scripted"
+        raw_trace = json.dumps(
+            {"mode": "demo", "inputRevision": body.input.inputRevision},
+            ensure_ascii=False,
+        )
+    elif os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         if FIXTURE_FAIL_TWICE_MARKER in body.input.hypothesis:
             attempt = fixture_failure_attempts.get(body.input.inputRevision, 0)
             fixture_failure_attempts[body.input.inputRevision] = attempt + 1
@@ -1661,7 +1807,7 @@ def fixture_news_search(input_data: NewsSearchInput) -> NewsSearchOutput:
 
 @app.post("/research/news-search")
 async def research_news_search(body: NewsSearchRequest) -> dict[str, object]:
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         return fixture_news_search(body.input).model_dump()
     if not os.environ.get("OPENAI_API_KEY"):
         raise HTTPException(status_code=503, detail="OpenAI credential unavailable")
@@ -1692,7 +1838,7 @@ async def research_news_search(body: NewsSearchRequest) -> dict[str, object]:
 @app.post("/research/candidates")
 async def research_candidates(body: ResearchAgentRequest) -> dict[str, object]:
     keys = source_key_set(body.input.sources)
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         return {"candidates": []}
     if not os.environ.get("OPENAI_API_KEY"):
         raise HTTPException(status_code=503, detail="OpenAI credential unavailable")
@@ -1735,7 +1881,7 @@ async def research_candidates(body: ResearchAgentRequest) -> dict[str, object]:
 @app.post("/validation/evidence")
 async def validation_evidence(body: ValidationAgentRequest) -> dict[str, object]:
     keys = source_key_set(body.input.sources)
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         return {
             "candidates": [
                 candidate.model_dump() for candidate in body.input.candidates
@@ -1778,7 +1924,7 @@ async def validation_evidence(body: ValidationAgentRequest) -> dict[str, object]
 async def validation_question_answers(
     body: QuestionAnswerAgentRequest,
 ) -> dict[str, object]:
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
         return {
             "answers": [
                 QuestionAnswer(
@@ -1824,7 +1970,9 @@ async def validation_question_answers(
 
 @app.post("/report/outline")
 async def report_outline(body: ReportOutlineRequest) -> dict[str, object]:
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+        # 페이지 구성 화면은 이 응답을 기다리는 동안 로딩 상태를 보여준다.
+        await demo_sleep("REFLO_DEMO_OUTLINE_SECONDS", 6)
         output = validate_report_outline(
             fixture_report_outline(body.input),
             body.input,
@@ -1859,7 +2007,9 @@ async def report_outline(body: ReportOutlineRequest) -> dict[str, object]:
 
 @app.post("/report/draft")
 async def report_draft(body: ReportDraftRequest) -> dict[str, object]:
-    if os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+    if demo_mode() or os.environ.get("REFLO_LLM_TEST_FIXTURE") == "1":
+        # 초안 생성은 job 진행률과 함께 보이므로 가장 길게 잡는다.
+        await demo_sleep("REFLO_DEMO_DRAFT_SECONDS", 10)
         output = validate_report_draft(
             fixture_report_draft(body.input),
             body.input,

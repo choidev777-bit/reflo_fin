@@ -28,6 +28,10 @@ import {
   readObjectBytes,
 } from "../object-storage/s3";
 import { resolveDartAccountRule } from "../../domain/dart-account-registry";
+import {
+  demoModeEnabled,
+  scriptedResearchEnabled,
+} from "../../domain/demo-mode";
 
 export type ResearchMaterialInput = ResearchSourceReference & {
   objectKey: string | null;
@@ -1653,52 +1657,140 @@ async function collectEcos(
   };
 }
 
+/**
+ * 고정 응답 원문에 붙일 출처 표기.
+ *
+ * STEP 05는 근거마다 발행기관과 원문 위치를 보여주므로, 모든 출처가 같은
+ * "공식 자료 제공기관"으로 보이면 어떤 축의 근거인지 구분되지 않는다.
+ */
+function fixtureSourceLabel(sourceType: ResearchSourceType): {
+  publisher: string;
+  titleSuffix: string;
+  evidencePhrase: string;
+  canonicalUrl: string;
+} {
+  const labels: Partial<
+    Record<
+      ResearchSourceType,
+      { publisher: string; titleSuffix: string; evidencePhrase: string }
+    >
+  > = {
+    DART: {
+      publisher: "금융감독원 전자공시시스템",
+      titleSuffix: "분기보고서",
+      evidencePhrase: "DART 공시 원문",
+    },
+    COMPANY_IR: {
+      publisher: "기업 IR 자료",
+      titleSuffix: "실적 발표 자료",
+      evidencePhrase: "기업 IR 원문",
+    },
+    NEWS: {
+      publisher: "공개 뉴스 원문",
+      titleSuffix: "보도 기사",
+      evidencePhrase: "뉴스 원문",
+    },
+    KRX: {
+      publisher: "한국거래소",
+      titleSuffix: "시세 자료",
+      evidencePhrase: "KRX 시세 자료",
+    },
+    ECOS: {
+      publisher: "한국은행 ECOS",
+      titleSuffix: "통계 자료",
+      evidencePhrase: "ECOS 통계",
+    },
+    FNGUIDE_CONSENSUS: {
+      publisher: "FnGuide",
+      titleSuffix: "컨센서스 자료",
+      evidencePhrase: "FnGuide 컨센서스",
+    },
+    USER_MATERIAL: {
+      publisher: "사용자 제공 자료",
+      titleSuffix: "제공 원문",
+      evidencePhrase: "사용자 제공 원문",
+    },
+  };
+  const label = labels[sourceType] ?? {
+    publisher: "공식 자료 제공기관",
+    titleSuffix: "공식 자료",
+    evidencePhrase: "공식 자료",
+  };
+  return {
+    ...label,
+    canonicalUrl: `https://example.com/reflo-fixture-source/${sourceType.toLowerCase()}`,
+  };
+}
+
 function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
   const sources: ResearchSourceSnapshot[] = [];
   const candidates: ResearchCandidate[] = [];
   const collectedAt = nowIso();
   for (const question of context.questions.filter((item) => item.included)) {
-    const quote = `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${question.metrics[0]} 관련 공식 자료가 확인되었습니다.`;
-    const source: ResearchSourceSnapshot = {
-      sourceKey: `fixture:question:${question.questionId}`,
-      sourceType: question.sourceBindingIds[0] ?? "DART",
-      title: `${context.companyName} ${question.metrics[0]} 공식 자료`,
-      publisher: question.sourceBindingIds[0] === "NEWS" ? "공개 뉴스 원문" : "공식 자료 제공기관",
-      canonicalUrl: "https://example.com/reflo-fixture-source",
-      publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
-      collectedAt,
-      responseHash: hash({ questionId: question.questionId, quote }),
-      locator: {
-        kind: "html",
-        canonicalUrl: "https://example.com/reflo-fixture-source",
-        textFragment: quote,
-        questionIds: [question.questionId],
-      },
-      content: { body: quote },
-      collectorVersion: "research-fixture-v1",
-    };
-    sources.push(source);
-    candidates.push({
-      candidateKey: `candidate:${question.questionId}`,
-      category: "hypothesis",
-      questionId: question.questionId,
-      targetId: null,
-      metricId: question.metrics[0] ?? question.purpose,
-      sourceKey: source.sourceKey,
-      title: question.metrics[0] ?? question.purpose,
-      quoteExact: quote,
-      oneLineValue: `${question.metrics[0]} 관련 공식 근거를 확인했습니다.`,
-      valueOriginal: null,
-      valueNormalized: null,
-      unit: null,
-      currency: null,
-      period: question.period,
-      scope: "연결",
-      valueKind: null,
-      stance: "supporting",
-      required: true,
-      criticalNumeric: false,
-    });
+    const metric = question.metrics[0] ?? question.purpose;
+    // 시연 모드에서는 질문에 연결된 출처를 모두 재생해 STEP 05에서 DART 공시와
+    // 기업 IR이 각각 근거로 보이게 한다. 테스트 fixture는 기존처럼 대표 출처
+    // 하나만 만들어 근거 수가 늘어나지 않게 둔다.
+    const questionSourceTypes = demoModeEnabled()
+      ? (question.sourceBindingIds.length > 0
+          ? question.sourceBindingIds
+          : (["DART"] as const))
+      : [question.sourceBindingIds[0] ?? "DART"];
+    for (const sourceType of questionSourceTypes) {
+      const label = fixtureSourceLabel(sourceType);
+      const quote = `${context.targetYear}년 ${context.targetQuarter}분기 ${context.companyName}의 ${metric} 관련 내용이 ${label.evidencePhrase}에서 확인되었습니다.`;
+      const sourceKey = `fixture:question:${question.questionId}:${sourceType}`;
+      const source: ResearchSourceSnapshot = {
+        sourceKey,
+        sourceType,
+        title: `${context.companyName} ${metric} ${label.titleSuffix}`,
+        publisher: label.publisher,
+        canonicalUrl: label.canonicalUrl,
+        publishedAt: `${context.cutoffDate}T09:00:00+09:00`,
+        collectedAt,
+        responseHash: hash({
+          questionId: question.questionId,
+          sourceType,
+          quote,
+        }),
+        locator: {
+          kind: "html",
+          canonicalUrl: label.canonicalUrl,
+          textFragment: quote,
+          questionIds: [question.questionId],
+        },
+        // DART 원문은 검증에서 content.report.corpCode가 프로젝트 기업코드와
+        // 같은지 본다(sourceMatchesResearchIdentity). 이 필드가 없으면 인용문이
+        // 원문에 그대로 있어도 company 검사에서 걸러져 근거가 0건이 된다.
+        content:
+          sourceType === "DART" && context.corpCode
+            ? { body: quote, report: { corpCode: context.corpCode } }
+            : { body: quote },
+        collectorVersion: "research-fixture-v1",
+      };
+      sources.push(source);
+      candidates.push({
+        candidateKey: `candidate:${question.questionId}:${sourceType}`,
+        category: "hypothesis",
+        questionId: question.questionId,
+        targetId: null,
+        metricId: metric,
+        sourceKey,
+        title: metric,
+        quoteExact: quote,
+        oneLineValue: `${metric} 관련 근거를 ${label.evidencePhrase}에서 확인했습니다.`,
+        valueOriginal: null,
+        valueNormalized: null,
+        unit: null,
+        currency: null,
+        period: question.period,
+        scope: "연결",
+        valueKind: null,
+        stance: "supporting",
+        required: true,
+        criticalNumeric: false,
+      });
+    }
   }
   const dartTargets = context.excelTargets.filter(
     (target) =>
@@ -1955,10 +2047,7 @@ function retainDiverseNewsSources(
 export async function collectResearchSources(
   context: ResearchCollectionContext,
 ): Promise<CollectionBundle> {
-  if (
-    process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
-    process.env.REFLO_LLM_TEST_FIXTURE === "1"
-  ) {
+  if (scriptedResearchEnabled()) {
     return fixtureBundle(context);
   }
   const selected = selectedSourceTypes(context);
