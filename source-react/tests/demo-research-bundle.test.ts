@@ -125,11 +125,22 @@ test("시연 근거는 실제 값과 열리는 원문 링크를 갖는다", asyn
       Array.isArray(content.rows) && content.rows.length > 0,
       "DART 근거에 계정 행이 없으면 값·기간이 비어 보입니다.",
     );
+    // 원문 표는 실제 DART에서 받아 오므로 건수는 네트워크에 달려 있다. 여기서는
+    // 표를 직접 만들어 넣지 않는다는 계약만 확인한다. 발췌본을 합성하면 화면에
+    // 보이는 것이 원본이 아니게 된다.
     assert.ok(
-      Array.isArray(content.originalStatements) &&
-        content.originalStatements.length > 0,
-      "원문 표가 없으면 STEP 05가 '원문 표가 보관되어 있지 않습니다'만 띄웁니다.",
+      content.originalStatements === undefined ||
+        Array.isArray(content.originalStatements),
+      "원문 표는 실제 공시에서 받은 배열이어야 합니다.",
     );
+    for (const statement of (content.originalStatements ?? []) as Array<{
+      html?: string;
+    }>) {
+      assert.ok(
+        !statement.html?.includes("그 종속기업</p>"),
+        "합성한 표가 섞여 있습니다. 원문 표는 DART에서 받은 것만 씁니다.",
+      );
+    }
   }
 
   // 근거 한 줄 요약에 실제 숫자가 보여야 조사 결과처럼 읽힌다.

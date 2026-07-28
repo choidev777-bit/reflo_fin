@@ -42,7 +42,6 @@ import {
   dartFilingUrl,
   demoAmountForAccount,
   demoDartAccount,
-  demoDartStatementHtml,
   demoDartSummary,
   demoFilingForPeriod,
   demoIrQuote,
@@ -1693,12 +1692,16 @@ type DemoQuestionSource = {
  * 있고, `originalStatements`가 있어야 공시 원문 표가 렌더된다. 둘 중 하나라도
  * 없으면 "원문 표가 보관되어 있지 않습니다" 경고만 남는다.
  */
-function demoDartQuestionSource(
+async function demoDartQuestionSource(
   context: ResearchCollectionContext,
   question: ResearchPlanQuestion,
   collectedAt: string,
-): DemoQuestionSource {
+): Promise<DemoQuestionSource> {
   const filing = DEMO_FILINGS.quarter1_2026;
+  const originalStatements = await demoOriginalStatements(
+    filing.receiptNumber,
+    context.cancellationSignal,
+  );
   const account = demoDartAccount(question.role);
   const accounts = [
     Q1_2026_REVENUE,
@@ -1760,34 +1763,42 @@ function demoDartQuestionSource(
           publishedAt: filing.publishedAt,
         },
         rows,
-        originalStatements: [
-          {
-            scopeCode: "CFS",
-            statementCode: "CIS",
-            title: "연결 포괄손익계산서",
-            viewerUrl: canonicalUrl,
-            parameters: {
-              receiptNumber: filing.receiptNumber,
-              documentNumber: "",
-              elementId: "",
-              offset: "",
-              length: "",
-              dtd: "",
-              tocNumber: "",
-            },
-            html: demoDartStatementHtml({
-              periodLabel: `${filing.periodLabel} (2026.01.01 ~ 2026.03.31)`,
-              currentLabel,
-              priorLabel,
-              accounts,
-            }),
-            responseHash: hash({ statement: "CIS", year: filing.businessYear }),
-          },
-        ],
+        // 원문 표는 실제 DART 공시에서 그대로 받아 온다(demoOriginalStatements).
+        // 여기서 표를 만들어 넣으면 화면에 보이는 것이 원본이 아니라 발췌본이 된다.
+        originalStatements,
       },
       collectorVersion: "research-demo-v1",
     },
   };
+}
+
+/**
+ * 시연에서 쓸 실제 DART 공시 원문 표.
+ *
+ * DART 수집은 AI가 아니므로 시연 모드에서도 실제로 호출한다. 사용자는 발췌한
+ * 표가 아니라 공시 원본을 보고, 선택한 근거 행이 그 안에서 강조되기를 원한다.
+ *
+ * 같은 접수번호를 질문마다 다시 받지 않도록 한 번만 받아 재사용한다.
+ * 네트워크가 막히면 근거 자체는 유효하므로 표 없이 진행한다.
+ */
+const demoOriginalStatementCache = new Map<
+  string,
+  Promise<DartOriginalStatement[]>
+>();
+
+function demoOriginalStatements(
+  receiptNumber: string,
+  cancellationSignal?: AbortSignal,
+): Promise<DartOriginalStatement[]> {
+  const cached = demoOriginalStatementCache.get(receiptNumber);
+  if (cached) return cached;
+  const pending = fetchDartOriginalStatements({
+    receiptNumber,
+    scopeCodes: ["CFS", "OFS"],
+    cancellationSignal,
+  }).catch(() => [] as DartOriginalStatement[]);
+  demoOriginalStatementCache.set(receiptNumber, pending);
+  return pending;
 }
 
 /** 시연용 기업 IR 근거. 업로드하는 IR 자료의 실제 서술을 인용한다. */
@@ -1892,7 +1903,9 @@ function fixtureSourceLabel(sourceType: ResearchSourceType): {
   };
 }
 
-function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
+async function fixtureBundle(
+  context: ResearchCollectionContext,
+): Promise<CollectionBundle> {
   const sources: ResearchSourceSnapshot[] = [];
   const candidates: ResearchCandidate[] = [];
   const collectedAt = nowIso();
@@ -1914,7 +1927,7 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       // 기존 문구를 유지한다.
       const demo =
         demoModeEnabled() && sourceType === "DART"
-          ? demoDartQuestionSource(context, question, collectedAt)
+          ? await demoDartQuestionSource(context, question, collectedAt)
           : demoModeEnabled() && sourceType === "COMPANY_IR"
             ? demoIrQuestionSource(context, question, collectedAt)
             : null;
@@ -2025,6 +2038,10 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       `${period.year}${String(period.quarter).padStart(2, "0")}15000001`;
     const publishedAt =
       demoFiling?.publishedAt ?? `${context.cutoffDate}T09:00:00+09:00`;
+    // 같은 원문 안에서 금액이 겹치면 근거 매칭이 "정확히 1건" 규칙을 어겨
+    // (selectedRecordField) 해당 대상이 전부 검증 실패한다. 실제 금액은
+    // 계정마다 하나씩만 쓰고, 이미 쓴 금액은 합성 값으로 비켜 준다.
+    const usedAmounts = new Set<string>();
     const rows = period.targets.flatMap((target, index) => {
       const rule = resolveDartAccountRule(
         target.dartRuleId ?? target.metricId ?? target.metric,
@@ -2034,6 +2051,14 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
       const demoAmount = demoFiling
         ? demoAmountForAccount(rule.allowedAccountIds[0], accountName)
         : null;
+      let amount =
+        demoAmount && !usedAmounts.has(demoAmount)
+          ? demoAmount
+          : String(100_000_000_000 + index * 10_000_000_000);
+      while (usedAmounts.has(amount)) {
+        amount = String(Number(amount) + 1_000_000_000);
+      }
+      usedAmounts.add(amount);
       return [{
         rcept_no: receiptNumber,
         reprt_code: code,
@@ -2046,8 +2071,7 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
         sj_div: rule.allowedStatements[0],
         sj_nm: "재무제표",
         thstrm_nm: `${period.year}년 ${period.quarter}분기`,
-        thstrm_amount:
-          demoAmount ?? String(100_000_000_000 + index * 10_000_000_000),
+        thstrm_amount: amount,
         currency: "KRW",
       }];
     });
@@ -2077,38 +2101,14 @@ function fixtureBundle(context: ResearchCollectionContext): CollectionBundle {
           publishedAt,
         },
         rows,
-        // 원문 표가 없으면 STEP 05가 "원문 표가 보관되어 있지 않습니다"만 띄운다.
+        // 실제 DART 공시 원문 표를 그대로 받아 온다. 없으면 STEP 05가
+        // "원문 표가 보관되어 있지 않습니다"만 띄운다.
         ...(demoFiling
           ? {
-              originalStatements: [
-                {
-                  scopeCode: "CFS",
-                  statementCode: "CIS",
-                  title: "연결 포괄손익계산서",
-                  viewerUrl: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${receiptNumber}`,
-                  parameters: {
-                    receiptNumber,
-                    documentNumber: "",
-                    elementId: "",
-                    offset: "",
-                    length: "",
-                    dtd: "",
-                    tocNumber: "",
-                  },
-                  html: demoDartStatementHtml({
-                    periodLabel: demoFiling.periodLabel,
-                    currentLabel: `${period.year}년 ${period.quarter}분기`,
-                    priorLabel: `${period.year - 1}년 ${period.quarter}분기`,
-                    accounts: rows.map((row) => ({
-                      accountId: String(row.account_id ?? ""),
-                      accountName: String(row.account_nm ?? ""),
-                      amount: String(row.thstrm_amount ?? ""),
-                      priorAmount: "",
-                    })),
-                  }),
-                  responseHash: hash({ receiptNumber, statement: "CIS" }),
-                },
-              ],
+              originalStatements: await demoOriginalStatements(
+                receiptNumber,
+                context.cancellationSignal,
+              ),
             }
           : {}),
       },
