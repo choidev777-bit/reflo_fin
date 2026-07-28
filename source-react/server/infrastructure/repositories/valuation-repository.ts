@@ -491,17 +491,41 @@ export function missingRequiredCells(readModel: ReadModel) {
   });
 }
 
+/** 시트 이름으로 알아보는 추정 재무제표 종류. */
+const FINANCIAL_STATEMENT_KINDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/손익계산서|income[_\s-]?statement/i, "1"],
+  [/대차대조표|재무상태표|balance[_\s-]?sheet/i, "2"],
+  [/투자지표|investment[_\s-]?indicator/i, "3"],
+  [/현금흐름표|cash[_\s-]?flow/i, "4"],
+];
+
+/**
+ * 추정 재무제표 시트면 종류(1~4), 아니면 `null`.
+ *
+ * 번호만 보고 판정하면 안 된다. 같은 `p5` 접두사 아래에 `16_p5_투자의견변동_괴리율`
+ * 처럼 재무제표가 아닌 시트가 있는 템플릿이 있어서, 그런 시트를 재무제표로 세면
+ * 기간 헤더 검사가 실패해 STEP 06 승인이 막힌다. 접두사는 후보를 좁히는 데만
+ * 쓰고 종류는 시트 이름에서 확정한다.
+ */
+export function financialStatementKind(sheetName: string): string | null {
+  if (!/^1[2-8]_p[45]_/i.test(sheetName)) return null;
+  return (
+    FINANCIAL_STATEMENT_KINDS.find(([pattern]) => pattern.test(sheetName))?.[1] ??
+    null
+  );
+}
+
 function workbookPeriodHeadersCurrent(
   readModel: ReadModel,
   plan: ReportPeriodPlan,
 ): boolean {
-  const financialSheets = readModel.sheets.filter((sheet) =>
-    /^(?:12|13|14|15)_p4_/i.test(sheet.name),
+  const financialSheets = readModel.sheets.filter(
+    (sheet) => financialStatementKind(sheet.name) !== null,
   );
   const statementKinds = new Set(
     financialSheets.flatMap((sheet) => {
-      const match = /^(12|13|14|15)_p4_/i.exec(sheet.name);
-      return match?.[1] ? [match[1]] : [];
+      const kind = financialStatementKind(sheet.name);
+      return kind ? [kind] : [];
     }),
   );
   if (
@@ -590,6 +614,11 @@ export function targetPerFormulaCells(formula: string | null | undefined): {
     modeAddress: mode ? reference(mode[1], mode[2]) : null,
     inputAddress: references.at(-1) ?? null,
   };
+}
+
+/** 방식 선택 셀만 필요한 호출부를 위한 얇은 래퍼. */
+export function targetPerModeAddress(formula: string | null): string | null {
+  return targetPerFormulaCells(formula).modeAddress;
 }
 
 function columnNumber(value: string): number {
@@ -1770,6 +1799,19 @@ async function calculateAndSave(
   const allowedKeys = new Set(editable.keys());
   const nextReadModel: ReadModel = {
     ...result.readModel,
+    // `/valuation/calculate` 응답에는 `ensureWorkbook`만 붙이는 기간 계획·입력
+    // manifest·roll forward 기록이 없다. 그대로 저장하면 셀을 한 번 고칠 때마다
+    // `workbookMatchesContext`가 false가 되어 워크스페이스를 열 때마다
+    // VALUATION_PREREQUISITE_CHANGED·REPORT_PERIOD_HEADER_MISMATCH가 뜨고
+    // 워크북을 다시 준비하게 된다.
+    reportPeriodPlan:
+      result.readModel.reportPeriodPlan ??
+      input.state.readModel.reportPeriodPlan ??
+      input.context.reportPeriodPlan,
+    inputManifest:
+      result.readModel.inputManifest ?? input.state.readModel.inputManifest,
+    rollForward:
+      result.readModel.rollForward ?? input.state.readModel.rollForward,
     editableCells: mergeEditableCellMetadata(
       input.state.readModel.editableCells,
       result.readModel.editableCells,

@@ -109,7 +109,16 @@ test("uses the versioned Phase 3 hypothesis workspace and Agent job", async () =
 });
 
 test("uses the persisted Phase 4 research and validation workspaces", async () => {
-  const [researchPage, validationPage, researchScreen, repository, workflow] =
+  const [
+    researchPage,
+    validationPage,
+    evidencePage,
+    evidenceSourceRoute,
+    workbookApplicationRoute,
+    researchScreen,
+    repository,
+    workflow,
+  ] =
     await Promise.all([
       readFile(
         new URL(
@@ -121,6 +130,27 @@ test("uses the persisted Phase 4 research and validation workspaces", async () =
       readFile(
         new URL(
           "../app/projects/[projectId]/process/validation/page.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/projects/[projectId]/evidence/[evidenceId]/page.tsx",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/api/projects/[projectId]/evidence/[evidenceId]/source/route.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../app/api/projects/[projectId]/validation/workbook-applications/route.ts",
           import.meta.url,
         ),
         "utf8",
@@ -141,6 +171,14 @@ test("uses the persisted Phase 4 research and validation workspaces", async () =
 
   assert.match(researchPage, /ResearchPlanScreen/);
   assert.match(validationPage, /ValidationScreen/);
+  assert.match(evidencePage, /EvidencePdfViewer/);
+  assert.match(evidenceSourceRoute, /getEvidenceSourceArtifact/);
+  assert.match(evidenceSourceRoute, /Accept-Ranges/);
+  assert.match(evidenceSourceRoute, /private, no-store/);
+  assert.match(
+    workbookApplicationRoute,
+    /await createValidationWorkbookApplication\([\s\S]*?\);\s*kickOutboxDispatcher\(\)/,
+  );
   assert.doesNotMatch(researchPage, /LegacyClient/);
   assert.doesNotMatch(validationPage, /LegacyClient/);
   assert.match(researchScreen, /approve-and-start/);

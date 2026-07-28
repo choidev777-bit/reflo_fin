@@ -3226,6 +3226,31 @@ export function validateOutline(input: {
   return issues;
 }
 
+/**
+ * 페이지 확인을 막아야 하는 표·차트 연결 상태인지 본다.
+ *
+ * 09-report-outline.md §9.3·§15.2: 차단 대상은 **필수** slot의 연결 누락과
+ * 깨진(`invalid`) 연결이다. 지연 매핑(`mapping-policy.ts`) metric은 STEP 02에서
+ * "다른 단계에서 채운다"고 합의해 gate를 통과한 슬롯이라, 여기서 다시 막으면
+ * 사용자가 어느 화면에서도 해소할 수 없다(같은 문서 §9.3: 이 화면에서 Excel
+ * 주소를 직접 고치지 않는다).
+ */
+export function hasUnconfirmedRequiredVisualSlots(
+  visualSlots: Array<{
+    required: boolean;
+    bindingStatus: string;
+    semanticMetric?: string;
+  }>,
+): boolean {
+  return visualSlots.some(
+    (slot) =>
+      slot.bindingStatus === "invalid" ||
+      (slot.required &&
+        slot.bindingStatus !== "confirmed" &&
+        !deferredMappingResolvesRequiredSlot(slot.semanticMetric ?? "")),
+  );
+}
+
 export function buildReportDocument(input: {
   outline: OutlineContent;
   rating: string;

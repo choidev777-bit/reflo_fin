@@ -24,6 +24,9 @@ export async function POST(
       sourceSnapshotId?: unknown;
       sourceFingerprint?: unknown;
     }>(request);
+    // 이 라우트는 start_workflow outbox 이벤트를 남긴다. dispatcher를 깨우지
+    // 않으면 workbook application이 queued 상태로 남아 STEP 05 완료 폴링이
+    // 끝나지 않는다.
     const result = await createValidationWorkbookApplication({
       projectId: requireUuid(projectId),
       userId: session.userId,
@@ -34,9 +37,6 @@ export async function POST(
       sourceSnapshotId: body.sourceSnapshotId,
       sourceFingerprint: body.sourceFingerprint,
     });
-    // 이 라우트는 start_workflow outbox 이벤트를 남긴다. dispatcher를 깨우지
-    // 않으면 workbook application이 queued 상태로 남아 STEP 05 완료 폴링이
-    // 끝나지 않는다.
     kickOutboxDispatcher();
     return jsonResponse(result.body, { status: result.status }, requestId);
   });

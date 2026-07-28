@@ -159,7 +159,7 @@ function researchFailure(error: unknown): {
           ? current.message
           : "";
     const match = message.match(
-      /(RESEARCH_NO_SOURCES|RESEARCH_CANDIDATES_EMPTY|RESEARCH_EVIDENCE_EMPTY|REQUIRED_SOURCE_UNAVAILABLE|QUESTION_SOURCE_UNAVAILABLE|EXCEL_SOURCE_UNAVAILABLE|NEWS_[A-Z0-9_]+|DART_[A-Z0-9_]+|KRX_[A-Z0-9_]+|ECOS_[A-Z0-9_]+|SOURCE_[A-Z0-9_]+)/,
+      /(RESEARCH_AGENT_INPUT_LIMIT|VALIDATION_AGENT_INPUT_LIMIT|RESEARCH_NO_SOURCES|RESEARCH_CANDIDATES_EMPTY|RESEARCH_EVIDENCE_EMPTY|REQUIRED_SOURCE_UNAVAILABLE|QUESTION_SOURCE_UNAVAILABLE|EXCEL_SOURCE_UNAVAILABLE|NEWS_[A-Z0-9_]+|DART_[A-Z0-9_]+|KRX_[A-Z0-9_]+|ECOS_[A-Z0-9_]+|SOURCE_[A-Z0-9_]+)/,
     );
     if (match) {
       const code = match[1];
@@ -170,6 +170,10 @@ function researchFailure(error: unknown): {
           "원문에서 조사 후보를 만들지 못했습니다. 자료 내용을 확인해주세요.",
         RESEARCH_EVIDENCE_EMPTY:
           "검증 가능한 Evidence가 생성되지 않았습니다. 자료를 보완해주세요.",
+        RESEARCH_AGENT_INPUT_LIMIT:
+          "수집 원문이 AI 처리 한도를 초과했습니다. 자료 범위를 줄이거나 출처를 나누어주세요.",
+        VALIDATION_AGENT_INPUT_LIMIT:
+          "검증할 원문과 후보가 AI 처리 한도를 초과했습니다. 자료 범위를 줄이거나 출처를 나누어주세요.",
         REQUIRED_SOURCE_UNAVAILABLE:
           "선택한 필수 자료를 수집하지 못했습니다. URL 또는 파일을 확인해주세요.",
         QUESTION_SOURCE_UNAVAILABLE:
@@ -217,6 +221,8 @@ function researchFailure(error: unknown): {
         retryable: ![
           "NEWS_QUERY_PLAN_INVALID",
           "NEWS_NO_ELIGIBLE_ARTICLES",
+          "RESEARCH_AGENT_INPUT_LIMIT",
+          "VALIDATION_AGENT_INPUT_LIMIT",
         ].includes(code),
       };
     }

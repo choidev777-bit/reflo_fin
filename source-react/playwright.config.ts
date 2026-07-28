@@ -40,6 +40,7 @@ export default defineConfig({
     env: {
       ...process.env,
       REFLO_NEXT_DIST_DIR: ".runtime/next-e2e",
+      REFLO_INTERNAL_API_URL: baseURL,
       REFLO_TEMPORAL_NAMESPACE: "reflo-e2e",
       REFLO_TEST_AUTH_ENABLED: "1",
       REFLO_COMPANY_DIRECTORY_TEST_FIXTURE: "1",

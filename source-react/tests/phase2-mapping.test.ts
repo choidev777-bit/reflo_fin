@@ -1381,6 +1381,81 @@ test("maps revised and prior quarterly tables to their dedicated output sheets",
   );
 });
 
+test("maps the current REFLO figure four and five quarterly output sheets", () => {
+  const value = workbook([]);
+  const definitions = [
+    ["sheet_figure_4", "08_도표4_분기실적_수정후"],
+    ["sheet_figure_5", "09_도표5_분기실적_수정전"],
+  ] as const;
+  for (const [sheetId, sheetName] of definitions) {
+    value.sheets.push({
+      sheetId,
+      name: sheetName,
+      index: value.sheets.length,
+      visibility: "visible",
+      usedRange: "A1:M31",
+      structureHash: sheetId.padEnd(64, "4").slice(0, 64),
+      formulaCount: 0,
+      mergedRangeCount: 0,
+      chartCount: 0,
+      tableCount: 0,
+    });
+    value.candidateRanges.push(
+      rangeCandidate({
+        candidateId: `range_${sheetId}`,
+        sheetId,
+        sheetName,
+        range: "A4:M19",
+        label: "구분",
+        kind: "dense_region",
+        headerRows: [4],
+        headerValues: [
+          "구분",
+          "1Q25",
+          "2Q25",
+          "3Q25",
+          "4Q25",
+          "1Q26F",
+          "2Q26F",
+          "3Q26F",
+          "4Q26F",
+          "2024",
+          "2025F",
+          "2026F",
+          "단위",
+        ],
+        rowKeyColumns: [{ index: 0, column: "A", label: "구분" }],
+      }),
+    );
+  }
+  const reportTemplate = template();
+  reportTemplate.pages[0].slots = definitions.map((_, index) => ({
+    slotId: `slot_figure_${index + 4}`,
+    blockId: `block_figure_${index + 4}`,
+    valueType: "table",
+    semanticKey: {
+      metric: `figure_${index + 4}_chart`,
+      scope: `분기 실적 ${index === 0 ? "수정 후" : "수정 전"}`,
+    },
+    required: true,
+  }));
+
+  const result = buildMappingSet(reportTemplate, value);
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(
+    result.mappingSet.bindings.map((binding) =>
+      binding.kind === "table"
+        ? [binding.semanticKey.metric, binding.source.sheet, binding.source.range]
+        : null,
+    ),
+    [
+      ["figure_4_chart", definitions[0][1], "A4:M19"],
+      ["figure_5_chart", definitions[1][1], "A4:M19"],
+    ],
+  );
+});
+
 test("maps Key Data and figure one to their dedicated output sheets", () => {
   const value = workbook([]);
   const definitions = [

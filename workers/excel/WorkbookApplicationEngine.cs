@@ -727,6 +727,14 @@ public static class WorkbookApplicationEngine
                path.EndsWith(".vml", StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static byte[] RestoreProtectedPartsFromSource(
+        byte[] outputBytes,
+        byte[] sourceBytes) =>
+        RestoreProtectedParts(
+            outputBytes,
+            sourceBytes,
+            ProtectedPartHashes(sourceBytes).Keys);
+
     private static byte[] RestoreProtectedParts(
         byte[] outputBytes,
         byte[] sourceBytes,
@@ -1005,7 +1013,7 @@ public static class WorkbookApplicationEngine
         }
     }
 
-    private static byte[] RemoveNonDataDrawingRelationships(byte[] bytes)
+    internal static byte[] RemoveNonDataDrawingRelationships(byte[] bytes)
     {
         using var sourceStream = new MemoryStream(bytes, writable: false);
         using var source = new ZipArchive(

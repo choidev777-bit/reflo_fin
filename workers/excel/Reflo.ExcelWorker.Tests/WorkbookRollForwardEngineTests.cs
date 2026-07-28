@@ -111,6 +111,56 @@ public sealed class WorkbookRollForwardEngineTests
     }
 
     [Fact]
+    public void ReopensValidatedWorkbookWithPreservedDrawingRelationships()
+    {
+        var fixturePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "ISC_095340_4Q25_Valuation_하나증권_12_REFLO_BRIDGE.xlsx");
+        var source = File.ReadAllBytes(fixturePath);
+        var applied = WorkbookApplicationEngine.Apply(
+            source,
+            new WorkbookApplicationRequest(
+                ExpectedWorkbookHash: Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(source))
+                    .ToLowerInvariant(),
+                ExpectedStructureHash: null,
+                Commands:
+                [
+                    new WorkbookPatchCommand(
+                        TargetId: "target-current-price",
+                        SheetId: null,
+                        SheetName: "_REFLO_BRIDGE",
+                        Address: "B2",
+                        ValueType: "number",
+                        AfterValue: "1300",
+                        EvidenceIds: ["evidence-1"],
+                        ExpectedStructureFingerprint: null,
+                        GeneratedBridge: true,
+                        SemanticKey: new WorkbookSemanticKey(
+                            "current_price",
+                            "2026년 2분기",
+                            "원",
+                            "연결")),
+                ],
+                OutputBindings: []));
+
+        var result = WorkbookRollForwardEngine.RollForward(
+            applied.WorkbookBytes,
+            new WorkbookRollForwardRequest(Periods));
+
+        Assert.NotEmpty(result.WorkbookBytes);
+        Assert.Contains(
+            result.InputCells,
+            cell => cell.WriteAuthority is "user" or "system");
+        Assert.Contains(
+            result.InputCells,
+            cell =>
+                cell.SheetName.StartsWith("15_p5_", StringComparison.Ordinal) &&
+                cell.WriteAuthority == "system");
+    }
+
+    [Fact]
     public void RollsNestedPeriodHeaderRowsInsteadOfShiftingThemAsData()
     {
         var result = WorkbookRollForwardEngine.RollForward(

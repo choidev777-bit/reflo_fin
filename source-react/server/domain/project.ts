@@ -26,6 +26,19 @@ export function processRoute(projectId: string, stageKey: string): string {
   return `/projects/${projectId}/process/${stage.route}`;
 }
 
+export function canonicalProjectRoute(input: {
+  projectId: string;
+  currentStage: StageKey;
+  allowedRoutes: readonly string[];
+}): string {
+  const currentRoute = processRoute(input.projectId, input.currentStage);
+  if (input.allowedRoutes.includes(currentRoute)) return currentRoute;
+  return (
+    input.allowedRoutes[input.allowedRoutes.length - 1] ??
+    processRoute(input.projectId, "setup")
+  );
+}
+
 export function supportedTargetYears(now = new Date()): number[] {
   const currentYear = now.getUTCFullYear();
   return [currentYear - 1, currentYear, currentYear + 1];

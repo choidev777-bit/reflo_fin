@@ -349,6 +349,13 @@ export type ResultDetail = {
     machineStatus: string;
     checks: Array<{ code: string; status: string; message: string }>;
     provenance: Record<string, unknown>;
+    sourceAccess: {
+      kind: "uploaded_pdf" | "web" | "structured_api";
+      openUrl: string;
+      streamUrl: string | null;
+      pageNumber: number | null;
+      textFragment: string | null;
+    } | null;
   }>;
 };
 
