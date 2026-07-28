@@ -194,6 +194,11 @@ function connectionStatus(
   }
   if (entry.plan?.resolution === "external_pending") return "external";
   if (entry.plan?.resolution === "later_stage") return "later";
+  // 후보가 하나도 없으면 이 화면에는 고를 것이 없다. 원본 선택 dropdown은
+  // 후보가 있을 때만 그려지므로, review로 두면 사용자가 할 수 있는 일이 없는
+  // 채로 완료 버튼이 `원본 확인 필요`에 영구히 잠긴다. 서버의 게이트 규칙
+  // (requiredSlotBlocksInspection)과 같은 기준을 쓴다.
+  if (entry.candidates.length === 0) return "later";
   if (entry.required) return "review";
   return "optional";
 }

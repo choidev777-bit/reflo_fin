@@ -6,7 +6,7 @@ import { processRoute, STAGES, type StageKey } from "../../domain/project";
 import { blockerMeta } from "../../domain/stage-blocker-policy";
 import {
   deferredMappingPolicy,
-  deferredMappingResolvesRequiredSlot,
+  requiredSlotBlocksInspection,
 } from "../../domain/mapping-policy";
 import {
   evaluateMappingDataReadiness,
@@ -3043,11 +3043,13 @@ export async function createMappingRevision(input: {
     })),
   );
   const unmappedRequiredSlots = revisedEntries
-    .filter(
-      (entry) =>
-        entry.required &&
-        !entry.selectedCandidateId &&
-        !deferredMappingResolvesRequiredSlot(entry.metric),
+    .filter((entry) =>
+      entry.required &&
+      requiredSlotBlocksInspection({
+        metric: entry.metric,
+        candidateCount: entry.candidates.length,
+        bound: Boolean(entry.selectedCandidateId),
+      }),
     )
     .map((entry) => entry.slotId);
   const mappingStatus =

@@ -11,7 +11,7 @@ import type {
 import type { MarketPriceSnapshot } from "../../server/infrastructure/market-data/krx";
 import {
   deferredMappingPolicy,
-  deferredMappingResolvesRequiredSlot,
+  requiredSlotBlocksInspection,
 } from "../../server/domain/mapping-policy";
 import {
   missingValuationOutputSlots,
@@ -1424,12 +1424,20 @@ export function buildMappingSet(
     ];
   });
   const boundSlotIds = new Set(bindings.map((binding) => binding.slotId));
+  const candidateCountBySlot = candidates.reduce<Map<string, number>>(
+    (counts, candidate) =>
+      counts.set(candidate.slotId, (counts.get(candidate.slotId) ?? 0) + 1),
+    new Map(),
+  );
   const unmappedRequiredSlots = slots
     .filter(
       (slot) =>
         slot.required &&
-        !boundSlotIds.has(slot.slotId) &&
-        !deferredMappingResolvesRequiredSlot(slot.semanticKey.metric),
+        requiredSlotBlocksInspection({
+          metric: slot.semanticKey.metric,
+          candidateCount: candidateCountBySlot.get(slot.slotId) ?? 0,
+          bound: boundSlotIds.has(slot.slotId),
+        }),
     )
     .map((slot) => slot.slotId);
   const status = unmappedRequiredSlots.length === 0 ? "confirmed" : "suggested";

@@ -613,6 +613,25 @@ test("keeps a required slot blocked when candidates are ambiguous", () => {
   assert.equal(result.mappingSet.bindings.length, 0);
 });
 
+test("does not block a required slot the workbook offers no candidate for", () => {
+  // 후보가 하나도 없으면 검사 화면에 원본 선택 dropdown이 그려지지 않는다.
+  // 그래도 미해결로 세면 완료 버튼이 `원본 확인 필요`에 영구히 잠겨 STEP 02를
+  // 빠져나갈 수 없다. 사용자가 할 수 있는 일이 없으면 후속 단계로 넘긴다.
+  const value = template();
+  value.pages[0].slots = [value.pages[0].slots[1]];
+  const result = buildMappingSet(value, workbook([]));
+
+  assert.equal(result.summary.status, "confirmed");
+  assert.equal(result.summary.unmappedRequiredCount, 0);
+  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
+  assert.equal(
+    result.mappingSet.warnings.some(
+      (warning) => warning.code === "REQUIRED_MAPPING_UNRESOLVED",
+    ),
+    false,
+  );
+});
+
 test("does not treat a broad used range as ambiguity for one structured table", () => {
   const value = template();
   value.pages[0].slots = [
