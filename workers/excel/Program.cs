@@ -624,6 +624,15 @@ app.MapPost("/valuation/calculate", async (
                 SafeFormattedText(cell)));
         }
 
+        // 예측 입력이 비어 있는 상태의 모델은 #DIV/0! 같은 수식 오류를 이미
+        // 갖고 있다(성장률 = 당기/전기 등). `/valuation/read-model`과
+        // `/valuation/prepare`는 그 오류를 read model에 기록만 하고 통과시키므로
+        // workbook은 오류를 안은 채 저장된다. 여기서 전체 오류를 막으면 필수
+        // 입력 칸을 하나도 저장할 수 없어 STEP 06을 빠져나갈 수 없다.
+        // 따라서 이번 변경이 **새로 만든** 오류만 막는다.
+        workbook.RecalculateAllFormulas();
+        var baselineErrors = CalculationErrorKeys(workbook, zip);
+
         foreach (var change in request.Changes)
         {
             var worksheet = workbook.Worksheets.First(sheet =>
@@ -640,9 +649,11 @@ app.MapPost("/valuation/calculate", async (
                 {
                     sheetId = StableSheetId(zip, sheet),
                     sheetName = sheet.Name,
-                    address = cell.Address.ToString(),
+                    address = cell.Address.ToString() ?? "",
                     code = SafeFormattedText(cell),
                 }))
+            .Where(item =>
+                !baselineErrors.Contains($"{item.sheetId}:{item.address}"))
             .Take(100)
             .ToArray();
         if (formulaErrors.Length > 0)
@@ -1848,6 +1859,18 @@ static object? SafeRawValue(IXLCell cell)
 static bool IsCalculationError(IXLCell cell) =>
     cell.Value.Type == XLDataType.Error ||
     (cell.HasFormula && SafeFormattedText(cell).StartsWith('#'));
+
+/// <summary>
+/// 현재 계산 상태에서 수식 오류가 난 셀의 `sheetId:address` 집합.
+/// 변경 전·후를 비교해 새로 생긴 오류만 가려내는 데 쓴다.
+/// </summary>
+static HashSet<string> CalculationErrorKeys(XLWorkbook workbook, ZipInsights zip) =>
+    workbook.Worksheets
+        .SelectMany(sheet => sheet.CellsUsed(XLCellsUsedOptions.All)
+            .Where(IsCalculationError)
+            .Select(cell =>
+                $"{StableSheetId(zip, sheet)}:{cell.Address.ToString() ?? ""}"))
+        .ToHashSet(StringComparer.Ordinal);
 
 static bool IsCandidateValue(IXLCell cell, string label) =>
     cell.Value.Type is XLDataType.Number or XLDataType.DateTime or XLDataType.Boolean ||
