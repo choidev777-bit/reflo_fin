@@ -109,8 +109,8 @@ public static class WorkbookRollForwardEngine
         WorkbookRollForwardRequest request)
     {
         ValidateRequest(request);
-        using var source = new MemoryStream(sourceBytes);
-        using var workbook = new XLWorkbook(source);
+        using var opened = OpenWorkbook(sourceBytes);
+        var workbook = opened.Workbook;
         try
         {
             workbook.RecalculateAllFormulas();
@@ -187,13 +187,66 @@ public static class WorkbookRollForwardEngine
         }
         using var output = new MemoryStream();
         workbook.SaveAs(output);
-        var bytes = output.ToArray();
+        var bytes = opened.UsesCompatibilityCopy
+            ? WorkbookApplicationEngine.RestoreProtectedPartsFromSource(
+                output.ToArray(),
+                sourceBytes)
+            : output.ToArray();
         return new WorkbookRollForwardResult(
             bytes,
             Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
             changes.Count > 0,
             changes,
             inputs);
+    }
+
+    private sealed class OpenedWorkbook(
+        MemoryStream stream,
+        XLWorkbook workbook,
+        bool usesCompatibilityCopy) : IDisposable
+    {
+        public XLWorkbook Workbook { get; } = workbook;
+        public bool UsesCompatibilityCopy { get; } = usesCompatibilityCopy;
+
+        public void Dispose()
+        {
+            Workbook.Dispose();
+            stream.Dispose();
+        }
+    }
+
+    private static OpenedWorkbook OpenWorkbook(byte[] bytes)
+    {
+        var stream = new MemoryStream(bytes, writable: false);
+        try
+        {
+            return new OpenedWorkbook(
+                stream,
+                new XLWorkbook(stream),
+                false);
+        }
+        catch (InvalidOperationException originalError)
+        {
+            stream.Dispose();
+            var compatibleBytes =
+                WorkbookApplicationEngine.RemoveNonDataDrawingRelationships(
+                    bytes);
+            var compatibleStream = new MemoryStream(
+                compatibleBytes,
+                writable: false);
+            try
+            {
+                return new OpenedWorkbook(
+                    compatibleStream,
+                    new XLWorkbook(compatibleStream),
+                    true);
+            }
+            catch
+            {
+                compatibleStream.Dispose();
+                throw originalError;
+            }
+        }
     }
 
     private static void SnapshotPriorEstimate(
@@ -929,7 +982,7 @@ public static class WorkbookRollForwardEngine
     {
         return Regex.IsMatch(
             worksheet.Name,
-            @"^(?:12|13|14|15)_p4_",
+            @"^(?:(?:12|13|14|15)_p4_|(?:15|16|17|18)_p5_)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 

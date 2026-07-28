@@ -491,17 +491,24 @@ export function missingRequiredCells(readModel: ReadModel) {
   });
 }
 
+export function financialStatementKind(sheetName: string): string | null {
+  const legacy = /^(12|13|14|15)_p4_/i.exec(sheetName)?.[1];
+  if (legacy) return String(Number(legacy) - 11);
+  const current = /^(15|16|17|18)_p5_/i.exec(sheetName)?.[1];
+  return current ? String(Number(current) - 14) : null;
+}
+
 function workbookPeriodHeadersCurrent(
   readModel: ReadModel,
   plan: ReportPeriodPlan,
 ): boolean {
-  const financialSheets = readModel.sheets.filter((sheet) =>
-    /^(?:12|13|14|15)_p4_/i.test(sheet.name),
+  const financialSheets = readModel.sheets.filter(
+    (sheet) => financialStatementKind(sheet.name) !== null,
   );
   const statementKinds = new Set(
     financialSheets.flatMap((sheet) => {
-      const match = /^(12|13|14|15)_p4_/i.exec(sheet.name);
-      return match?.[1] ? [match[1]] : [];
+      const kind = financialStatementKind(sheet.name);
+      return kind ? [kind] : [];
     }),
   );
   if (
@@ -590,6 +597,11 @@ export function targetPerFormulaCells(formula: string | null | undefined): {
     modeAddress: mode ? reference(mode[1], mode[2]) : null,
     inputAddress: references.at(-1) ?? null,
   };
+}
+
+/** 방식 선택 셀만 필요한 호출부를 위한 얇은 래퍼. */
+export function targetPerModeAddress(formula: string | null): string | null {
+  return targetPerFormulaCells(formula).modeAddress;
 }
 
 function columnNumber(value: string): number {

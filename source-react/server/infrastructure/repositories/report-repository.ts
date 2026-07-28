@@ -15,6 +15,7 @@ import {
   buildReportDocument,
   compactReportMaterializations,
   generatedBandBindingsFromBridge,
+  hasUnconfirmedRequiredVisualSlots,
   hydrateReportMaterializations,
   materializeReportBindings,
   normalizeOutlineContent,
@@ -2103,23 +2104,7 @@ export async function reviewReportOutlinePage(input: {
         "필수 작성 방향을 모두 입력해주세요.",
       );
     }
-    // 09-report-outline.md §9.3·§15.2: 페이지 확인을 막는 것은 **필수** slot의
-    // 연결 누락과 깨진(`invalid`) 연결이다. 선택 slot(컨센서스 표·주가 추이
-    // 차트 등)이 매핑되지 않았다고 막으면, 이 화면에서 Excel 주소를 고칠 수
-    // 없으므로(같은 문서 §9.3) STEP 07이 영구히 진행되지 않는다.
-    //
-    // 지연 매핑(`server/domain/mapping-policy.ts`) 대상 metric은 STEP 02에서
-    // 이미 "다른 단계에서 채운다"고 합의한 슬롯이라 STEP 02 gate를 통과한다.
-    // 여기서 다시 막으면 사용자가 어느 화면에서도 해소할 수 없다.
-    if (
-      page.visualSlots.some(
-        (slot) =>
-          slot.bindingStatus === "invalid" ||
-          (slot.required &&
-            slot.bindingStatus !== "confirmed" &&
-            !deferredMappingResolvesRequiredSlot(slot.semanticMetric ?? "")),
-      )
-    ) {
+    if (hasUnconfirmedRequiredVisualSlots(page.visualSlots)) {
       throw new ApiError(
         422,
         "PAGE_OUTLINE_INVALID",

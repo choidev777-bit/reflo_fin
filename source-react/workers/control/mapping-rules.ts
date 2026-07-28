@@ -60,6 +60,18 @@ export const METRIC_ALIASES: Readonly<Record<string, readonly string[]>> = {
   financial_cash_flow_table: ["현금흐름표", "cash flow statement", "cash flow"],
   stock_price: ["주가추이", "stock price", "price trend"],
   figure_1_chart: ["도표1", "valuation", "밸류에이션"],
+  figure_4_chart: [
+    "도표4",
+    "분기실적수정후",
+    "분기실적",
+    "quarterly performance revised",
+  ],
+  figure_5_chart: [
+    "도표5",
+    "분기실적수정전",
+    "수주잔고",
+    "quarterly performance prior",
+  ],
   figure_6_chart: [
     "도표6",
     "분기실적전망수정후",
@@ -89,6 +101,8 @@ export const REFLO_REPORT_OUTPUT_PROFILE: {
   rangeHints: {
     key_data: [["01A_p1_KeyData", "A4:C14"]],
     figure_1_chart: [["05_도표1_Valuation", "A4:E14"]],
+    figure_4_chart: [["08_도표4_분기실적_수정후", "A4:M19"]],
+    figure_5_chart: [["09_도표5_분기실적_수정전", "A4:M19"]],
     figure_6_chart: [["10_도표6_분기실적전망_수정후", "A4:M22"]],
     figure_7_chart: [["11_도표7_분기실적전망_수정전", "A4:M22"]],
   },

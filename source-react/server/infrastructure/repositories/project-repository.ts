@@ -10,6 +10,7 @@ import {
 import type { DirectoryCompany } from "../company-directory/types";
 import { getPool } from "../database/pool";
 import {
+  canonicalProjectRoute,
   isValuationMethod,
   processRoute,
   STAGES,
@@ -1233,19 +1234,14 @@ export async function getProjectAccess(input: {
     const allowedRoutes = stages
       .filter((stage) => stage.status !== "blocked" && stage.status !== "not_started")
       .map((stage) => stage.route);
-    // `current_stage`가 blocked 상태로 남는 경우가 있다(예: 승인된 계획을 다시
-    // 편집하면 validation이 blocked로 내려가지만 current_stage는 그대로).
-    // 그때 canonicalRoute가 allowedRoutes에 없으면 페이지 가드가 같은 URL로
-    // 무한 redirect한다. 진입 가능한 마지막 단계로 되돌린다.
-    const preferredRoute = processRoute(input.projectId, project.currentStage);
-    const canonicalRoute = allowedRoutes.includes(preferredRoute)
-      ? preferredRoute
-      : (allowedRoutes.at(-1) ??
-        processRoute(input.projectId, "setup"));
     return {
       currentStage: project.currentStage,
       allowedRoutes,
-      canonicalRoute,
+      canonicalRoute: canonicalProjectRoute({
+        projectId: input.projectId,
+        currentStage: project.currentStage,
+        allowedRoutes,
+      }),
     };
   });
 }

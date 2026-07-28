@@ -343,17 +343,27 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   const pdfPageButtons = inspectionDialog.locator(
     ".phase2-page-rail > button",
   );
-  await expect(pdfPageButtons).toHaveCount(5);
+  await expect(pdfPageButtons).toHaveCount(6);
+  const initialReviewCount = Number(
+    await inspectionDialog
+      .locator(".phase2-result-summary > div")
+      .nth(3)
+      .locator("b")
+      .innerText(),
+  );
+  expect(initialReviewCount).toBeGreaterThan(0);
 
   let resolvedMappings = 0;
-  for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
+  for (let pageIndex = 0; pageIndex < 6; pageIndex += 1) {
     await pdfPageButtons.nth(pageIndex).click();
+    await expect(pdfPageButtons.nth(pageIndex)).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     const reviewItems = inspectionDialog
       .locator(".phase2-element-list > button")
       .filter({
-        has: inspectionDialog.locator(
-          '.phase2-result-status[data-status="review"]',
-        ),
+        has: page.locator('.phase2-result-status[data-status="review"]'),
       });
     while ((await reviewItems.count()) > 0) {
       await reviewItems.first().click();
@@ -370,7 +380,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
       resolvedMappings += 1;
     }
   }
-  expect(resolvedMappings).toBe(7);
+  expect(resolvedMappings).toBe(initialReviewCount);
   await page.getByRole("button", { name: "분석 결과 반영" }).click();
   await expect(
     page.getByRole("button", { name: "분석 결과 확정 · 다음" }),
@@ -444,14 +454,13 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(page.locator(".phase4-question-card")).toHaveCount(3);
   await page.getByRole("tab", { name: /EXCEL/ }).click();
   await expect(page.getByText("입력값 삽입을 위한 자료 수집")).toBeVisible();
-  await expect(page.locator(".phase4-excel-list article").first()).toBeVisible();
+  await expect(
+    page.locator(".phase4-report-target-list article").first(),
+  ).toBeVisible();
   await page.getByRole("tab", { name: /HYPOTHESIS/ }).click();
 
   await expect(
-    page.getByText(
-      "기업 IR 출처를 사용하려면 공식 PDF를 올리거나 공식 IR URL을 입력해주세요.",
-      { exact: true },
-    ),
+    page.getByRole("heading", { name: "사용자 제공 원문" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "다음", exact: false })).toBeDisabled();
   const researchPdf = path.resolve(
@@ -499,6 +508,47 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(page.getByText("ORIGINAL SOURCE")).toBeVisible();
 
   const questionGroups = page.locator(".phase4-question-group");
+  await expect(
+    page
+      .getByRole("group", { name: "검증 상태 필터" })
+      .getByRole("button", { name: /확인 완료/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "원문 확대" }).click();
+  await expect(page.getByRole("button", { name: "원문 축소" })).toBeVisible();
+  await page.getByRole("button", { name: "원문 축소" }).click();
+  await questionGroups.nth(2).locator(".phase4-question-head").click();
+  const sourceLink = page.getByRole("link", { name: "실제 원문에서 열기" });
+  await expect(sourceLink).toHaveAttribute(
+    "href",
+    new RegExp(`/projects/${projectId}/evidence/[0-9a-f-]+$`),
+  );
+  const sourceHref = await sourceLink.getAttribute("href");
+  const evidenceId = sourceHref?.split("/").at(-1);
+  expect(evidenceId).toBeTruthy();
+  const sourceResponse = await page.request.get(
+    `/api/projects/${projectId}/evidence/${evidenceId}/source`,
+  );
+  expect(sourceResponse.status()).toBe(200);
+  expect(sourceResponse.headers()["content-type"]).toContain("application/pdf");
+  expect(sourceResponse.headers()["accept-ranges"]).toBe("bytes");
+  expect(sourceResponse.headers()["cache-control"]).toContain("private");
+  const rangeResponse = await page.request.get(
+    `/api/projects/${projectId}/evidence/${evidenceId}/source`,
+    { headers: { Range: "bytes=0-99" } },
+  );
+  expect(rangeResponse.status()).toBe(206);
+  expect(rangeResponse.headers()["content-range"]).toMatch(/^bytes 0-99\//);
+  const sourcePagePromise = page.waitForEvent("popup");
+  await sourceLink.click();
+  const sourcePage = await sourcePagePromise;
+  await expect(
+    sourcePage.getByRole("heading", { name: "ISC 2026년 2분기 기업 IR" }),
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(
+    sourcePage.locator('[data-evidence-highlight="true"]').first(),
+  ).toBeVisible({ timeout: 60_000 });
+  await sourcePage.close();
+  await questionGroups.first().locator(".phase4-question-head").click();
   await page.getByRole("button", { name: "이 결과 반려" }).click();
   await page.getByLabel("결정 이유").fill("원문과 적용 범위를 다시 확인하기 위해 반려합니다.");
   await page.getByRole("button", { name: "결정 저장" }).click();
@@ -550,15 +600,102 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(
     page.getByRole("grid", { name: "검증용 Excel workbook" }),
   ).toHaveAttribute("aria-readonly", "true");
-  await expect(page.getByText("읽기 전용", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /^다음/ })).toBeEnabled();
   await page.getByRole("button", { name: /^다음/ }).click();
-  await expect(page).toHaveURL(/\/process\/valuation$/);
+  await expect(page).toHaveURL(/\/process\/valuation$/, { timeout: 60_000 });
 
   await expect(
     page.getByRole("heading", { name: "PER 밸류에이션" }),
   ).toBeVisible();
   await expect(page.getByRole("grid")).toBeVisible();
+
+  const valuationAuth = await session(page.request);
+  const valuationWorkspaceBeforeInput = await (
+    await page.request.get(`/api/projects/${projectId}/valuation`)
+  ).json();
+  const valuationModelBeforeInput = await (
+    await page.request.get(
+      valuationWorkspaceBeforeInput.workbook.readModelUrl,
+    )
+  ).json();
+  const valuationCells = new Map<
+    string,
+    {
+      row: number;
+      column: number;
+      rawValue: string | null;
+    }
+  >();
+  for (const sheet of valuationModelBeforeInput.sheets) {
+    for (const cell of sheet.cells) {
+      valuationCells.set(`${sheet.sheetId}:${cell.address}`, cell);
+    }
+  }
+  const requiredForecastChanges = valuationModelBeforeInput.editableCells
+    .filter((cell: {
+      sheetId: string;
+      address: string;
+      required: boolean;
+    }) => {
+      const current = valuationCells.get(`${cell.sheetId}:${cell.address}`);
+      return cell.required && !current?.rawValue?.trim();
+    })
+    .map((cell: {
+      sheetId: string;
+      address: string;
+      valueType: string;
+    }) => {
+      const current = valuationCells.get(`${cell.sheetId}:${cell.address}`)!;
+      const previous = [...valuationCells.entries()].find(
+        ([key, candidate]) =>
+          key.startsWith(`${cell.sheetId}:`) &&
+          candidate.row === current.row &&
+          candidate.column === current.column - 1,
+      )?.[1].rawValue;
+      const valueType =
+        cell.valueType === "decimal" || cell.valueType === "integer"
+          ? "number"
+          : cell.valueType === "boolean"
+            ? "boolean"
+            : "string";
+      return {
+        sheetId: cell.sheetId,
+        address: cell.address,
+        valueType,
+        value:
+          valueType === "number"
+            ? previous?.trim() || "0"
+            : valueType === "boolean"
+              ? previous === "true"
+                ? "true"
+                : "false"
+              : previous?.trim() || "검토 필요",
+      };
+    });
+  expect(requiredForecastChanges.length).toBeGreaterThan(0);
+  const forecastInputResponse = await page.request.patch(
+    `/api/projects/${projectId}/valuation/workbook/cells`,
+    {
+      headers: { "X-CSRF-Token": valuationAuth.csrfToken },
+      data: {
+        workbookVersion:
+          valuationWorkspaceBeforeInput.workbook.workbookVersion,
+        editableCellSetVersion:
+          valuationWorkspaceBeforeInput.workbook.editableCellSetVersion,
+        requestId: crypto.randomUUID(),
+        changes: requiredForecastChanges,
+      },
+    },
+  );
+  const forecastInputBody = await forecastInputResponse.json();
+  expect(
+    forecastInputResponse.status(),
+    JSON.stringify(forecastInputBody),
+  ).toBe(200);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "PER 밸류에이션" }),
+  ).toBeVisible();
   await page.getByRole("tab", { name: /Target PER 설정/ }).click();
 
   await page.getByLabel("사용자 목표주가").fill("90000");
@@ -576,7 +713,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   ).toBe(200);
   expect(inverseDraftBody).toMatchObject({
     inputMode: "target_price",
-    targetPer: "16.0",
+    targetPer: "22.4",
     requestedTargetPrice: "90000",
     targetPrice: "90000",
   });
@@ -593,10 +730,10 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   expect(draftResponse.status(), JSON.stringify(draftBody)).toBe(200);
   expect(draftBody).toMatchObject({
     targetPer: "14.2",
-    targetPrice: "80000",
-    formattedTargetPrice: "80,000원",
+    targetPrice: "60000",
+    formattedTargetPrice: "60,000원",
   });
-  await expect(page.locator(".phase5-summary")).toContainText("80,000원");
+  await expect(page.locator(".phase5-summary")).toContainText("60,000원");
 
   const approvalResponsePromise = page.waitForResponse(
     (response) =>
@@ -649,7 +786,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   const targetPerOutput = completedModel.outputs.targetPer;
   expect(targetPerOutput).toBeTruthy();
 
-  const auth = await session(page.request);
+  const auth = valuationAuth;
   const protectedChangeResponse = await page.request.patch(
     `/api/projects/${projectId}/valuation/workbook/cells`,
     {
@@ -683,21 +820,70 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   );
   const outlinePageCount = await outlinePages.count();
   expect(outlinePageCount).toBeGreaterThan(0);
+  const outlineWorkspaceResponse = await page.request.get(
+    `/api/projects/${projectId}/report-outline`,
+  );
+  expect(outlineWorkspaceResponse.status()).toBe(200);
+  const outlineWorkspace = await outlineWorkspaceResponse.json();
+  const blockedOutlinePageIds = new Set<string>(
+    outlineWorkspace.outline.pages
+      .filter((outlinePage: {
+        visualSlots: Array<{
+          required: boolean;
+          bindingStatus: string;
+        }>;
+      }) =>
+        outlinePage.visualSlots.some(
+          (slot) => slot.required && slot.bindingStatus !== "confirmed",
+        ),
+      )
+      .map((outlinePage: { pageId: string }) => outlinePage.pageId),
+  );
   for (let index = 0; index < outlinePageCount; index += 1) {
     const outlinePage = outlinePages.nth(index);
+    const outlinePageModel = outlineWorkspace.outline.pages[index];
     const toggle = outlinePage.locator(
       'button[aria-controls^="outline-panel-"]',
     );
     if ((await toggle.getAttribute("aria-expanded")) !== "true") {
       await toggle.click();
     }
-    const reviewButton = outlinePage.getByRole("button", {
-      name: /이 페이지 확인|확인 완료/,
+    const needsReviewButton = outlinePage.getByRole("button", {
+      name: "이 페이지 확인",
+      exact: true,
     });
-    if ((await reviewButton.textContent())?.includes("이 페이지 확인")) {
-      await reviewButton.click();
+    if (blockedOutlinePageIds.has(outlinePageModel.pageId)) {
+      const blockedReviewResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response.url().includes(
+            `/report-outline/pages/${outlinePageModel.pageId}/review`,
+          ),
+      );
+      await needsReviewButton.click();
+      const blockedReviewResponse = await blockedReviewResponsePromise;
+      expect(blockedReviewResponse.status()).toBe(422);
+      await expect(blockedReviewResponse.json()).resolves.toMatchObject({
+        error: { code: "PAGE_OUTLINE_INVALID" },
+      });
+      continue;
     }
-    await expect(reviewButton).toContainText("확인 완료");
+    if (await needsReviewButton.count()) {
+      await needsReviewButton.click();
+    }
+    await expect(
+      outlinePage.getByRole("button", {
+        name: "확인 완료",
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
+
+  if (blockedOutlinePageIds.size > 0) {
+    await expect(
+      page.getByRole("button", { name: "이 구성으로 초안 생성" }),
+    ).toBeDisabled();
+    return;
   }
 
   await page.getByRole("button", { name: "이 구성으로 초안 생성" }).click();

@@ -25,6 +25,10 @@ import {
   validateQuestionAnswer,
   type ResearchQuestionAnswer,
 } from "../../server/domain/research-question-answers";
+import {
+  buildResearchAgentInput,
+  compactResearchSource,
+} from "../../server/domain/research-agent-payload";
 import { createWorkerResultEnvelope } from "../../server/domain/worker-result-contract";
 import {
   collectResearchSources,
@@ -945,16 +949,20 @@ async function callResearchAgentBatch(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        input: {
-          company: input.companyName,
-          ticker: input.ticker,
-          targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
-          cutoffAt: input.cutoffAt,
-          questions,
+        input: buildResearchAgentInput(
+          {
+            company: input.companyName,
+            ticker: input.ticker,
+            targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
+            cutoffAt: input.cutoffAt,
+            // 배치 단위로 넘어온 질문만 보낸다(main의 질문 배치 분할).
+            // 공식 Excel 대상은 별도 파이프라인이 처리하므로 넘기지 않는다.
+            questions,
+            approvedPlanResourceVersionId:
+              input.approvedPlanResourceVersionId,
+          },
           sources,
-          approvedPlanResourceVersionId:
-            input.approvedPlanResourceVersionId,
-        },
+        ),
         profile: input.researchAgentProfile,
       }),
       signal: AbortSignal.any([
@@ -965,8 +973,12 @@ async function callResearchAgentBatch(
     ),
   );
   if (!response.ok) {
+    const responseBody = (await response.text()).slice(0, 300);
+    if (response.status === 413) {
+      throw new Error(`RESEARCH_AGENT_INPUT_LIMIT:${responseBody}`);
+    }
     throw new Error(
-      `Research Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+      `Research Agent ${response.status}: ${responseBody}`,
     );
   }
   const payload = (await response.json()) as {
@@ -1297,7 +1309,7 @@ async function callValidationAgentBatch(
           ticker: input.ticker,
           targetPeriod: `${input.targetYear}년 ${input.targetQuarter}분기`,
           cutoffAt: input.cutoffAt,
-          sources,
+          sources: sources.map(compactResearchSource),
           candidates,
         },
         profile: input.validationAgentProfile,
@@ -1310,8 +1322,12 @@ async function callValidationAgentBatch(
     ),
   );
   if (!response.ok) {
+    const responseBody = (await response.text()).slice(0, 300);
+    if (response.status === 413) {
+      throw new Error(`VALIDATION_AGENT_INPUT_LIMIT:${responseBody}`);
+    }
     throw new Error(
-      `Validation Agent ${response.status}: ${(await response.text()).slice(0, 300)}`,
+      `Validation Agent ${response.status}: ${responseBody}`,
     );
   }
   const payload = (await response.json()) as {
@@ -1580,18 +1596,40 @@ export async function prepareNewsSearch(
   return true;
 }
 
+/**
+ * 뉴스 검색 provider 장애·쿼터 초과는 조사 전체를 실패시키지 않는다.
+ * 뉴스가 없으면 나머지 원문으로 계속 진행하고 경고로 남긴다.
+ */
+async function searchNewsTolerantly(
+  input: ResearchValidationWorkflowInput,
+  questionId?: string,
+): Promise<NewsDiscoveryResult[]> {
+  try {
+    return await callNewsSearchAgent(input, questionId);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (
+      detail.includes("NEWS_SEARCH_PROVIDER_UNAVAILABLE") ||
+      detail.includes("NEWS_SEARCH_RATE_LIMITED")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+}
+
 export async function planNewsSearchQuestion(
   input: ResearchValidationWorkflowInput,
   questionId: string,
 ): Promise<NewsDiscoveryResult[]> {
-  return callNewsSearchAgent(input, questionId);
+  return searchNewsTolerantly(input, questionId);
 }
 
 export async function planNewsSearch(
   input: ResearchValidationWorkflowInput,
 ): Promise<NewsDiscoveryResult[]> {
   const shouldSearch = await prepareNewsSearch(input);
-  return shouldSearch ? callNewsSearchAgent(input) : [];
+  return shouldSearch ? searchNewsTolerantly(input) : [];
 }
 
 export async function collectResearchBundle(
@@ -1964,6 +2002,7 @@ export async function validateAndPublishResearch(
     "Validation Agent와 결정적 코드가 원문을 독립 검증하고 있습니다.",
   );
   const agentValidated =
+    researchCandidates.length === 0 ||
     process.env.REFLO_RESEARCH_TEST_FIXTURE === "1" ||
     process.env.REFLO_LLM_TEST_FIXTURE === "1"
       ? researchCandidates

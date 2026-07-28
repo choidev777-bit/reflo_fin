@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isValuationOutputCandidate } from "../server/infrastructure/services/workbook-output-bindings";
+import {
+  isValuationOutputCandidate,
+  valuationFormulaHash,
+} from "../server/infrastructure/services/workbook-output-bindings";
 
 test("rejects a market PER cell as the target PER output", () => {
   assert.equal(
@@ -41,4 +44,12 @@ test("does not constrain the existing EPS and target price outputs", () => {
     }),
     true,
   );
+});
+
+test("derives a stable hash for fallback formula outputs", () => {
+  assert.equal(
+    valuationFormulaHash("ROUND($B$7*$B$14,-4)"),
+    "585308c151aafe2f96382352a6e70df17aa97959cef7e3344986c073196b8760",
+  );
+  assert.equal(valuationFormulaHash(null), null);
 });

@@ -6,6 +6,7 @@ import {
   resumeRouteForBlocker,
   uniformRevalidationTransitions,
 } from "../server/domain/stage-blocker-policy";
+import { canonicalProjectRoute } from "../server/domain/project";
 
 const PROJECT_ID = "018f4db7-cd3f-7c22-bf6f-784f0da44f95";
 const REPOSITORY_FILES = [
@@ -102,5 +103,37 @@ test("approved research plan changes use the shared project invalidator", () => 
 
   assert.match(implementation, /invalidateProjectStages\(client,/);
   assert.match(implementation, /reasonCode:\s*"PLAN_REVALIDATION_REQUIRED"/);
+  assert.match(implementation, /SET current_stage = 'research_plan'/);
   assert.doesNotMatch(implementation, /UPDATE project_stage_state/);
+});
+
+test("canonical route never redirects back to a blocked current stage", () => {
+  const setup = `/projects/${PROJECT_ID}/process/setup`;
+  const researchPlan = `/projects/${PROJECT_ID}/process/research-plan`;
+  const validation = `/projects/${PROJECT_ID}/process/validation`;
+
+  assert.equal(
+    canonicalProjectRoute({
+      projectId: PROJECT_ID,
+      currentStage: "validation",
+      allowedRoutes: [setup, researchPlan, validation],
+    }),
+    validation,
+  );
+  assert.equal(
+    canonicalProjectRoute({
+      projectId: PROJECT_ID,
+      currentStage: "validation",
+      allowedRoutes: [setup, researchPlan],
+    }),
+    researchPlan,
+  );
+  assert.equal(
+    canonicalProjectRoute({
+      projectId: PROJECT_ID,
+      currentStage: "validation",
+      allowedRoutes: [],
+    }),
+    setup,
+  );
 });

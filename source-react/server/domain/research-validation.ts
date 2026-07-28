@@ -1521,7 +1521,6 @@ export function validateEvidenceCandidate(
   cutoffAt: string,
   context: EvidenceValidationContext = {},
 ): ValidatedEvidence {
-  const sourceText = JSON.stringify(source.content);
   const pages = Array.isArray(source.content.pages)
     ? source.content.pages.filter(
         (page): page is { pageNumber?: number; text: string } =>
@@ -1530,6 +1529,11 @@ export function validateEvidenceCandidate(
           typeof (page as { text?: unknown }).text === "string",
       )
     : [];
+  // PDF 원문은 페이지 텍스트를 이어 붙여야 인용문 대조가 정확하다.
+  const sourceText =
+    pages.length > 0
+      ? pages.map((page) => page.text).join("\n")
+      : JSON.stringify(source.content);
   const matchedPage = pages.find((page) =>
     page.text.includes(candidate.quoteExact),
   );

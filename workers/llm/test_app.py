@@ -225,6 +225,7 @@ class HypothesisAgentContractTest(unittest.TestCase):
             },
             set(payload["output"]["metadata"]),
         )
+        self.assertNotIn("latencyMs", payload["output"]["metadata"])
 
     def test_fixture_failure_is_retryable_then_succeeds(self) -> None:
         fixture_failure_attempts.pop(self.input.inputRevision, None)
