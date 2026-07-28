@@ -726,11 +726,6 @@ export function ReportOutlineScreen({ projectId }: { projectId: string }) {
                             )
                           }
                         />
-                        {page.recommendedTitle.sourceText && (
-                          <small>
-                            원본 제목 · {page.recommendedTitle.sourceText}
-                          </small>
-                        )}
                       </section>
                     )}
 
