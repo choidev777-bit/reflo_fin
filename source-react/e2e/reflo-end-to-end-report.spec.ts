@@ -343,18 +343,25 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   const pdfPageButtons = inspectionDialog.locator(
     ".phase2-page-rail > button",
   );
-  await expect(pdfPageButtons).toHaveCount(5);
+  // 고정 PDF는 6페이지이고 마지막은 고지·컴플라이언스 면이다. 검사 결과는
+  // 본문 페이지만이 아니라 원본의 모든 면을 그대로 보여준다.
+  const pdfPageCount = 6;
+  await expect(pdfPageButtons).toHaveCount(pdfPageCount);
 
   let resolvedMappings = 0;
-  for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
+  for (let pageIndex = 0; pageIndex < pdfPageCount; pageIndex += 1) {
     await pdfPageButtons.nth(pageIndex).click();
-    const reviewItems = inspectionDialog
-      .locator(".phase2-element-list > button")
-      .filter({
-        has: inspectionDialog.locator(
-          '.phase2-result-status[data-status="review"]',
-        ),
-      });
+    // locator.count()는 auto-wait하지 않는다. 페이지를 바꾼 직후 바로 세면
+    // 아직 이전 페이지의 목록을 세어 확인 필요 항목을 통째로 건너뛴다.
+    await expect(
+      inspectionDialog.getByText(`${pageIndex + 1}페이지 요소`),
+    ).toBeVisible();
+    // `has:`에 dialog에서 만든 locator를 넘기면 안쪽 selector에 dialog 경로가
+    // 붙어 button 내부에서는 절대 맞지 않는다. 확인 필요 항목이 화면에 있어도
+    // 0건으로 세어 통째로 건너뛰었다. CSS :has()로 button 자체를 좁힌다.
+    const reviewItems = inspectionDialog.locator(
+      '.phase2-element-list > button:has(.phase2-result-status[data-status="review"])',
+    );
     while ((await reviewItems.count()) > 0) {
       await reviewItems.first().click();
       const select = inspectionDialog.locator(
@@ -370,7 +377,9 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
       resolvedMappings += 1;
     }
   }
-  expect(resolvedMappings).toBe(7);
+  // 도표 7·9·10은 Excel 후보가 있으므로 사용자가 원본을 골라야 넘어간다.
+  // 도표 4·5는 후보가 없어 후속 단계로 넘어가므로 여기서 세지 않는다.
+  expect(resolvedMappings).toBe(3);
   await page.getByRole("button", { name: "분석 결과 반영" }).click();
   await expect(
     page.getByRole("button", { name: "분석 결과 확정 · 다음" }),
@@ -398,9 +407,15 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(
     page.getByRole("heading", { name: "현재 의견을 반영한 가설 질문" }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator(".phase3-question-row")).toHaveCount(3);
+  // 고정 응답이 만드는 질문 수. 아래 STEP 04·05가 같은 수의 질문 카드와
+  // 검증 그룹을 만들므로 한 곳에서 정한다.
+  const questionCount = 5;
+  await expect(page.locator(".phase3-question-row")).toHaveCount(questionCount);
   await expect(page.locator(".phase3-question-copy small")).toHaveCount(0);
-  await expect(page.locator(".phase3-row-actions button")).toHaveCount(6);
+  // 질문 행의 control은 수정·삭제 둘뿐이다.
+  await expect(page.locator(".phase3-row-actions button")).toHaveCount(
+    questionCount * 2,
+  );
 
   await page.getByRole("button", { name: "수정" }).first().click();
   const editor = page.getByLabel("01번 질문 수정");
@@ -441,18 +456,19 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(
     page.getByRole("heading", { name: "자료 수집 및 계획" }),
   ).toBeVisible();
-  await expect(page.locator(".phase4-question-card")).toHaveCount(3);
+  await expect(page.locator(".phase4-question-card")).toHaveCount(
+    questionCount,
+  );
   await page.getByRole("tab", { name: /EXCEL/ }).click();
   await expect(page.getByText("입력값 삽입을 위한 자료 수집")).toBeVisible();
-  await expect(page.locator(".phase4-excel-list article").first()).toBeVisible();
+  // Excel tab은 출처별 목록이 아니라 PDF-Excel 연동 리포트 입력 대상을 보여준다.
+  await expect(
+    page.locator(".phase4-report-target-list article").first(),
+  ).toBeVisible();
   await page.getByRole("tab", { name: /HYPOTHESIS/ }).click();
 
-  await expect(
-    page.getByText(
-      "기업 IR 출처를 사용하려면 공식 PDF를 올리거나 공식 IR URL을 입력해주세요.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  // 계획 차단 항목을 모아 보여주던 경고 panel은 의도적으로 제거됐다. 남은
+  // 계약은 필요한 원문을 등록하기 전까지 다음으로 넘어갈 수 없다는 것이다.
   await expect(page.getByRole("button", { name: "다음", exact: false })).toBeDisabled();
   const researchPdf = path.resolve(
     "../fixtures/ISC_4Q25_실적리뷰_하나증권.pdf",
@@ -493,7 +509,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
   await expect(
     page.getByRole("heading", { name: "조사 결과 검증" }),
   ).toBeVisible();
-  await expect(page.locator(".phase4-question-group")).toHaveCount(3, {
+  await expect(page.locator(".phase4-question-group")).toHaveCount(questionCount, {
     timeout: 60_000,
   });
   await expect(page.getByText("ORIGINAL SOURCE")).toBeVisible();
@@ -529,7 +545,7 @@ test("REFLO 업로드부터 최종 PDF/XLSX export까지 종단간 진행", asyn
       .getByRole("button", { name: "조건부 근거 확인" }),
   ).toBeVisible({ timeout: 60_000 });
 
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < questionCount; index += 1) {
     await questionGroups.nth(index).locator(".phase4-question-head").click();
     await questionGroups
       .nth(index)
