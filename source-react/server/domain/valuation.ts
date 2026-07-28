@@ -87,9 +87,15 @@ export function inverseTargetPer(targetPrice: string, forwardEps: string): strin
       "Forward EPS가 0보다 커야 합니다.",
     );
   }
-  return canonicalTargetPer(
-    new Decimal(targetPrice).div(eps).toDecimalPlaces(1).toFixed(1),
-  );
+  const impliedPer = new Decimal(targetPrice).div(eps).toDecimalPlaces(1);
+  if (impliedPer.lt("0.1") || impliedPer.gt("100.0")) {
+    throw new ApiError(
+      400,
+      "INVALID_TARGET_PRICE",
+      "입력한 목표주가로 계산한 PER이 허용 범위(0.1~100.0배)를 벗어납니다. 목표주가를 조정해주세요.",
+    );
+  }
+  return canonicalTargetPer(impliedPer.toFixed(1));
 }
 
 export function upside(targetPrice: string, currentPrice: string): string {

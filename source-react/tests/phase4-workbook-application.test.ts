@@ -10,6 +10,12 @@ import {
   workbookApplicationResultDisposition,
   type ValidatedValueSet,
 } from "../server/domain/workbook-application";
+import {
+  canonicalValidationPeriod,
+  canonicalValidationScope,
+  canonicalValidationValueKind,
+  convertValidatedDecimal,
+} from "../server/domain/validated-value-normalization";
 import { ApiError } from "../server/http/api-error";
 
 const HASH_A = "a".repeat(64);
@@ -149,6 +155,55 @@ function validatedValueSet(): ValidatedValueSet {
     createdAt: "2026-07-26T00:00:00.000Z",
   });
 }
+
+test("DART 범위 코드(CFS/OFS)를 라벨(연결/별도)과 동일하게 정규화한다", () => {
+  // Excel 축 검증값은 scope에 코드(CFS)를, target은 라벨(연결)을 저장한다. 두 표현이
+  // 같은 범위로 취급돼야 workbook 준비 시 VALIDATED_VALUE_DIMENSION_MISMATCH가 안 난다.
+  assert.equal(canonicalValidationScope("CFS"), canonicalValidationScope("연결"));
+  assert.equal(canonicalValidationScope("OFS"), canonicalValidationScope("별도"));
+  assert.equal(canonicalValidationScope("cfs"), "연결");
+  assert.equal(canonicalValidationScope("ofs"), "별도");
+});
+
+test("period/scope/valueKind 표현 차이를 흡수해 불필요한 DIMENSION_MISMATCH를 막는다", () => {
+  // 분기-선행 단축연도, 전망 접미사, 연간/사업연도 folding
+  assert.equal(canonicalValidationPeriod("2Q26"), "2026년 2분기");
+  assert.equal(canonicalValidationPeriod("1Q26F"), "2026년 1분기");
+  assert.equal(canonicalValidationPeriod("2027F"), "2027년");
+  assert.equal(
+    canonicalValidationPeriod("2025년 연간"),
+    canonicalValidationPeriod("2025 사업연도"),
+  );
+  assert.equal(canonicalValidationPeriod("FY2025"), "2025년");
+  // PDF 원문 제목 scope와 DART 코드/라벨을 같은 범위로 판정
+  assert.equal(canonicalValidationScope("연결재무상태표"), "연결");
+  assert.equal(canonicalValidationScope("CFS"), canonicalValidationScope("연결"));
+  // 잠정 실적은 확정 실적 target을 충족, null은 실적, 전망 계열은 forecast
+  assert.equal(canonicalValidationValueKind("preliminary_actual"), "actual");
+  assert.equal(canonicalValidationValueKind(null), "actual");
+  assert.equal(canonicalValidationValueKind("E"), "forecast");
+  assert.equal(canonicalValidationValueKind("전망"), "forecast");
+  // 단위 코드/별칭: 퍼센트, 배수, 남은 통화 코드
+  assert.equal(convertValidatedDecimal("5", "퍼센트", "%").value, "5");
+  assert.equal(convertValidatedDecimal("10", "배수", "배").rule, "identity");
+  assert.equal(
+    convertValidatedDecimal("1", "KRW_TRILLION", "조원").rule,
+    "identity",
+  );
+});
+
+test("targetUnit 코드형(KRW_BILLION 등)을 원화 스케일 단위로 인식·변환한다", () => {
+  // Excel 축 검증값 unit은 코드형(KRW_BILLION)으로 오는데 정규화 맵엔 라벨과 krw만
+  // 있어 "지원하지 않는 단위"로 실패했다. 코드형 별칭을 인식해 변환할 수 있어야 한다.
+  assert.equal(
+    convertValidatedDecimal("346.31416369", "KRW_BILLION", "KRW_MILLION").value,
+    "346314.16369",
+  );
+  assert.equal(
+    convertValidatedDecimal("1", "KRW_100M", "억원").rule,
+    "identity",
+  );
+});
 
 test("Evidence를 target 단위·기간·범위로 정규화한 불변 ValidatedValueSet으로 만든다", () => {
   const valueSet = validatedValueSet();

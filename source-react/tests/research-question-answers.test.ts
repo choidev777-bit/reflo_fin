@@ -215,25 +215,26 @@ test("충돌 원문 선택 뒤 모든 필수 지표가 있으면 stance로 다�
   assert.deepEqual(answer.evidenceIds, ["evidence-1", "evidence-2"]);
 });
 
-test("서버는 질문 답변 전체 집합을 승인 계획과 Evidence로 다시 검증한다", () => {
-  assert.throws(
-    () =>
-      validateQuestionAnswerSet({
-        questions: [question],
-        evidence: [evidence()],
-        answers: [
-          {
-            questionId: question.questionId,
-            verdict: "negative",
-            oneLineAnswer: "매출 성장률 12.5%",
-            evidenceCandidateKeys: ["candidate-1"],
-            caveat: null,
-            policyVersion: "stance-balance-v1",
-          },
-        ],
-      }),
-    /QUESTION_ANSWER_POLICY_MISMATCH/,
-  );
+test("서버는 질문 답변을 Evidence로 다시 검증하고 판정을 서버 정책으로 확정한다", () => {
+  // verdict는 서버의 decideQuestionAnswers가 근거로부터 정하는 정책 권위다. 워커가
+  // 보낸 verdict가 어긋나도 실패시키지 않고 서버 값으로 확정한다(한 줄 답변은 유지).
+  const [confirmed] = validateQuestionAnswerSet({
+    questions: [question],
+    evidence: [evidence()],
+    answers: [
+      {
+        questionId: question.questionId,
+        verdict: "negative",
+        oneLineAnswer: "매출 성장률 12.5%",
+        evidenceCandidateKeys: ["candidate-1"],
+        caveat: null,
+        policyVersion: "stance-balance-v1",
+      },
+    ],
+  });
+  assert.equal(confirmed.verdict, "positive");
+  assert.equal(confirmed.oneLineAnswer, "매출 성장률 12.5%");
+  // 판단 가능한 질문에 워커의 한 줄 답변이 없으면 여전히 집합 불일치로 거부한다.
   assert.throws(
     () =>
       validateQuestionAnswerSet({

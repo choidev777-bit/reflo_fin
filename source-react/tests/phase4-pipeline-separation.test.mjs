@@ -34,8 +34,11 @@ test("Phase 04 runs hypothesis and official Excel as separate pipelines", async 
   );
 
   assert.match(currentWorkflow, /Promise\.all/);
-  assert.match(currentWorkflow, /collectHypothesisBundle/);
-  assert.match(currentWorkflow, /collectOfficialExcelBundle/);
+  // 공식 원문은 한 번만 수집(collectResearchBundle)해 두 축이 공유하고, 후보
+  // 추출은 별도 활동(extractResearchCandidates)으로 분리한다. 축별 개별 수집
+  // (collectHypothesisBundle/collectOfficialExcelBundle)은 스냅샷 충돌 때문에 폐기됐다.
+  assert.match(currentWorkflow, /collectResearchBundle/);
+  assert.match(currentWorkflow, /extractResearchCandidates/);
   assert.match(currentWorkflow, /validateHypothesisPipeline/);
   assert.match(currentWorkflow, /validateOfficialExcelPipeline/);
   assert.match(currentWorkflow, /publishSeparatedResearchValidation/);
@@ -148,10 +151,10 @@ test("news search runs one independently retryable activity per question", async
   assert.match(discovery, /prepareNewsSearch/);
   assert.match(discovery, /Promise\.all/);
   assert.match(discovery, /planNewsSearchQuestion/);
-  assert.match(workflow, /startToCloseTimeout: "6 minutes"/);
+  assert.match(workflow, /startToCloseTimeout: "7 minutes"/);
   assert.match(activities, /export async function prepareNewsSearch/);
   assert.match(activities, /export async function planNewsSearchQuestion/);
-  assert.match(activities, /AbortSignal\.timeout\(300_000\)/);
+  assert.match(activities, /AbortSignal\.timeout\(PHASE4_AGENT_FETCH_TIMEOUT_MS\)/);
   assert.match(worker, /maxConcurrentActivityTaskExecutions: 2/);
   assert.match(worker, /planNewsSearchQuestion: activities\.planNewsSearchQuestion/);
 });

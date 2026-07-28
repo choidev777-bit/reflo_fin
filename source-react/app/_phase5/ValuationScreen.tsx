@@ -123,6 +123,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
   const targetPerDirty = useRef(false);
   const targetPriceDirty = useRef(false);
   const cellQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  const mutating = useRef(false);
   const mutationKeys = useRef(
     new Map<string, { signature: string; key: string }>(),
   );
@@ -270,6 +271,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
   const saveDraft = async (inputMode: "target_per" | "target_price") => {
     const current = workspaceRef.current;
     if (!current || !session.csrfToken || status !== "idle") return;
+    if (mutating.current) return;
     const fieldError =
       inputMode === "target_per"
         ? targetPerValidation(targetPer)
@@ -277,8 +279,11 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
     if (inputMode === "target_per") setTargetPerError(fieldError);
     else setTargetPriceError(fieldError);
     if (fieldError) return;
+    mutating.current = true;
     setStatus("saving");
     setPageError("");
+    setCellError("");
+    setLastCellResult(null);
     const payload = {
       workbookVersion: current.workbook.workbookVersion,
       draftVersion: current.valuationDraft?.draftVersion ?? null,
@@ -311,6 +316,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
       if (!routeError(error)) setPageError(errorMessage(error));
     } finally {
       setStatus("idle");
+      mutating.current = false;
     }
   };
 
@@ -324,8 +330,12 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
     ) {
       return;
     }
+    if (mutating.current) return;
+    mutating.current = true;
     setStatus("saving");
     setPageError("");
+    setCellError("");
+    setLastCellResult(null);
     const payload = {
       workbookVersion: current.workbook.workbookVersion,
       draftVersion: current.valuationDraft.draftVersion,
@@ -352,6 +362,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
       if (!routeError(error)) setPageError(errorMessage(error));
     } finally {
       setStatus("idle");
+      mutating.current = false;
     }
   };
 
@@ -387,8 +398,12 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
   const complete = async () => {
     const current = workspaceRef.current;
     if (!current?.approval || !session.csrfToken || status !== "idle") return;
+    if (mutating.current) return;
+    mutating.current = true;
     setStatus("saving");
     setPageError("");
+    setCellError("");
+    setLastCellResult(null);
     const payload = {
       valuationApprovalVersion: current.approval.approvalVersion,
     };
@@ -415,6 +430,7 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
       if (!routeError(error)) setPageError(errorMessage(error));
     } finally {
       setStatus("idle");
+      mutating.current = false;
     }
   };
 
@@ -466,13 +482,23 @@ export function ValuationScreen({ projectId }: { projectId: string }) {
   };
 
   if (!workspace || !model) {
+    const sessionFailed = session.status === "error";
     return (
       <div className="phase5-page-loading">
         <div className="phase5-loading-card" />
-        {pageError && (
+        {(pageError || sessionFailed) && (
           <div role="alert">
-            <p>{pageError}</p>
-            <button type="button" onClick={() => void load()}>
+            <p>
+              {pageError ||
+                "세션을 확인하지 못했습니다. 페이지를 새로고침해주세요."}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (sessionFailed) window.location.reload();
+                else void load();
+              }}
+            >
               다시 불러오기
             </button>
           </div>

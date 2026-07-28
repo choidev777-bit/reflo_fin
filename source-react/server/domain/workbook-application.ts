@@ -5,6 +5,7 @@ import {
   canonicalValidatedDecimal,
   canonicalValidationPeriod,
   canonicalValidationScope,
+  canonicalValidationValueKind,
   convertValidatedDecimal,
 } from "./validated-value-normalization";
 
@@ -404,7 +405,8 @@ export function createValidatedValueSet(input: {
           canonicalValidationPeriod(target.period) ||
         canonicalValidationScope(result.scope) !==
           canonicalValidationScope(target.scope) ||
-        result.valueKind !== target.valueKind
+        canonicalValidationValueKind(result.valueKind) !==
+          canonicalValidationValueKind(target.valueKind)
       ) {
         return fail(
           422,

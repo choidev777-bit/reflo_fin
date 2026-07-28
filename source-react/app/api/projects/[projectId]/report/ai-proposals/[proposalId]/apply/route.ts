@@ -20,11 +20,11 @@ export async function POST(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await applyReportAiProposal({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
         proposalId,
         leaseToken: request.headers.get("X-Edit-Lease"),
-        ...body,
       }),
       {},
       requestId,

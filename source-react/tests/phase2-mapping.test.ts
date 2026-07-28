@@ -4,6 +4,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { buildMappingSet } from "../workers/control/mapping";
 import workerResultSchemas from "../server/domain/generated/worker-result-schemas.json";
+import { isValuationOutputSlotId } from "../server/domain/valuation-output-slots";
 import {
   buildMappingRevisionBinding,
   deserializeMappingCandidateSource,
@@ -328,6 +329,19 @@ function workbook(candidateCells: WorkbookCandidateCell[]): WorkbookAnalysis {
   };
 }
 
+/**
+ * 밸류에이션 출력(EPS·PER·목표주가)은 template IR에 slot이 없어도 항상 합성
+ * 슬롯으로 매핑 후보를 만든다. 아래 테스트들은 template의 특정 슬롯 동작을
+ * 검증하므로, 그 합성 슬롯의 후보는 제외하고 본다.
+ */
+function templateSlotCandidates(
+  result: ReturnType<typeof buildMappingSet>,
+): ReturnType<typeof buildMappingSet>["mappingSet"]["candidates"] {
+  return result.mappingSet.candidates.filter(
+    (candidate) => !isValuationOutputSlotId(candidate.slotId),
+  );
+}
+
 function sourceAddresses(
   result: ReturnType<typeof buildMappingSet>,
 ): Array<string | undefined> {
@@ -500,6 +514,55 @@ test("confirms documented and period-specific model sources", () => {
   );
 });
 
+test("binds valuation outputs even when the PDF prints EPS and PER inside a table", () => {
+  // 실제 리서치 보고서는 EPS·PER을 Key Data 표 안에 인쇄해 template IR의
+  // scalar slot으로 감지되지 않는다. 그래도 STEP 06 밸류에이션이 Excel 셀을
+  // 읽을 수 있어야 하므로 합성 슬롯이 후보와 binding을 만들어야 한다.
+  const value = template();
+  value.pages[0].slots = [];
+  const result = buildMappingSet(
+    value,
+    workbook([
+      cell("sheet_m2", "M2_목표주가_타겟멀티플", "C10", "적용 EPS (2026F)"),
+      cell("sheet_m2", "M2_목표주가_타겟멀티플", "C7", "적정 P/E (선택 방식)"),
+      cell("sheet_m2", "M2_목표주가_타겟멀티플", "C21", "목표주가 (모델, 제시)"),
+    ]),
+  );
+
+  const boundMetrics = result.mappingSet.bindings.map(
+    (binding) => binding.semanticKey.metric,
+  );
+  assert.deepEqual([...boundMetrics].sort(), ["eps", "per", "target_price"]);
+  assert.deepEqual([...sourceAddresses(result)].sort(), ["C10", "C21", "C7"]);
+  assert.equal(
+    result.mappingSet.warnings.some(
+      (warning) => warning.code === "VALUATION_OUTPUT_MAPPING_UNRESOLVED",
+    ),
+    false,
+  );
+  assert.equal(
+    validateMappingSet(result.mappingSet),
+    true,
+    JSON.stringify(validateMappingSet.errors),
+  );
+});
+
+test("warns without blocking when a valuation output cell cannot be located", () => {
+  const value = template();
+  value.pages[0].slots = [];
+  const result = buildMappingSet(value, workbook([]));
+
+  // STEP 02 적합성 검사는 막지 않는다(합성 슬롯은 required=false).
+  assert.equal(result.summary.status, "confirmed");
+  assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
+  assert.equal(
+    result.mappingSet.warnings.some(
+      (warning) => warning.code === "VALUATION_OUTPUT_MAPPING_UNRESOLVED",
+    ),
+    true,
+  );
+});
+
 test("prefers the M2 target P/E output over a market P/E cell", () => {
   const value = template();
   value.pages[0].slots = [
@@ -636,7 +699,7 @@ test("uses the KRX cutoff close as the authoritative current price", () => {
   assert.equal(binding.source.provider, "KRX_OPEN_API");
   assert.equal(binding.source.closePrice, 88_700);
   assert.equal(
-    result.mappingSet.candidates.some(
+    templateSlotCandidates(result).some(
       (candidate) => candidate.kind === "cell",
     ),
     false,
@@ -685,7 +748,7 @@ test("keeps current price assigned to KRX when the cutoff close is not yet avail
 
   assert.equal(result.summary.status, "confirmed");
   assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
-  assert.equal(result.mappingSet.candidates.length, 0);
+  assert.equal(templateSlotCandidates(result).length, 0);
   assert.equal(result.mappingSet.bindings.length, 0);
   assert.equal(
     result.mappingSet.warnings.some(
@@ -886,7 +949,7 @@ test("defers a multiplier-only P/E range to the planned FnGuide and KRX collecti
 
   assert.equal(result.summary.status, "confirmed");
   assert.deepEqual(result.mappingSet.unmappedRequiredSlots, []);
-  assert.equal(result.mappingSet.candidates.length, 0);
+  assert.equal(templateSlotCandidates(result).length, 0);
   assert.equal(result.mappingSet.bindings.length, 0);
 });
 

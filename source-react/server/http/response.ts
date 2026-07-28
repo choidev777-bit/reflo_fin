@@ -53,8 +53,14 @@ export async function withApiErrors(
   try {
     return await handler(requestId);
   } catch (error) {
-    if (process.env.NODE_ENV !== "production" && !(error instanceof ApiError)) {
-      console.error("REFLO request failed:", error instanceof Error ? error.message : "Unknown error");
+    if (process.env.NODE_ENV !== "production") {
+      if (error instanceof ApiError) {
+        console.error(
+          `REFLO API error [${error.status} ${error.code}]: ${error.message}`,
+        );
+      } else {
+        console.error("REFLO request failed:", error instanceof Error ? error.message : "Unknown error");
+      }
     }
     return errorResponse(error, requestId);
   }

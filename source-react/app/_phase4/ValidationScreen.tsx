@@ -965,15 +965,22 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
         conflict.resultId === selectedResultId &&
         conflict.status === "unresolved",
     ) ?? null;
-  const writeReviewComplete =
+  // 명세 §7.15: `다음` 클릭이 validation version 전체 승인 행위이고
+  // "사용자는 정상 결과를 일일이 승인할 필요가 없다". 따라서 미결정(`proposed`)
+  // 제안은 `다음`에서 일괄 승인하고, 여기서는 사용자가 **명시적으로 거절한**
+  // 필수 제안만 차단 사유로 본다.
+  const rejectedRequiredProposals =
+    writeProposals?.proposals.filter(
+      (proposal) => proposal.required && proposal.status === "reject",
+    ) ?? [];
+  const writeReviewReady =
     writeProposals !== null &&
     writeProposals.blockers.length === 0 &&
-    writeProposals.proposals.every(
-      (proposal) =>
-        proposal.status === "approve" ||
-        proposal.status === "modify" ||
-        (!proposal.required && proposal.status === "reject"),
-    );
+    rejectedRequiredProposals.length === 0;
+  const undecidedProposals =
+    writeProposals?.proposals.filter(
+      (proposal) => proposal.status === "proposed",
+    ) ?? [];
 
   const proposalDraft = selectedProposal
     ? proposalDrafts[selectedProposal.proposalId]
@@ -1180,10 +1187,10 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
   };
 
   const complete = async () => {
-    if (!workspace || !session.csrfToken || !writeReviewComplete) return;
+    if (!workspace || !session.csrfToken || !writeReviewReady) return;
     setMutationBusy(true);
     try {
-      await apiJson(
+      const preparedProposals = await apiJson<WorkbookWriteProposalManifest>(
         `/api/projects/${projectId}/validation/workbook-write-proposals`,
         {
           method: "POST",
@@ -1192,6 +1199,41 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
             "X-CSRF-Token": session.csrfToken,
           },
         },
+      );
+      // 명세 §7.15: 정상 결과는 개별 승인 대상이 아니다. 사용자가 따로
+      // 결정하지 않은 제안은 이 시점에 일괄 승인해 감사 기록으로 남긴다.
+      // 사용자가 이미 수정·거절한 제안은 그대로 둔다.
+      for (const proposal of preparedProposals.proposals) {
+        if (proposal.status !== "proposed") continue;
+        await apiJson(
+          `/api/projects/${projectId}/validation/workbook-write-proposals/` +
+            `${proposal.proposalId}/decision`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": session.csrfToken,
+              "Idempotency-Key": crypto.randomUUID(),
+            },
+            body: JSON.stringify({
+              validatedValueSetVersionId:
+                preparedProposals.validatedValueSetVersionId,
+              expectedWorkbookVersion:
+                preparedProposals.expectedWorkbookVersion,
+              expectedProjectVersion:
+                preparedProposals.expectedProjectVersion,
+              sourceSnapshotId: preparedProposals.sourceSnapshotId,
+              sourceFingerprint: preparedProposals.sourceFingerprint,
+              action: "approve",
+              reason: "검증 버전 승인 시 일괄 반영 · 원문 대조 검증 통과",
+            }),
+          },
+        );
+      }
+      setWriteProposals(
+        await apiJson<WorkbookWriteProposalManifest>(
+          `/api/projects/${projectId}/validation/workbook-write-proposals`,
+        ),
       );
       let currentWorkbook = await apiJson<ValidationWorkbookManifest>(
         `/api/projects/${projectId}/validation/workbook`,
@@ -1394,7 +1436,7 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
             className="primary"
             disabled={
               !workspace.workspace.stageGate.canProceed ||
-              !writeReviewComplete ||
+              !writeReviewReady ||
               mutationBusy
             }
             aria-describedby="phase4-validation-next-help"
@@ -1405,9 +1447,11 @@ export function ValidationScreen({ projectId }: { projectId: string }) {
           <span id="phase4-validation-next-help" className="phase4-sr-only">
             {!workspace.workspace.stageGate.canProceed
               ? "모든 검증 차단 항목을 해결한 뒤 이동할 수 있습니다."
-              : !writeReviewComplete
-                ? "Excel 탭에서 필수 제안은 승인·수정하고 선택 제안도 결정해주세요."
-                : "승인된 제안만 복사본에 반영·재검증한 뒤 밸류에이션으로 이동"}
+              : !writeReviewReady
+                ? "거절한 필수 Excel 제안을 승인 또는 수정으로 다시 결정해주세요."
+                : undecidedProposals.length > 0
+                  ? `미결정 Excel 제안 ${undecidedProposals.length}건을 함께 승인하고 복사본에 반영·재검증한 뒤 밸류에이션으로 이동`
+                  : "승인된 제안만 복사본에 반영·재검증한 뒤 밸류에이션으로 이동"}
           </span>
         </footer>
       }

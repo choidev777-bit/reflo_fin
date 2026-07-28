@@ -162,12 +162,16 @@ function visibleBorder(value: string | undefined) {
 function EditableCell({
   cell,
   disabled,
+  row,
+  column,
   onSelect,
   onCommit,
   onPaste,
 }: {
   cell: WorkbookCell;
   disabled: boolean;
+  row?: number;
+  column?: number;
   onSelect: () => void;
   onCommit: (value: string) => Promise<boolean>;
   onPaste?: (value: string) => Promise<boolean>;
@@ -188,6 +192,8 @@ function EditableCell({
     <input
       className="phase5-grid-input"
       aria-label={`${cell.label || cell.address} 입력`}
+      data-row={row}
+      data-column={column}
       value={value}
       disabled={disabled || committing}
       inputMode={
@@ -208,10 +214,26 @@ function EditableCell({
         if (event.key === "Enter") {
           event.preventDefault();
           event.currentTarget.blur();
+          return;
         }
         if (event.key === "Escape") {
           setValue(cell.rawValue ?? "");
           event.currentTarget.blur();
+          return;
+        }
+        if (row === undefined || column === undefined) return;
+        const input = event.currentTarget;
+        const atStart =
+          input.selectionStart === 0 && input.selectionEnd === 0;
+        const atEnd =
+          input.selectionStart === value.length &&
+          input.selectionEnd === value.length;
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          focusGridCell(event, row, column);
+        } else if (event.key === "ArrowLeft" && atStart) {
+          focusGridCell(event, row, column);
+        } else if (event.key === "ArrowRight" && atEnd) {
+          focusGridCell(event, row, column);
         }
       }}
     />
@@ -723,9 +745,11 @@ export default function ValuationWorkbook({
                   >
                     {cell.editable ? (
                       <EditableCell
-                        key={`${model.workbookVersion}:${sheet.sheetId}:${cell.address}:${cell.rawValue ?? ""}`}
+                        key={`${sheet.sheetId}:${cell.address}:${cell.rawValue ?? ""}`}
                         cell={cell}
                         disabled={disabled}
+                        row={row}
+                        column={column}
                         onSelect={() =>
                           onSelected(cell, sheet.sheetId, sheet.name)
                         }

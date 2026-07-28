@@ -19,10 +19,10 @@ export async function POST(request: NextRequest, context: Context) {
       expectedInputVersions: unknown;
     }>(request);
     const result = await approveReportOutline({
+      ...body,
       projectId: requireUuid(projectId),
       userId: session.userId,
       idempotencyKey: request.headers.get("Idempotency-Key"),
-      ...body,
     });
     kickOutboxDispatcher();
     return jsonResponse(result.body, { status: result.status }, requestId);

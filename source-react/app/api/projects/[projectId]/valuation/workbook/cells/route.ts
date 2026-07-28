@@ -21,9 +21,9 @@ export async function PATCH(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await patchValuationCells({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
-        ...body,
       }),
       {},
       requestId,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -83,6 +84,13 @@ def phase4_retry(reason: str) -> ModelRetry:
     """
     phase4_logger.warning("phase4 output rejected: %s", reason)
     return ModelRetry(reason)
+
+
+# 서버 계약(worker-result-schemas.json의 OpaqueId)과 동일한 candidateKey 규칙.
+# 모델이 자유 생성하는 candidateKey가 이 패턴을 벗어나면(한글·공백·선행 기호 등)
+# 최종 게시 단계의 envelope 검증이 WORKER_RESULT_ENVELOPE_INVALID로 하드 실패한다.
+# 여기서 미리 반려해 모델에게 재시도 기회와 명확한 사유를 준다.
+OPAQUE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class StrictModel(BaseModel):
@@ -872,6 +880,17 @@ def build_research_agent(
         keys = [candidate.candidateKey for candidate in output.candidates]
         if len(keys) != len(set(keys)):
             raise phase4_retry("candidate keys must be unique")
+        # 모델은 candidateKey를 `질문id|출처|한글지표` 같은 복합 문자열로 만드는데,
+        # 파이프·한글은 서버 계약(OpaqueId)을 위반해 최종 게시가 하드 실패한다.
+        # 반려하면 재시도만 소진되므로(그래서 metricId 교정 기회까지 잃는다),
+        # 규칙을 벗어난 키는 원본 기반으로 결정적·유일하게 정규화한다. candidateKey는
+        # 상관용 불투명 토큰이고 추출 출력 안에서 상호참조가 없어 값 변경이 안전하다.
+        for candidate in output.candidates:
+            if not OPAQUE_ID_PATTERN.match(candidate.candidateKey):
+                digest = hashlib.sha1(
+                    candidate.candidateKey.encode("utf-8")
+                ).hexdigest()[:16]
+                candidate.candidateKey = f"c-{digest}"
         unknown_sources = sorted(
             {
                 candidate.sourceKey

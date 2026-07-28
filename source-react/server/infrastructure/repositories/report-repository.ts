@@ -36,9 +36,11 @@ import {
   type ReportMaterializedData,
   type ReportMappingBinding,
   type ReportRangeSource,
+  type ReportTemplateObject,
   type ReportTemplatePage,
   type ReportWorkbookReadModel,
 } from "../../domain/report";
+import { deferredMappingResolvesRequiredSlot } from "../../domain/mapping-policy";
 import { buildReportPeriodPlan } from "../../domain/report-period-plan";
 import {
   serializeReportMaterializationArtifact,
@@ -1582,6 +1584,15 @@ async function ensureOutline(
   client: TransactionClient,
   context: Context,
   userId: string,
+  /**
+   * 읽기 경로에서는 재검증이 필요한 outline도 그대로 돌려준다.
+   *
+   * 예전에는 항상 409를 던졌는데, 재생성 API가 요구하는
+   * `expectedInputVersions`를 알려주는 곳이 바로 이 GET뿐이라 사용자가
+   * STEP 07에서 빠져나올 방법이 없었다. 재검증 상태 기록은 그대로 하고
+   * 화면에는 `revalidationRequired`로 표시한다.
+   */
+  allowRevalidation = false,
 ): Promise<OutlineRow> {
   const existing = await readOutline(client, context.projectId);
   if (existing) {
@@ -1615,6 +1626,9 @@ async function ensureOutline(
          SET status = 'revalidation_required' WHERE project_id = $1`,
         [context.projectId],
       );
+      if (allowRevalidation) {
+        return { ...existing, status: "revalidation_required" };
+      }
       throw new ApiError(
         409,
         "OUTLINE_REVALIDATION_REQUIRED",
@@ -1760,7 +1774,7 @@ export async function getReportOutlineWorkspace(
 ) {
   return withTransaction(async (client) => {
     const context = await projectContext(client, projectId, userId);
-    const outline = await ensureOutline(client, context, userId);
+    const outline = await ensureOutline(client, context, userId, true);
     const reviewed = await reviewedPageIds(
       client,
       outline.outline_id,
@@ -2089,7 +2103,23 @@ export async function reviewReportOutlinePage(input: {
         "필수 작성 방향을 모두 입력해주세요.",
       );
     }
-    if (page.visualSlots.some((slot) => slot.bindingStatus !== "confirmed")) {
+    // 09-report-outline.md §9.3·§15.2: 페이지 확인을 막는 것은 **필수** slot의
+    // 연결 누락과 깨진(`invalid`) 연결이다. 선택 slot(컨센서스 표·주가 추이
+    // 차트 등)이 매핑되지 않았다고 막으면, 이 화면에서 Excel 주소를 고칠 수
+    // 없으므로(같은 문서 §9.3) STEP 07이 영구히 진행되지 않는다.
+    //
+    // 지연 매핑(`server/domain/mapping-policy.ts`) 대상 metric은 STEP 02에서
+    // 이미 "다른 단계에서 채운다"고 합의한 슬롯이라 STEP 02 gate를 통과한다.
+    // 여기서 다시 막으면 사용자가 어느 화면에서도 해소할 수 없다.
+    if (
+      page.visualSlots.some(
+        (slot) =>
+          slot.bindingStatus === "invalid" ||
+          (slot.required &&
+            slot.bindingStatus !== "confirmed" &&
+            !deferredMappingResolvesRequiredSlot(slot.semanticMetric ?? "")),
+      )
+    ) {
       throw new ApiError(
         422,
         "PAGE_OUTLINE_INVALID",
@@ -2368,6 +2398,17 @@ function requiredMaterializationSlotIds(context: Context): string[] {
           item.slotId === slot.slotId ||
           (item.metric === metric && item.kind === kind),
       );
+      // 지연 매핑 metric(P/E·P/B Band 차트 등)은 STEP 02에서 "Excel 원본 없이
+      // 진행"을 이미 합의한 슬롯이다(`server/domain/mapping-policy.ts`).
+      // 여기서 필수로 요구하면 승인이 REPORT_MATERIALIZATION_BLOCKED로 막히고
+      // 사용자가 해소할 화면이 없다. 연결이 확정된 경우에는 그대로 검사한다.
+      if (
+        kind !== "scalar" &&
+        binding?.status !== "confirmed" &&
+        deferredMappingResolvesRequiredSlot(metric)
+      ) {
+        return [];
+      }
       return [binding?.slotId ?? slot.slotId];
     }),
   );
@@ -5274,7 +5315,42 @@ export async function getReportProvenance(
   });
 }
 
-function regionTokenHash(
+function compareTemplateContainerPaths(
+  left: ReportTemplateObject,
+  right: ReportTemplateObject,
+): number {
+  const leftPath = left.sourceLocator?.containerPath;
+  const rightPath = right.sourceLocator?.containerPath;
+  if (Array.isArray(leftPath) && Array.isArray(rightPath)) {
+    const length = Math.max(leftPath.length, rightPath.length);
+    for (let index = 0; index < length; index += 1) {
+      const leftPart = leftPath[index];
+      const rightPart = rightPath[index];
+      if (leftPart === rightPart) continue;
+      if (leftPart === undefined) return -1;
+      if (rightPart === undefined) return 1;
+      if (typeof leftPart === "number" && typeof rightPart === "number") {
+        return leftPart - rightPart;
+      }
+      return String(leftPart).localeCompare(String(rightPart));
+    }
+  }
+  const leftBox = left.bbox ?? [0, 0, 0, 0];
+  const rightBox = right.bbox ?? [0, 0, 0, 0];
+  return (
+    leftBox[1] - rightBox[1] ||
+    leftBox[0] - rightBox[0] ||
+    Number(left.zOrder ?? 0) - Number(right.zOrder ?? 0)
+  );
+}
+
+// Must match the PDF worker's canonicalization
+// (workers/pdf/app.py source_region_token_hashes): word-split text ordered by
+// PDF container path (block/line/word), joined by "\n". Hashing whole spans in
+// bbox order diverges from the worker and fails every data-bound render command
+// with TOKEN_HASH_MISMATCH (breaking vector render/preview/export). Exported for
+// contract-test coverage.
+export function regionTokenHash(
   templatePage: ReportTemplatePage,
   bbox: [number, number, number, number],
 ): string {
@@ -5289,16 +5365,8 @@ function regionTokenHash(
     );
   const text = (templatePage.objects ?? [])
     .filter((object) => object.type === "text_run" && intersects(object.bbox))
-    .sort((left, right) => {
-      const leftBox = left.bbox ?? [0, 0, 0, 0];
-      const rightBox = right.bbox ?? [0, 0, 0, 0];
-      return (
-        leftBox[1] - rightBox[1] ||
-        leftBox[0] - rightBox[0] ||
-        left.objectId.localeCompare(right.objectId)
-      );
-    })
-    .map((object) => object.textRun?.text ?? "")
+    .sort(compareTemplateContainerPaths)
+    .flatMap((object) => (object.textRun?.text ?? "").trim().split(/\s+/))
     .filter(Boolean)
     .join("\n");
   return sha256(text);
@@ -5410,17 +5478,18 @@ async function insertReportDeliveryJob(
       input.requestedByUserId,
     ],
   );
+  // `workflow_job_input`은 (job_id, input_role) 단일 키에 resource_version_id만
+  // 기록한다(artifact 열은 존재하지 않는다). 버전이 없는 snapshot component는
+  // job 입력이 아니라 산출물 참조이므로 건너뛴다.
+  const deliveryInputRoles = new Set<string>();
   for (const component of input.sourceSnapshot.components) {
+    if (!component.versionId || deliveryInputRoles.has(component.key)) continue;
+    deliveryInputRoles.add(component.key);
     await client.query(
       `INSERT INTO workflow_job_input (
-         job_id, input_role, resource_version_id, artifact_id
-       ) VALUES ($1, $2, $3, $4)`,
-      [
-        jobId,
-        component.key,
-        component.versionId,
-        component.artifactId,
-      ],
+         job_id, input_role, resource_version_id
+       ) VALUES ($1, $2, $3)`,
+      [jobId, component.key, component.versionId],
     );
   }
   await client.query(
@@ -6616,10 +6685,78 @@ export async function createReportExport(input: {
         "승인된 보고서 버전의 새 PDF 미리보기를 생성한 뒤 내보내주세요.",
       );
     }
-    const existing = await client.query<{ export_id: string }>(
-      `SELECT export_id FROM report_export WHERE report_approval_id = $1`,
+    const existing = await client.query<{
+      export_id: string;
+      operation_status: string;
+      attempt: number;
+    }>(
+      `SELECT export_id, operation_status, attempt
+       FROM report_export WHERE report_approval_id = $1
+       FOR UPDATE`,
       [approval.rows[0].approval_id],
     );
+    // 실패·취소로 끝난 내보내기를 그대로 돌려주면 화면에는 실패 상태만 남고
+    // 다시 큐에 들어가지 않는다. 같은 승인에 대한 재실행은 새 attempt로 잇는다.
+    const terminalExport =
+      existing.rows[0] &&
+      ["failed", "cancelled"].includes(existing.rows[0].operation_status)
+        ? existing.rows[0]
+        : null;
+    if (terminalExport) {
+      const nextAttempt = terminalExport.attempt + 1;
+      const sourceSnapshot = await persistReportRenderSnapshot(
+        client,
+        context,
+        versionId,
+      );
+      const job = await insertReportDeliveryJob(client, {
+        context,
+        operationKind: "export",
+        operationId: terminalExport.export_id,
+        reportVersionId: versionId,
+        sourceSnapshot,
+        requestedByUserId: input.userId,
+        validationRunId,
+        attempt: nextAttempt,
+      });
+      await client.query(
+        `UPDATE report_export
+         SET operation_status = 'queued', outcome = 'pending',
+             job_id = $2, source_snapshot_id = $3, attempt = $4,
+             error_code = NULL, error_summary = NULL, finished_at = NULL,
+             updated_at = now()
+         WHERE export_id = $1`,
+        [
+          terminalExport.export_id,
+          job.jobId,
+          sourceSnapshot.sourceSnapshotId,
+          nextAttempt,
+        ],
+      );
+      await client.query(
+        `UPDATE report_export_artifact
+         SET artifact_status = 'pending', source_artifact_id = NULL,
+             attempt_no = $2, retryable = false, error_code = NULL,
+             error_message = NULL, updated_at = now()
+         WHERE export_id = $1`,
+        [terminalExport.export_id, nextAttempt],
+      );
+      const restartedBody = await exportView(
+        client,
+        context,
+        terminalExport.export_id,
+      );
+      await storeReplay(client, {
+        userId: input.userId,
+        operation: "report.export",
+        projectId: input.projectId,
+        key,
+        requestHash,
+        status: 202,
+        body: restartedBody,
+      });
+      return { status: 202, body: restartedBody };
+    }
     let exportId = existing.rows[0]?.export_id;
     if (!exportId) {
       exportId = uuidv7();
@@ -6806,10 +6943,12 @@ export async function executeReportExport(input: {
       );
       if (!claimed.rows[0]) throw new Error("REPORT_EXPORT_JOB_OBSOLETE");
       await client.query(
+        // CASE 안의 placeholder는 PG가 text로 추론해 uuid 열 대입에서 42804로
+        // 실패한다. 명시적으로 uuid로 캐스팅한다.
         `UPDATE report_export_artifact
          SET source_artifact_id = CASE artifact_type
-               WHEN 'pdf' THEN $2
-               ELSE $3
+               WHEN 'pdf' THEN $2::uuid
+               ELSE $3::uuid
              END,
              artifact_status = 'ready', retryable = false,
              error_code = NULL, error_message = NULL, updated_at = now()

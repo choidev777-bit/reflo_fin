@@ -294,20 +294,201 @@ function outputDiff(
   };
 }
 
-function missingRequiredCells(readModel: ReadModel) {
-  const values = new Map(
+/** `2024`, `2025F`, `2026E` 같은 기간 라벨. */
+const PERIOD_LABEL_TEXT = /^(?:19|20)\d{2}\s*[FEAP]?$/i;
+
+/**
+ * 표 구조상 값을 넣으면 안 되는 셀을 걸러낸다.
+ *
+ * Excel 워커는 밸류에이션 read model을 만들 때 편집 가능 셀의 `required`를
+ * **무조건 `true`**로 넣는다(`workers/excel/Program.cs`의
+ * `BuildValuationReadModel`). 그래서 `required`만 보면 "노랑 배경·파란 글씨로
+ * 칠해진 모든 빈 셀"이 필수 입력으로 잡히고, 여기에는 실제 모델의
+ *
+ * - 섹션 제목 행(`주가지표(배)`, `재무비율(%)`) — 행 전체가 비어 있음
+ * - 기간 헤더 행(`구분 | 2024 | 2025F | …`) — 숫자가 아니라 연도 라벨 자리
+ *
+ * 까지 포함된다. 이런 셀을 채우라고 요구하면 사용자가 보고서 표에 엉뚱한 숫자를
+ * 넣어야만 STEP 06을 통과할 수 있게 된다.
+ *
+ * 데이터 행 판정: 라벨 열(A)을 제외한 같은 행에 **기간 라벨이 아닌 실제 값**이
+ * 하나라도 있으면 데이터 행으로 본다. 과거 실적 열(2024·2025)이 채워져 있는
+ * 행만 전망 입력을 요구하게 되므로, 섹션 제목·기간 헤더 행은 자연히 빠진다.
+ */
+function isDataRow(
+  sheet: ReadModel["sheets"][number],
+  row: number,
+): boolean {
+  const cells = sheet.cells.filter(
+    (cell) => cell.row === row && cell.column > 1,
+  );
+  const periodLabels = cells.filter((cell) =>
+    PERIOD_LABEL_TEXT.test(
+      (cell.formattedText || cell.rawValue || "").trim(),
+    ),
+  ).length;
+  // `구분 | 2024 | 2025 | 2026F | 2027F | 2028F | 비고`처럼 끝에 주석 열이 붙은
+  // 기간 헤더 행은 값 행이 아니다. 연도 라벨이 3개 이상이면 헤더로 본다.
+  if (periodLabels >= 3) return false;
+  return cells.some((cell) => {
+    const text = (cell.formattedText || cell.rawValue || "").trim();
+    return text !== "" && !PERIOD_LABEL_TEXT.test(text);
+  });
+}
+
+/** 같은 열 위쪽에서 가장 가까운 기간 헤더 라벨. 없으면 빈 문자열. */
+function columnPeriodLabel(
+  sheet: ReadModel["sheets"][number],
+  cell: WorkbookCell,
+): string {
+  const above = sheet.cells
+    .filter(
+      (candidate) =>
+        candidate.column === cell.column && candidate.row < cell.row,
+    )
+    .sort((left, right) => right.row - left.row);
+  for (const candidate of above) {
+    const text = (candidate.formattedText || candidate.rawValue || "").trim();
+    if (!text) continue;
+    if (PERIOD_LABEL_TEXT.test(text)) return text;
+  }
+  return "";
+}
+
+/** 빈 셀을 계산에서 그냥 빼는 집계 함수. */
+const BLANK_TOLERANT_AGGREGATE =
+  /\b(?:SUM|SUMPRODUCT|COUNT|COUNTA|AVERAGE|AVERAGEA|MEDIAN|MIN|MAX|PRODUCT|STDEV|STDEVP|VAR|VARP)\s*\(/gi;
+
+const CELL_RANGE_REFERENCE =
+  /(?:'([^']+)'|([A-Za-z0-9_가-힣]+))?!?\$?([A-Z]{1,3})\$?([1-9]\d*)(?::\$?([A-Z]{1,3})\$?([1-9]\d*))?/g;
+
+/** 문자열 리터럴을 지운다. `"Peer 평균 P/E"` 안의 글자를 참조로 오인하지 않도록. */
+function withoutStringLiterals(formula: string): string {
+  return formula.replace(/"(?:[^"]|"")*"/g, '""');
+}
+
+/** 집계 함수 인수 구간(여는 괄호 다음 ~ 짝 맞는 닫는 괄호 앞)의 오프셋 범위. */
+function blankTolerantSpans(formula: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  BLANK_TOLERANT_AGGREGATE.lastIndex = 0;
+  let match = BLANK_TOLERANT_AGGREGATE.exec(formula);
+  while (match) {
+    const open = match.index + match[0].length - 1;
+    let depth = 0;
+    for (let index = open; index < formula.length; index += 1) {
+      if (formula[index] === "(") depth += 1;
+      else if (formula[index] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          spans.push([open + 1, index]);
+          break;
+        }
+      }
+    }
+    match = BLANK_TOLERANT_AGGREGATE.exec(formula);
+  }
+  return spans;
+}
+
+/**
+ * 빈 셀을 그대로 두면 계산 결과가 망가지는 참조가 하나라도 있는지 본다.
+ *
+ * `=SUM($C$35:$C$40)/COUNT($C$35:$C$40)`처럼 집계 범위 안에만 들어 있는 셀은
+ * 비워 둬도 나머지 값으로 정상 계산된다(M2 Peer 슬롯). 반대로 `=L12+L13`처럼
+ * 직접 더하는 참조가 있으면 비워 둘 수 없다.
+ */
+function hasBlankIntolerantDependent(
+  readModel: ReadModel,
+  sheet: ReadModel["sheets"][number],
+  cell: WorkbookCell,
+): boolean {
+  const targetColumn = columnNumber(/^([A-Z]{1,3})/.exec(cell.address)?.[1] ?? "");
+  return readModel.sheets.some((candidateSheet) =>
+    candidateSheet.cells.some((candidate) => {
+      if (!candidate.formula) return false;
+      const formula = withoutStringLiterals(candidate.formula);
+      const spans = blankTolerantSpans(formula);
+      CELL_RANGE_REFERENCE.lastIndex = 0;
+      let match = CELL_RANGE_REFERENCE.exec(formula);
+      while (match) {
+        const qualifier = match[1] ?? match[2] ?? null;
+        const sheetName = match[0].includes("!") ? qualifier : null;
+        const sameSheet =
+          sheetName === null
+            ? candidateSheet.sheetId === sheet.sheetId
+            : sheetName === sheet.name;
+        if (sameSheet) {
+          const firstColumn = columnNumber(match[3]!);
+          const firstRow = Number(match[4]);
+          const lastColumn = match[5] ? columnNumber(match[5]) : firstColumn;
+          const lastRow = match[6] ? Number(match[6]) : firstRow;
+          const covers =
+            targetColumn >= Math.min(firstColumn, lastColumn) &&
+            targetColumn <= Math.max(firstColumn, lastColumn) &&
+            cell.row >= Math.min(firstRow, lastRow) &&
+            cell.row <= Math.max(firstRow, lastRow);
+          const tolerant = spans.some(
+            ([start, end]) => match!.index >= start && match!.index < end,
+          );
+          if (covers && !tolerant) return true;
+        }
+        match = CELL_RANGE_REFERENCE.exec(formula);
+      }
+      return false;
+    }),
+  );
+}
+
+/**
+ * 비어 있으면 STEP 06 승인을 막아야 하는 셀만 남긴다.
+ *
+ * 기간 열(전망 연도) 아래의 빈 칸은 보고서가 실제로 필요로 하는 값이므로 항상
+ * 필수다. 기간이 없는 모델 입력칸(M2 밸류에이션 옵션·Peer 슬롯 등)은 집계
+ * 범위에만 쓰이면 비워 둬도 계산이 성립하므로 필수로 보지 않는다. 잘못된 모델
+ * 입력은 `VALUATION_OUTPUT_INVALID`·`FORMULA_CALCULATION_FAILED`로 따로 걸린다.
+ */
+/**
+ * 보고서가 실제로 값을 요구하는 셀인지 본다.
+ *
+ * 워커는 편집 가능한 셀의 `required`를 무조건 `true`로 넣으므로 그것만 보면
+ * 어떤 셀도 비울 수 없다(모든 `blank` 변경이 422). 기간 열의 값과, 빈 값을
+ * 견디지 못하는 수식이 참조하는 값만 필수로 본다.
+ */
+export function reportRequiredCell(
+  readModel: ReadModel,
+  editable: EditableCell,
+): boolean {
+  const sheet = readModel.sheets.find(
+    (item) => item.sheetId === editable.sheetId,
+  );
+  const cell = sheet?.cells.find((item) => item.address === editable.address);
+  if (!sheet || !cell) return true;
+  if (!isDataRow(sheet, cell.row)) return false;
+  if (columnPeriodLabel(sheet, cell)) return true;
+  return hasBlankIntolerantDependent(readModel, sheet, cell);
+}
+
+export function missingRequiredCells(readModel: ReadModel) {
+  const sheetsById = new Map(
+    readModel.sheets.map((sheet) => [sheet.sheetId, sheet]),
+  );
+  const cellsByKey = new Map(
     readModel.sheets.flatMap((sheet) =>
-      sheet.cells.map((cell) => [
-        `${sheet.sheetId}:${cell.address}`,
-        cell.rawValue,
-      ]),
+      sheet.cells.map(
+        (cell) => [`${sheet.sheetId}:${cell.address}`, cell] as const,
+      ),
     ),
   );
-  return readModel.editableCells.filter(
-    (cell) =>
-      cell.required &&
-      !values.get(`${cell.sheetId}:${cell.address}`)?.trim(),
-  );
+  return readModel.editableCells.filter((editable) => {
+    if (!editable.required) return false;
+    const cell = cellsByKey.get(
+      `${editable.sheetId}:${editable.address}` as const,
+    );
+    if (cell?.rawValue?.trim()) return false;
+    const sheet = sheetsById.get(editable.sheetId);
+    if (!sheet || !cell) return true;
+    return reportRequiredCell(readModel, editable);
+  });
 }
 
 function workbookPeriodHeadersCurrent(
@@ -375,6 +556,40 @@ function previousRowAddress(address: string): string | null {
   const match = /^([A-Z]{1,3})([1-9]\d{0,6})$/.exec(address);
   if (!match || Number(match[2]) <= 1) return null;
   return `${match[1]}${Number(match[2]) - 1}`;
+}
+
+/**
+ * Target PER 출력 셀의 수식에서 "밸류에이션 방식 선택 셀"과 "직접 입력 셀"의
+ * 주소를 뽑는다.
+ *
+ * 표준 모델 수식 형태:
+ *   IF($C$30="Peer 평균 P/E",$C$41,IF($C$30="보고서 원문 P/E",$C$32,$C$31))
+ *
+ * - 방식 선택 셀: 첫 IF 조건이 참조하는 셀($C$30)
+ * - 직접 입력 셀: 중첩 IF의 **마지막 else 분기**가 참조하는 셀($C$31)
+ *
+ * 절대 참조(`$`)를 반드시 허용해야 한다. 실제 모델은 전부 `$C$30` 형태이고,
+ * 이를 못 읽으면 `MAPPING_REVALIDATION_REQUIRED` 409가 나면서 화면이 STEP 02로
+ * 되돌아간다. 문자열 리터럴은 셀 참조로 오인하지 않도록 먼저 제거한다.
+ */
+export function targetPerFormulaCells(formula: string | null | undefined): {
+  modeAddress: string | null;
+  inputAddress: string | null;
+} {
+  if (!formula) return { modeAddress: null, inputAddress: null };
+  const withoutStrings = formula.replace(/"[^"]*"/g, '""');
+  const reference = (column: string, row: string): string =>
+    `${column.toUpperCase()}${row}`;
+  const mode = /IF\(\s*\$?([A-Z]{1,3})\$?([1-9]\d{0,6})\s*=/i.exec(
+    withoutStrings,
+  );
+  const references = [
+    ...withoutStrings.matchAll(/\$?([A-Z]{1,3})\$?([1-9]\d{0,6})\b/gi),
+  ].map((match) => reference(match[1], match[2]));
+  return {
+    modeAddress: mode ? reference(mode[1], mode[2]) : null,
+    inputAddress: references.at(-1) ?? null,
+  };
 }
 
 function columnNumber(value: string): number {
@@ -909,7 +1124,9 @@ async function callExcel<T>(
   if (!response.ok) {
     const code = payload.error?.code ?? "FORMULA_CALCULATION_FAILED";
     throw new ApiError(
-      response.status === 422 ? 422 : 503,
+      response.status >= 400 && response.status < 500
+        ? response.status
+        : 503,
       code,
       payload.error?.message ?? "Excel 계산 서비스가 응답하지 않았습니다.",
       {
@@ -1517,7 +1734,7 @@ async function calculateAndSave(
     }
     const typeMatches =
       change.valueType === "blank"
-        ? !allowed.required
+        ? !reportRequiredCell(input.state.readModel, allowed)
         : allowed.valueType === "decimal" ||
             allowed.valueType === "integer"
           ? change.valueType === "number"
@@ -1544,7 +1761,9 @@ async function calculateAndSave(
       sheetId: cell.sheetId,
       address: cell.address,
       valueType: cell.valueType,
-      required: cell.required,
+      // 워커의 `required`는 "비울 수 없는 칸"인지 판단하는 용도다. 읽기 모델의
+      // 원시 플래그는 항상 true라 그대로 넘기면 어떤 칸도 지울 수 없다.
+      required: reportRequiredCell(input.state.readModel, cell),
     })),
     outputBindings: input.context.outputBindings,
   });
@@ -2224,20 +2443,19 @@ export async function updateValuationDraft(input: {
           targetPerBinding.address,
         )
       : null;
-    const targetInputAddress = targetPerBinding
-      ? previousRowAddress(targetPerBinding.address)
-      : null;
+    const formulaCells = targetPerFormulaCells(targetPerOutput?.formula);
+    // 수식에서 직접 입력 셀을 찾지 못하는 구형 레이아웃은 기존 휴리스틱으로
+    // 되돌아간다(출력 바로 윗행이 입력).
+    const targetInputAddress =
+      formulaCells.inputAddress ??
+      (targetPerBinding ? previousRowAddress(targetPerBinding.address) : null);
     const targetCell = state.readModel.editableCells.find(
       (cell) =>
         cell.sheetId === targetPerBinding?.sheetId &&
         cell.address === targetInputAddress &&
         (cell.valueType === "decimal" || cell.valueType === "integer"),
     );
-    const modeAddress = targetPerOutput?.formula
-      ? /IF\(\s*([A-Z]{1,3}[1-9]\d{0,6})\s*=/i.exec(
-          targetPerOutput.formula,
-        )?.[1]?.toUpperCase()
-      : null;
+    const modeAddress = formulaCells.modeAddress;
     const modeCell = state.readModel.editableCells.find(
       (cell) =>
         cell.sheetId === targetPerBinding?.sheetId &&
@@ -2372,7 +2590,11 @@ export async function approveValuation(input: {
   currentPriceSnapshotId: unknown;
 }) {
   const key = requireIdempotencyKey(input.idempotencyKey);
-  const traceRequestId = requireRequestId(input.requestId);
+  // requestId is trace-only per spec §8.19; the Idempotency-Key header is the
+  // dedup authority. Validate presence but do NOT fold it into requestHash, or a
+  // legitimate retry that reuses the header with a fresh requestId 409s instead
+  // of replaying the cached success.
+  requireRequestId(input.requestId);
   const workbookVersion = requireVersion(input.workbookVersion, "workbook");
   const draftVersion = requireVersion(input.draftVersion, "draft");
   const calculationRunId = requireRequestId(input.calculationRunId);
@@ -2382,7 +2604,6 @@ export async function approveValuation(input: {
     draftVersion,
     calculationRunId,
     currentPriceSnapshotId,
-    traceRequestId,
   });
   return withTransaction(async (client) => {
     await lockIdempotency(client, {
@@ -2757,12 +2978,14 @@ export async function completeValuation(input: {
   valuationApprovalVersion: unknown;
 }) {
   const key = requireIdempotencyKey(input.idempotencyKey);
-  const traceRequestId = requireRequestId(input.requestId);
+  // requestId is trace-only per spec §8.19; the Idempotency-Key header is the
+  // dedup authority. Validate presence but keep it out of requestHash.
+  requireRequestId(input.requestId);
   const approvalVersion = requireVersion(
     input.valuationApprovalVersion,
     "승인",
   );
-  const requestHash = contentHash({ approvalVersion, traceRequestId });
+  const requestHash = contentHash({ approvalVersion });
   return withTransaction(async (client) => {
     await lockIdempotency(client, {
       userId: input.userId,

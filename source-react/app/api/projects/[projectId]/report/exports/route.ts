@@ -20,10 +20,10 @@ export async function POST(request: NextRequest, context: Context) {
       artifactTypes: unknown;
     }>(request);
     const result = await createReportExport({
+      ...body,
       projectId: requireUuid(projectId),
       userId: session.userId,
       idempotencyKey: request.headers.get("Idempotency-Key"),
-      ...body,
     });
     kickOutboxDispatcher();
     return jsonResponse(result.body, { status: result.status }, requestId);

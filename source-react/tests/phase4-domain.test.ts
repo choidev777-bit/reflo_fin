@@ -240,6 +240,10 @@ test("기업 IR을 선택하면 사용자 제공 PDF 또는 공식 URL을 요구
 
 test("뉴스는 사용자 URL 대신 기준일이 고정된 자동 검색 정책을 요구한다", () => {
   const snapshot = plan();
+  // NEWS는 role 정책상 원인·사업부·전망 질문에서만 허용된다(ALLOWED_SOURCES_BY_ROLE).
+  // 실적(PERFORMANCE) 질문에서는 restrictSourcesToRole이 NEWS를 걸러내 정책 검증이
+  // 공회전하므로, 뉴스 정책 검증에는 NEWS 적격 role을 사용한다.
+  snapshot.questions[0].role = "OUTLOOK";
   snapshot.questions[0].sourceBindingIds = ["DART", "NEWS"];
   snapshot.questions[0].collectionMethods.NEWS = "research_agent";
   const withPolicy = attachNewsSearchPolicies(snapshot, {
@@ -289,6 +293,10 @@ test("사용자가 고른 뉴스 검색 기간은 기준일 당일까지 허용�
   assert.equal(Date.parse(window.endAt), Date.parse(cutoffAt));
 
   const snapshot = plan();
+  // NEWS는 role 정책상 원인·사업부·전망 질문에서만 허용된다(ALLOWED_SOURCES_BY_ROLE).
+  // 실적(PERFORMANCE) 질문에서는 restrictSourcesToRole이 NEWS를 걸러내 정책 검증이
+  // 공회전하므로, 뉴스 정책 검증에는 NEWS 적격 role을 사용한다.
+  snapshot.questions[0].role = "OUTLOOK";
   snapshot.questions[0].sourceBindingIds = ["DART", "NEWS"];
   snapshot.questions[0].collectionMethods.NEWS = "research_agent";
   const hydrated = attachNewsSearchPolicies(snapshot, {

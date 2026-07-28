@@ -3618,8 +3618,12 @@ export async function commitResearchValidationResult(
       runScope.kind === "question_metric"
         ? await loadPriorQuestionEvidence(client, run.project_id, runScope)
         : [];
+    let authoritativeQuestionAnswers: ResearchQuestionAnswer[];
     try {
-      validateQuestionAnswerSet({
+      // 서버가 근거로부터 질문 답변을 권위 있게 확정한다(indeterminate 포함). 워커
+      // 답변은 한 줄 답변(prose) 제공용이고 판정·판단가능여부는 서버 정책을 따른다.
+      // 확정된 집합을 이후 저장에 사용한다.
+      authoritativeQuestionAnswers = validateQuestionAnswerSet({
         questions: answerQuestions,
         evidence: [...priorAnswerEvidence, ...payload.evidence],
         answers: payload.questionAnswers,
@@ -3947,7 +3951,7 @@ export async function commitResearchValidationResult(
       }
     }
     const answerQuestionIds = new Set<string>();
-    for (const answer of payload.questionAnswers) {
+    for (const answer of authoritativeQuestionAnswers) {
       if (answerQuestionIds.has(answer.questionId)) {
         throw new ApiError(
           422,
@@ -5625,6 +5629,42 @@ export async function completeValidation(input: {
         "STALE_VALIDATION_VERSION",
         "최신 검증 결과를 다시 불러와주세요.",
       );
+    }
+    // 이미 이 검증 버전을 승인했으면 승인 결과를 그대로 돌려준다.
+    // `Idempotency-Key`는 클릭마다 새로 만들어지므로 위의 replay로는 잡히지
+    // 않는다. 이 분기가 없으면 STEP 05로 되돌아와 `다음`을 다시 누를 때
+    // validation_approval unique 제약 위반(23505)으로 500이 난다.
+    // 명세 §7.4: 승인 완료 상태는 읽기 전용으로 표시하고 후속 단계 이동을 허용.
+    const approved = await client.query<{
+      approval_id: string;
+      approved_at: Date;
+      validated_workbook_artifact_id: string | null;
+    }>(
+      `SELECT approval_id, approved_at, validated_workbook_artifact_id
+       FROM validation_approval
+       WHERE project_id = $1 AND validation_version = $2`,
+      [input.projectId, version],
+    );
+    const existingApproval = approved.rows[0];
+    if (existingApproval) {
+      const replayBody = {
+        approvalId: existingApproval.approval_id,
+        validationVersion: version,
+        validatedWorkbookArtifactId:
+          existingApproval.validated_workbook_artifact_id,
+        approvedAt: existingApproval.approved_at.toISOString(),
+        nextRoute: processRoute(input.projectId, "valuation"),
+      };
+      await storeIdempotency(client, {
+        userId: input.userId,
+        operation: "validation.complete",
+        projectId: input.projectId,
+        key,
+        requestHash,
+        status: 200,
+        body: replayBody,
+      });
+      return { status: 200, body: replayBody };
     }
     const gate = await recomputeStageGate(client, input.projectId, version);
     if (!gate.canProceed) {

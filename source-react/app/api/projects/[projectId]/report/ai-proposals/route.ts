@@ -20,9 +20,9 @@ export async function POST(request: NextRequest, context: Context) {
     }>(request);
     return jsonResponse(
       await createReportAiProposal({
+        ...body,
         projectId: requireUuid(projectId),
         userId: session.userId,
-        ...body,
       }),
       { status: 202 },
       requestId,

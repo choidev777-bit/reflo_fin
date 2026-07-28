@@ -43,6 +43,67 @@ public static class WorkbookRollForwardEngine
         @"(?<![A-Z0-9_])(?<colabs>\$?)(?<col>[A-Z]{1,3})(?<rowabs>\$?)(?<row>[1-9]\d*)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+    private readonly record struct CellState(
+        bool HasFormula,
+        bool IsEmpty,
+        bool IsNumber,
+        XLCellValue Value,
+        string Formatted);
+
+    /**
+     * roll forward가 셀을 바꾸기 <b>전</b>의 값을 담아 둔다.
+     *
+     * 표를 한 칸 왼쪽으로 미는 동안 같은 시트의 다른 행이 이미 갱신되면,
+     * 아직 옮기지 않은 수식 셀이 갱신된 값으로 재계산된다. 그 값을 그대로
+     * 옮기면 한 기간 어긋난 숫자가 실린다. 이동 원본은 항상 이 스냅샷에서
+     * 읽는다.
+     */
+    private sealed class WorkbookSnapshot
+    {
+        private readonly Dictionary<string, CellState> states =
+            new(StringComparer.Ordinal);
+
+        public static WorkbookSnapshot Capture(XLWorkbook workbook)
+        {
+            var snapshot = new WorkbookSnapshot();
+            foreach (var worksheet in workbook.Worksheets
+                         .Where(sheet =>
+                             sheet.Visibility == XLWorksheetVisibility.Visible))
+            {
+                var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
+                if (used is null) continue;
+                foreach (var cell in used.Cells())
+                {
+                    snapshot.states[Key(cell)] = Read(cell);
+                }
+            }
+            return snapshot;
+        }
+
+        public CellState Get(IXLCell cell)
+        {
+            return states.TryGetValue(Key(cell), out var state)
+                ? state
+                : Read(cell);
+        }
+
+        private static CellState Read(IXLCell cell)
+        {
+            var value = cell.Value;
+            return new CellState(
+                cell.HasFormula,
+                cell.IsEmpty(XLCellsUsedOptions.Contents),
+                value.Type == XLDataType.Number,
+                value,
+                CellValue(cell));
+        }
+
+        private static string Key(IXLCell cell)
+        {
+            return $"{cell.Worksheet.Name}!{cell.Address}";
+        }
+    }
+
     public static WorkbookRollForwardResult RollForward(
         byte[] sourceBytes,
         WorkbookRollForwardRequest request)
@@ -61,14 +122,22 @@ public static class WorkbookRollForwardEngine
 
         var changes = new List<WorkbookRollForwardChange>();
         var systemWritableCells = new HashSet<(string SheetName, string Address)>();
+        // 이동 전 값을 한 번에 찍어 둔다. 표를 왼쪽으로 밀 때 위쪽 행이 먼저
+        // 갱신되면 아래 행의 수식이 이미 이동된 값으로 재계산되어(예:
+        // `M1!C36 = C35*1000000/B7`) 한 칸 어긋난 값이 실려 간다.
+        var snapshot = WorkbookSnapshot.Capture(workbook);
+        var annualHeaderRanges =
+            new List<(string SheetName, int Row, int FirstColumn, int LastColumn)>();
         foreach (var worksheet in workbook.Worksheets
                      .Where(sheet => sheet.Visibility == XLWorksheetVisibility.Visible))
         {
             RollAnnualTables(
                 worksheet,
                 request.Periods,
+                snapshot,
                 changes,
-                systemWritableCells);
+                systemWritableCells,
+                annualHeaderRanges);
         }
 
         var forecastPeriods = request.Periods
@@ -81,7 +150,12 @@ public static class WorkbookRollForwardEngine
                          sheet.Visibility == XLWorksheetVisibility.Visible &&
                          sheet.Name.StartsWith("M1_", StringComparison.OrdinalIgnoreCase)))
         {
-            RollModelForecastInputs(worksheet, forecastPeriods, changes);
+            RollModelForecastInputs(
+                worksheet,
+                forecastPeriods,
+                snapshot,
+                changes,
+                annualHeaderRanges);
         }
 
         try
@@ -194,8 +268,11 @@ public static class WorkbookRollForwardEngine
     private static void RollAnnualTables(
         IXLWorksheet worksheet,
         IReadOnlyList<WorkbookPeriod> periods,
+        WorkbookSnapshot snapshot,
         ICollection<WorkbookRollForwardChange> changes,
-        ISet<(string SheetName, string Address)> systemWritableCells)
+        ISet<(string SheetName, string Address)> systemWritableCells,
+        ICollection<(string SheetName, int Row, int FirstColumn, int LastColumn)>
+            annualHeaderRanges)
     {
         var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
         if (used is null) return;
@@ -231,13 +308,23 @@ public static class WorkbookRollForwardEngine
                         row,
                         currentBottom,
                         column,
+                        snapshot,
                         systemWritableCells);
+                    ApplyNestedPeriodHeaders(
+                        worksheet,
+                        row,
+                        currentBottom,
+                        column,
+                        periods,
+                        changes);
                     ApplyPeriodHeaders(
                         worksheet,
                         row,
                         column,
                         periods,
                         changes);
+                    annualHeaderRanges.Add((
+                        worksheet.Name, row, column, column + 4));
                     column += 4;
                     continue;
                 }
@@ -256,11 +343,32 @@ public static class WorkbookRollForwardEngine
                     used.RangeAddress.LastAddress.RowNumber);
                 for (var dataRow = row + 1; dataRow <= bottom; dataRow++)
                 {
+                    // 표 안에 다시 나오는 기간 헤더 행(`구분 | 2024 | 2025F | …`)은
+                    // 데이터가 아니라 라벨이다. 값처럼 밀면 마지막 칸의 연도 라벨이
+                    // 지워지고 그 자리가 필수 입력으로 잡힌다.
+                    if (IsPeriodHeaderRow(worksheet, dataRow, column))
+                    {
+                        ApplyPeriodHeaders(
+                            worksheet,
+                            dataRow,
+                            column,
+                            periods,
+                            changes);
+                        continue;
+                    }
+                    // 섹션 제목 행(`주가지표(배)`)은 기간 열이 통째로 비어 있다.
+                    // 밀 값도 없고 입력 대상도 아니다.
+                    if (IsBlankPeriodRow(snapshot, worksheet, dataRow, column))
+                    {
+                        continue;
+                    }
                     CarryValue(
+                        snapshot,
                         worksheet.Cell(dataRow, column + 1),
                         worksheet.Cell(dataRow, column),
                         changes);
                     CarryValue(
+                        snapshot,
                         worksheet.Cell(dataRow, column + 2),
                         worksheet.Cell(dataRow, column + 1),
                         changes);
@@ -268,6 +376,7 @@ public static class WorkbookRollForwardEngine
                         worksheet,
                         dataRow,
                         column + 2,
+                        snapshot,
                         changes);
                 }
                 CollectSystemWritableActualCells(
@@ -275,6 +384,7 @@ public static class WorkbookRollForwardEngine
                     row,
                     bottom,
                     column,
+                    snapshot,
                     systemWritableCells);
                 ApplyPeriodHeaders(
                     worksheet,
@@ -282,9 +392,49 @@ public static class WorkbookRollForwardEngine
                     column,
                     periods,
                     changes);
+                annualHeaderRanges.Add((worksheet.Name, row, column, column + 4));
                 column += 4;
             }
         }
+    }
+
+    /** 이미 최신 기간인 표에서도 하위 기간 헤더 행은 다시 맞춰 준다. */
+    private static void ApplyNestedPeriodHeaders(
+        IXLWorksheet worksheet,
+        int headerRow,
+        int bottom,
+        int firstColumn,
+        IReadOnlyList<WorkbookPeriod> periods,
+        ICollection<WorkbookRollForwardChange> changes)
+    {
+        for (var row = headerRow + 1; row <= bottom; row++)
+        {
+            if (!IsPeriodHeaderRow(worksheet, row, firstColumn)) continue;
+            ApplyPeriodHeaders(worksheet, row, firstColumn, periods, changes);
+        }
+    }
+
+    private static bool IsPeriodHeaderRow(
+        IXLWorksheet worksheet,
+        int row,
+        int firstColumn)
+    {
+        var parsed = Enumerable.Range(0, 5)
+            .Select(offset => ParsePeriod(worksheet.Cell(row, firstColumn + offset)))
+            .ToArray();
+        if (parsed.Any(period => period is null)) return false;
+        var years = parsed.Select(period => period!.Value.Year).ToArray();
+        return years.Zip(years.Skip(1)).All(pair => pair.Second == pair.First + 1);
+    }
+
+    private static bool IsBlankPeriodRow(
+        WorkbookSnapshot snapshot,
+        IXLWorksheet worksheet,
+        int row,
+        int firstColumn)
+    {
+        return Enumerable.Range(0, 5).All(offset =>
+            snapshot.Get(worksheet.Cell(row, firstColumn + offset)).IsEmpty);
     }
 
     private static void CollectSystemWritableActualCells(
@@ -292,11 +442,14 @@ public static class WorkbookRollForwardEngine
         int headerRow,
         int bottom,
         int firstActualColumn,
+        WorkbookSnapshot snapshot,
         ISet<(string SheetName, string Address)> systemWritableCells)
     {
         if (!IsFinancialStatementSheet(worksheet)) return;
         for (var row = headerRow + 1; row <= bottom; row++)
         {
+            if (IsPeriodHeaderRow(worksheet, row, firstActualColumn)) continue;
+            if (IsBlankPeriodRow(snapshot, worksheet, row, firstActualColumn)) continue;
             for (var actualOffset = 0; actualOffset < 2; actualOffset++)
             {
                 var actualCell = worksheet.Cell(row, firstActualColumn + actualOffset);
@@ -312,6 +465,7 @@ public static class WorkbookRollForwardEngine
         IXLWorksheet worksheet,
         int row,
         int firstForecastColumn,
+        WorkbookSnapshot snapshot,
         ICollection<WorkbookRollForwardChange> changes)
     {
         var first = worksheet.Cell(row, firstForecastColumn);
@@ -321,25 +475,43 @@ public static class WorkbookRollForwardEngine
 
         if (!first.HasFormula)
         {
-            ShiftValue(second, first, changes);
-            MakeUserInput(first);
+            var wasNumber = snapshot.Get(first).IsNumber;
+            ShiftValue(snapshot, second, first, changes);
+            MarkForecastInput(first, wasNumber);
         }
         if (!second.HasFormula)
         {
-            ShiftValue(last, second, changes);
-            MakeUserInput(second);
+            var wasNumber = snapshot.Get(second).IsNumber;
+            ShiftValue(snapshot, last, second, changes);
+            MarkForecastInput(second, wasNumber);
         }
-        if (!last.HasFormula)
+        if (!last.HasFormula && snapshot.Get(last).IsNumber)
         {
+            // 새 전망 연도 입력칸은 "직전 전망 연도에 숫자가 있던 행"에만 만든다.
+            // 비어 있던 칸이나 주석 문구를 지우고 필수 입력으로 만들면
+            // 사용자가 채울 수 없는 셀 때문에 STEP 06 승인이 영구히 막힌다.
             ClearValue(last, changes);
             MakeUserInput(last);
         }
     }
 
+    /**
+     * 전망 열을 애널리스트 입력칸으로 표시한다. 이동 뒤에도 값이 없고 이동
+     * 전에도 숫자가 아니었던 칸은 애초에 입력 대상이 아니므로 건드리지 않는다.
+     */
+    private static void MarkForecastInput(IXLCell cell, bool wasNumber)
+    {
+        if (!wasNumber && cell.IsEmpty(XLCellsUsedOptions.Contents)) return;
+        MakeUserInput(cell);
+    }
+
     private static void RollModelForecastInputs(
         IXLWorksheet worksheet,
         IReadOnlyList<WorkbookPeriod> forecastPeriods,
-        ICollection<WorkbookRollForwardChange> changes)
+        WorkbookSnapshot snapshot,
+        ICollection<WorkbookRollForwardChange> changes,
+        IReadOnlyCollection<(string SheetName, int Row, int FirstColumn, int LastColumn)>
+            annualHeaderRanges)
     {
         if (forecastPeriods.Count != 3) return;
         var used = worksheet.RangeUsed(XLCellsUsedOptions.All);
@@ -353,6 +525,17 @@ public static class WorkbookRollForwardEngine
                  column <= used.RangeAddress.LastAddress.ColumnNumber - 2;
                  column++)
             {
+                // 5개 연도 표는 `RollAnnualTables`가 이미 이동시켰다. 그 안의
+                // 3개 연도 구간을 다시 잡으면 헤더가 한 번 더 밀려
+                // `2024 | 2026 | 2027 | 2028 | 2028`처럼 깨진다.
+                if (annualHeaderRanges.Any(range =>
+                        range.SheetName == worksheet.Name &&
+                        range.Row == row &&
+                        column <= range.LastColumn &&
+                        column + 2 >= range.FirstColumn))
+                {
+                    continue;
+                }
                 var detected = Enumerable.Range(0, 3)
                     .Select(offset => ParsePeriod(worksheet.Cell(row, column + offset)))
                     .ToArray();
@@ -382,19 +565,41 @@ public static class WorkbookRollForwardEngine
                     column,
                     column + 2,
                     used.RangeAddress.LastAddress.RowNumber);
-                for (var dataRow = row + 1; dataRow <= bottom; dataRow++)
+                // 연간 요약 열은 빈 행(섹션 구분)을 사이에 두고 아래에서 이어진다.
+                // 인접한 표만 보면 `② 영업이익`·`③ 세전이익` 블록이 이동되지 않아
+                // 헤더는 새 연도인데 값은 직전 연도인 상태로 남는다.
+                var lastInputRow = LastRowWithForecastInput(
+                    worksheet,
+                    row,
+                    column + 2,
+                    used.RangeAddress.LastAddress.RowNumber);
+                for (var dataRow = row + 1;
+                     dataRow <= Math.Max(bottom, lastInputRow);
+                     dataRow++)
                 {
                     var first = worksheet.Cell(dataRow, column);
                     var second = worksheet.Cell(dataRow, column + 1);
                     var last = worksheet.Cell(dataRow, column + 2);
                     if (IsWorkflowEditableCell(last))
                     {
-                        CarryValue(second, first, changes);
-                        CarryValue(last, second, changes);
+                        CarryValue(snapshot, second, first, changes);
+                        CarryValue(snapshot, last, second, changes);
                         ClearValue(last, changes);
                         continue;
                     }
+                    // 수식 생성은 인접한 표 안에서만 한다. 떨어진 행까지 넓히면
+                    // 관계없는 수식을 옮겨 심는다.
+                    if (dataRow > bottom) continue;
                     if (first.HasFormula || second.HasFormula || last.HasFormula)
+                    {
+                        continue;
+                    }
+                    // 값이 들어 있던 연간 열만 같은 행의 수식 패턴으로 바꾼다.
+                    // 원래 비어 있던 칸까지 채우면 분기 전용 수식(QoQ 등)이
+                    // 연간 열로 옮겨져 `=J16/M44-1` 같은 참조가 생기고,
+                    // 재계산이 `#DIV/0!`로 실패해 STEP 06 전체가 막힌다.
+                    if (new[] { first, second, last }.All(cell =>
+                            cell.IsEmpty(XLCellsUsedOptions.Contents)))
                     {
                         continue;
                     }
@@ -458,6 +663,26 @@ public static class WorkbookRollForwardEngine
         }
     }
 
+    /**
+     * 마지막 전망 열에 애널리스트 입력칸이 있는 가장 아래 행. 빈 행을 건너뛴다.
+     */
+    private static int LastRowWithForecastInput(
+        IXLWorksheet worksheet,
+        int headerRow,
+        int lastForecastColumn,
+        int usedBottom)
+    {
+        var found = headerRow;
+        for (var row = headerRow + 1; row <= usedBottom; row++)
+        {
+            if (IsWorkflowEditableCell(worksheet.Cell(row, lastForecastColumn)))
+            {
+                found = row;
+            }
+        }
+        return found;
+    }
+
     private static int FindTableBottom(
         IXLWorksheet worksheet,
         int headerRow,
@@ -484,21 +709,16 @@ public static class WorkbookRollForwardEngine
     }
 
     private static void CarryValue(
+        WorkbookSnapshot snapshot,
         IXLCell source,
         IXLCell target,
         ICollection<WorkbookRollForwardChange> changes)
     {
-        if (source.IsEmpty(XLCellsUsedOptions.Contents)) return;
+        var carried = snapshot.Get(source);
+        if (carried.IsEmpty) return;
         var before = CellValue(target);
-        var after = CellValue(source);
-        if (source.HasFormula)
-        {
-            target.Value = source.Value;
-        }
-        else
-        {
-            target.Value = source.Value;
-        }
+        target.Value = carried.Value;
+        var after = CellValue(target);
         if (before == after) return;
         changes.Add(new WorkbookRollForwardChange(
             target.Worksheet.Name,
@@ -509,16 +729,17 @@ public static class WorkbookRollForwardEngine
     }
 
     private static void ShiftValue(
+        WorkbookSnapshot snapshot,
         IXLCell source,
         IXLCell target,
         ICollection<WorkbookRollForwardChange> changes)
     {
-        if (source.IsEmpty(XLCellsUsedOptions.Contents))
+        if (snapshot.Get(source).IsEmpty)
         {
             ClearValue(target, changes);
             return;
         }
-        CarryValue(source, target, changes);
+        CarryValue(snapshot, source, target, changes);
     }
 
     private static void ClearValue(

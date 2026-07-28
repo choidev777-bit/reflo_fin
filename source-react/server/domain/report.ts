@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { contentHash } from "./hash";
+import { deferredMappingResolvesRequiredSlot } from "./mapping-policy";
 import {
   hasExactPeriodWindow,
   type ReportPeriodPlan,
@@ -98,7 +99,10 @@ export type OutlineVisualSlot = {
   blockId: string;
   kind: "표" | "차트" | "수치";
   label: string;
+  /** 화면 표시용 라벨. 정책 판단에는 `semanticMetric`을 쓴다. */
   metric: string;
+  /** MappingSet의 semantic metric 키. 지연 매핑 정책 조회에 쓴다. */
+  semanticMetric?: string;
   required: boolean;
   bindingStatus: "confirmed" | "unmapped" | "invalid";
   sourceLabel?: string | null;
@@ -2209,8 +2213,18 @@ export function materializeReportBindings(
     } else if (binding.kind === "chart") {
       materialization = materializeChartBinding(binding, context);
     }
+    // 지연 매핑 표·차트는 Excel 원본 없이 원본 PDF를 유지하기로 한 슬롯이라
+    // 산출물 직렬화 대상에서 뺀다. 남겨 두면
+    // `serializeReportMaterializationArtifact`가 REPORT_MATERIALIZATION_BLOCKED로
+    // 초안 생성을 중단시킨다. 수치(scalar)는 원문 숫자가 그대로 남으면 잘못된
+    // 값을 싣게 되므로 예외를 적용하지 않는다.
+    const deferredUnresolvedVisual =
+      binding.kind !== "scalar" &&
+      binding.status !== "confirmed" &&
+      deferredMappingResolvesRequiredSlot(binding.metric);
     if (
       materialization &&
+      !deferredUnresolvedVisual &&
       (binding.required !== false || materialization.status === "ready")
     ) {
       result[binding.slotId] = materialization;
@@ -2887,6 +2901,7 @@ export function buildInitialOutline(
           kind,
           label: `${kind}${localIndex}`,
           metric: metricDisplay,
+          semanticMetric: metric,
           required: slot.required,
           bindingStatus: binding
             ? binding.status === "confirmed"
@@ -3333,6 +3348,15 @@ export function buildReportDocument(input: {
           input.materializationsBySlotId?.[slot.slotId];
         const materializationReady =
           materializedData?.status === "ready";
+        // 지연 매핑 표·차트는 Excel 연결 없이 원본 PDF 내용을 유지한다.
+        // `attachTemplateGeometry`의 같은 규칙과 짝을 이룬다.
+        if (
+          slot.kind !== "수치" &&
+          slot.bindingStatus !== "confirmed" &&
+          deferredMappingResolvesRequiredSlot(slot.semanticMetric ?? "")
+        ) {
+          continue;
+        }
         blocks.push({
           blockId: slot.blockId,
           pageId: page.pageId,
@@ -3677,8 +3701,16 @@ export function attachTemplateGeometry(
             block.blockId === blockId ||
             block.dataBinding?.slotId === slot.slotId,
         );
+        // 지연 매핑 표·차트(P/E·P/B Band 등)는 Excel 원본이 없기로 STEP 02에서
+        // 합의된 슬롯이다(`server/domain/mapping-policy.ts`). 블록을 남기면
+        // `REPORT_DATA_BINDING_NOT_CONFIRMED`로 초안 생성 자체가 실패한다.
+        // 블록을 빼면 해당 영역은 원본 PDF 내용이 그대로 유지된다.
+        const unresolvedDeferredVisual =
+          kind !== "scalar" &&
+          status !== "confirmed" &&
+          deferredMappingResolvesRequiredSlot(metric);
         const optionalUnavailable =
-          !slot.required &&
+          (!slot.required || unresolvedDeferredVisual) &&
           (status !== "confirmed" || materializedData?.status !== "ready");
         if (optionalUnavailable) {
           for (
@@ -3848,6 +3880,16 @@ export function attachTemplateGeometry(
         const materializedData = binding
           ? materializationsBySlotId[binding.slotId]
           : undefined;
+        // 지연 매핑 도표(P/E·P/B Band)는 Excel 원본이 없다. 블록을 만들지 않아야
+        // 원본 PDF의 차트가 그대로 남고 초안 생성이 통과한다.
+        if (
+          status !== "confirmed" &&
+          deferredMappingResolvesRequiredSlot(
+            `figure_${chart.figureNumber}_chart`,
+          )
+        ) {
+          continue;
+        }
         hydratedBlocks.push({
           blockId: `${page.pageId}.chart.figure-${chart.figureNumber}`,
           pageId: page.pageId,
